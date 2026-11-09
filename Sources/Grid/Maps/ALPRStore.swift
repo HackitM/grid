@@ -94,7 +94,14 @@ final class ALPRStore {
                   let data = MapStorage.read(d.appendingPathComponent("meta.json"), maxBytes: 32 << 20),
                   let meta = try? JSONDecoder().decode(RegionMeta.self, from: data),
                   meta.descriptor.storageKey == d.lastPathComponent else { continue }
-            out.append(Region(meta: meta, status: .idle))
+            var fixed = meta
+            if fixed.descriptor.name.contains("/") {
+                // Saved before region names were derived from Geofabrik ids ("us/rhode-island").
+                let dsc = fixed.descriptor
+                fixed.descriptor = RegionDescriptor(id: dsc.id, name: RegionCatalog.displayName(fromID: dsc.name), parent: dsc.parent,
+                                                    iso3166_1: dsc.iso3166_1, iso3166_2: dsc.iso3166_2)
+            }
+            out.append(Region(meta: fixed, status: .idle))
         }
         regions = out.sorted { $0.meta.descriptor.name < $1.meta.descriptor.name }
         rebuildIndex()

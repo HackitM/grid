@@ -192,6 +192,7 @@ enum DebugHooks {
             case "systemMenus": app.settings.systemMenus = on
             case "globeActive": GlobeView.debugForceActive = on
             case "globeNoLabels": GlobeRenderer.debugNoLabels = on
+            case "mapActive": MapRenderer.debugForceActive = on
             case "filesGrid": app.settings.filesGrid = on; CascadeClock.shared.start()
             case "startup": app.settings.startupAnimation = on
             default: break

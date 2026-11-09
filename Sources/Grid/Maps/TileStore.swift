@@ -8,8 +8,8 @@ import Observation
 @Observable
 @MainActor
 final class TileStore {
-    static let defaultTileJSON = URL(string: "https://tiles.openfreemap.org/planet")!
-    static let defaultHosts: Set<String> = ["tiles.openfreemap.org"]
+    nonisolated static let defaultTileJSON = URL(string: "https://tiles.openfreemap.org/planet")!
+    nonisolated static let defaultHosts: Set<String> = ["tiles.openfreemap.org"]
 
     private(set) var source: TileSource?
     /// Bumps when the source changes; the renderer drops its GPU tiles then.

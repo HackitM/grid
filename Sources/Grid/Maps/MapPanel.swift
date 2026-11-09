@@ -35,7 +35,11 @@ struct MapPanel: View {
                     GridMenuItem.action("Clear Map Data…", destructive: true) { confirmClear(m) }
                 } content: {
                     ZStack {
-                        if m.enabled {
+                        if !MapMetalView.isSupported {
+                            StateBlock(tone: .error, code: "MAP-GPU", title: "The map can't be drawn on this Mac",
+                                       message: "GRID's map needs Metal graphics, which isn't available here.") { EmptyView() }
+                                .padding(20)
+                        } else if m.enabled {
                             MapCanvas(model: m)
                         } else {
                             ConsentBlock(model: m)
