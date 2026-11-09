@@ -27,7 +27,7 @@ and print them as a **cue sheet** so the laptop can stay home. It keeps GRID's c
 | ALPR | **A daily nationwide snapshot (US/Canada) of DeFlock's OSM-derived data**, cached locally, so it doesn't reveal which area you look at. **Overpass** is used on demand for other regions and for "refresh this area", with requests snapped to cells and cached. | It depends on a community-run host. Ask DeFlock's maintainers before shipping. |
 | Location | **CoreLocation "when in use"**, requested only when you click **⌖ LOCATE**. Never "Always". The position is never stored or sent. | The tiles you load around you still show roughly where you are (see §5). |
 | Placement | **A new rail page `05 MAP`** (Settings moves to `06`). A small **Perimeter** deck widget comes later. | One more rail item. |
-| Routing | **Routes that avoid mapped ALPR cameras** through a **FlockHopper-compatible engine**: self-hosted (recommended) or the public FlockHopper API if its maintainers agree. A Valhalla engine comes second and an on-device router is researched later. **GRID re-scores every route against its own camera data** (§7). | Start and end points go to the engine you choose. "Out of view" can only mean "away from *mapped* cameras". |
+| Routing | **Routes that avoid mapped ALPR cameras** through a **FlockHopper-compatible engine**: self-hosted (recommended) or the public FlockHopper API if its maintainers agree. A downloadable **on-device FlockHopper "routing pack"** (GraphHopper in a sandboxed helper, a state or custom area, no Docker) keeps start and end points on the Mac (§7.5). A Valhalla engine comes second. **GRID re-scores every route against its own camera data** (§7). | Start and end points go to the engine you choose. "Out of view" can only mean "away from *mapped* cameras". |
 | Export | **A printable PDF cue sheet** (vector overview map, large-type turn list, cameras you can't avoid, attribution and a safety line) plus **GPX 1.1** for a GPS unit or an offline phone navigator (§8). | Printed directions can't re-route around closures. |
 
 ---
@@ -412,6 +412,7 @@ Every request below happens only on the Map page, after the one-time **ENABLE MA
 | Overpass endpoint (your choice) | "⟳ refresh area", or a region outside the US/CA snapshot | A **0.25° cell**, IP | ALPR source: Snapshot only |
 | `api.tomtom.com` / HERE | Traffic on, every 3 min while visible | Viewed tiles or bbox **plus your API key**, so the vendor can tie it to your account | Traffic off (default) |
 | `nominatim.openstreetmap.org` (or your endpoint) | You press ⏎ on SEARCH OSM | Query text, IP | Wider search: Off |
+| Routing pack install / area download | You add the engine or an area | Adoptium + Maven Central: that you installed it. Geofabrik: **which region**. | Don't install; Remove deletes everything |
 | Routing engine (your choice: self-hosted, FlockHopper, Valhalla) | You click ROUTE | **Start and end points**, buffer settings, IP. A Valhalla loop also sends the excluded camera points, which reveal the corridor. | Routing: Off (default) / self-hosted |
 | `api.tomtom.com` (traffic ETA on a route) | Traffic on and a route computed | Flow tiles along the route corridor, plus your key | Traffic off |
 | Apple Location Services (macOS) | ⌖ LOCATE / FOLLOW | macOS handles it per Apple's policy (Wi-Fi based). GRID sends nothing itself. | Don't press Locate; revoke in System Settings |
@@ -600,7 +601,8 @@ Routing**. Routing is **off until the user picks an engine**.
 | **FlockHopper-compatible API**: `POST {base}/api/v1/route` with `{origin, destination, costing:"auto", cameraDistanceMeters, useDirectionalZones}` | Full. The server uses GraphHopper `custom_model` block and penalty `areas` over about 146k cameras, then detour waypoints. It returns `normalRoute` and `avoidanceRoute`, each with `maneuvers[]`, `camerasOnRoute[]` and a score. Trips are limited to 300 mi. | **Start and end points** plus IP, sent to the server's operator | None if public | **v1 default engine type.** The public `api.dontgetflocked.com` (v2.0.0, cameras at most 72 h old, no auth, CORS `*`) is offered as a preset **only if the FlockHopper/DeFlock maintainers agree**. It has no published terms or rate limits, and the deployed version differs from the public source. |
 | **Self-hosted FlockHopper** (same API; GraphHopper + Express from the MIT repo) on your own Mac or server | Same | Nothing to third parties if it runs on your own machine | Docker + Java. GraphHopper RAM is roughly 8–16 GB for the whole US (estimate), much less for one state | **Recommended for privacy.** GRID only needs a base URL. Ship a recipe in `docs/MAPS-ROUTING-SELFHOST.md`. |
 | **Valhalla-compatible endpoint** (self-hosted, or the FOSSGIS public server) | GRID loops: route, find cameras in a corridor around it, add them as `exclude_locations` / `exclude_polygons`, re-route, at most 4 rounds. `linear_cost_factors` gives soft penalties. Maneuvers come with narrative instructions. | Start/end + the excluded points (which reveal the corridor) | FOSSGIS public: **1 request/s, at most 50 exclude locations, polygons ≤ 10 km perimeter and 100 vertices, URL must not be hard-coded**, no guarantees. Self-hosted: limits are configurable | **Second engine.** The public server's limits make hard avoidance unreliable in dense cities; self-hosting removes them. |
-| **On-device router in GRID** | Full, with camera penalties applied per edge | **Nothing** | A drivable graph built from a Geofabrik state extract (California's PBF is 1.34 GB) into a compact file of about 100–300 MB (estimate). A* with penalties. Our own turn instructions, using the `osrm-text-instructions` phrase templates (BSD-2) | **Later research (Phase 8)**, not committed. It's the most private option but costs about 3–6 weeks (estimate) plus graph-building tools; turn restrictions and access tags are the hard parts. |
+| **On-device FlockHopper (routing pack, §7.5)** | Full: the same GraphHopper custom-model avoidance as FlockHopper, for a downloaded state or custom area | **Nothing** when routing. Geofabrik learns which region you downloaded. | A one-click add-on: ≈ 75–105 MB download, ≈ 170–200 MB on disk, plus about 0.3× the area's PBF for its graph. Building needs about 13× the PBF in RAM (Ohio: 4 GB) | **Recommended on-device option.** |
+| **Native Swift router in GRID** | Full, with camera penalties applied per edge | **Nothing** | A drivable graph built from a Geofabrik state extract (California's PBF is 1.34 GB) into a compact file of about 100–300 MB (estimate). A* with penalties. Our own turn instructions, using the `osrm-text-instructions` phrase templates (BSD-2) | **Later research (Phase 8)**, not committed. It's the most private option but costs about 3–6 weeks (estimate) plus graph-building tools; turn restrictions and access tags are the hard parts. |
 | Apple `MKDirections` | **None.** No waypoints and no avoid areas, only `tollPreference` / `highwayPreference` | — | — | **Rejected.** It can't avoid points, and Apple's licence forbids showing its routes on a non-Apple map (§2.1). |
 | OSRM | Only profile-level `exclude` classes, nothing per request | — | — | **Rejected.** |
 
@@ -666,6 +668,165 @@ right column to the route panel:
 
 **Linked selection.** Hovering a step highlights its segment on the map. Clicking a camera scrolls
 to the step where you pass it.
+
+### 7.5 On-device FlockHopper: the routing pack (no Docker)
+
+**Yes, this is feasible.** FlockHopper has two parts:
+1. **GraphHopper**, an Apache-2.0 Java routing library. It does the actual pathfinding with
+   per-request "custom models".
+2. A thin Node/Express layer that turns cameras into avoidance zones and runs the
+   normal → avoid → detour sequence.
+
+GRID already ports part 2 to Swift (§7.2). So the only thing missing on the Mac is GraphHopper
+itself. GRID can run it **as a helper process it manages**, the same way it runs `GridWidgetHost`.
+That needs no Docker, no web server and no network access.
+
+The whole feature is an **add-on you download and can remove**. It isn't part of `GRID.app`.
+
+#### What gets installed, and where
+
+Everything lives under `~/Library/Application Support/GRID/Addons/routing/`. Clicking Remove
+deletes the folder.
+
+| Piece | Download | On disk | Source and licence |
+|---|---|---|---|
+| Java runtime (Eclipse Temurin JRE 25, macOS arm64) | **56 MB** (measured, Adoptium API) | ≈ 130–150 MB unpacked (estimate) | Downloaded straight from Adoptium (GPLv2 + Classpath Exception). GRID doesn't redistribute it. |
+| GraphHopper 11.1 | ≈ 15–25 MB core + dependency jars from Maven Central (estimate). The all-in-one `graphhopper-web-11.1.jar` is 47 MB (measured) and carries a web server we don't need. | same | Apache-2.0. Its NOTICE is kept. |
+| `GridRouteHost.jar` | ships **inside GRID.app** (≈ 30 KB) | — | GRID's own code: about 300 lines of Java that use GraphHopper as a library |
+| Engine total | **≈ 75–105 MB** | **≈ 170–200 MB** | |
+
+Notes:
+- GraphHopper 11.x needs Java 25. FlockHopper pins GraphHopper 9.1, which needs Java 17 (the JRE
+  17 download is 43 MB).
+- Using 11.1 gets current fixes. Phase 0 compares its routes with FlockHopper's on the same trips.
+  The custom-model syntax is the same.
+- **Integrity checks.** Every artifact's SHA-256 is pinned in GRID's source. Each download is checked
+  before it's unpacked, and the JRE's code signature is verified with `codesign --verify`. The
+  pinned versions change only with a GRID release.
+
+#### Choosing the area
+
+**Settings › Map › Routing › On-device** offers two ways to pick:
+
+- **A region from Geofabrik's catalogue.** GRID reads `download.geofabrik.de/index-v1.json`
+  (verified: each entry has an id, a parent, ISO codes, a `.osm.pbf` URL and a boundary polygon).
+  The picker shows US states and sub-states, and other countries' regions too.
+- **A custom area.** Drag a rectangle (or later a polygon) on the map:
+  1. GRID downloads the Geofabrik extract(s) that cover it.
+  2. It clips them to your area in Swift (`GridCore/Maps/PBFClip.swift`, which keeps whole ways
+     that cross the edge).
+  3. It deletes the full extract.
+
+  A metro area builds far faster and uses much less RAM than a whole state.
+
+**Extract sizes** (measured today, Geofabrik `Content-Length`):
+
+| Region | Size |
+|---|---|
+| Rhode Island | 53 MB |
+| Ohio | 327 MB |
+| Colorado | 388 MB |
+| Northern California | 656 MB |
+| Southern California | 673 MB |
+| Texas | 727 MB |
+| California | 1.34 GB |
+
+**Before anything downloads,** GRID shows a confirmation with:
+- the download size;
+- the expected disk use;
+- the build time;
+- the **peak RAM**.
+
+**Peak RAM is the limiting factor.** FlockHopper's own README lists Ohio (about 300 MB of PBF) at
+**4 GB of RAM and about 5 minutes** to build, and the full US at **28 GB of heap (32 GB of RAM) and
+2–3 hours**.
+- GRID estimates the heap as roughly 13× the PBF size (Ohio's ratio) and sets `-Xmx` from it.
+- If the estimate is more than half of `ProcessInfo.physicalMemory`, GRID refuses and suggests a
+  smaller area or a sub-state. On a 16 GB Mac, that rules out all of California at once; NorCal,
+  SoCal or a custom area work instead.
+- Several areas can be installed. Each is its own graph, and a route uses the one that contains
+  both its start and its end.
+
+#### Build, then route, all offline
+
+```
+Geofabrik .osm.pbf ──download──▶ (optional) PBFClip (Swift) ──▶ area.osm.pbf
+        │ verified with Geofabrik's .md5                              │
+        ▼                                                             ▼
+GridRouteHost (JVM, sandbox: no network) ── import car profile ──▶ graph/<area>/  (≈ 0.3× PBF)
+                                                                      │ PBF deleted after the build
+ROUTE ⏎ ─▶ Swift FlockHopper port (CameraExposure, zones from the local ALPR snapshot,
+           normal → avoid → detour tiers) ─▶ JSON over stdin ─▶ GraphHopper custom_model query
+           ◀─ paths, instructions, distance, time ◀─ JSON over stdout
+```
+
+- **Graph size.** About **0.3× the PBF**: FlockHopper's US setup needs about 15 GB for an 11.6 GB
+  PBF plus its graph. That makes Colorado about 120 MB and Texas about 220 MB (estimates).
+- **Same engine settings as FlockHopper:**
+  - a car profile with `car_access` and `car_average_speed`;
+  - **contraction hierarchies and landmarks off**, so per-request custom models with camera
+    `areas` work;
+  - block zones ×0.0001 and penalty zones ×0.01;
+  - cameras pre-filtered to the corridor around the normal route.
+  - Flexible-mode queries over one state should take from a few hundred ms to a few seconds
+    (**verify** in Phase 0).
+- **Serving memory.** The graph opens memory-mapped (`MMAP`), so serving needs much less memory
+  than building: roughly **0.5–1.5 GB while a route is being computed** (estimate).
+  - The helper starts on the first ROUTE and **exits after 5 minutes idle**.
+  - Starting it again (JVM plus a memory-mapped graph) takes a few seconds.
+- **Camera data** comes from the local ALPR snapshot (§4.2), so nothing camera-related is
+  downloaded per route. Outside the US and Canada, the area's cameras are fetched once from Overpass
+  during the build, snapped to cells as in §4.4.
+- **Updates.** Roads change slowly. The area shows its build date, and **Update** rebuilds it from a
+  fresh extract, at most monthly. Camera data refreshes on its own schedule, so new cameras are
+  avoided without rebuilding the graph.
+
+#### Security model
+
+The routing pack follows the widget host's pattern (ARCHITECTURE.md §5):
+- **No network listener.** FlockHopper's `graphhopper-web` server on `localhost:8989` would be
+  reachable by any local process and, through DNS rebinding, by web pages. `GridRouteHost` speaks
+  JSON lines over stdin and stdout only.
+- **Sandboxed.** It runs under `sandbox-exec` with a deny-default profile:
+  - no network;
+  - read-only access to the runtime and its area's input;
+  - writes only to its own graph folder;
+  - no home folder access beyond that.
+- **Resource limits.** `-Xmx` comes from the estimate above, the process gets low priority
+  (`QOS_CLASS_UTILITY`, niced), the build can be cancelled at any time, and partial builds are
+  deleted.
+- **Hardened runtime.** The JVM is a separate executable, signed and notarized by its publisher,
+  with its own JIT entitlement. GRID's own entitlements don't change. Whether Gatekeeper prompts on
+  the first run of a downloaded `java` is to be checked (**verify**).
+- **Owner decision.** This adds a Java runtime as an optional download. It's "native" in the sense
+  that matters (no Electron, no web UI, no server), but it is a second language in the repo. The
+  pure-Swift router (Phase 8) is how to drop it later.
+
+#### What leaves the Mac
+
+| When | Host | What it learns |
+|---|---|---|
+| Installing the engine | Adoptium, Maven Central | That you installed the routing add-on |
+| Adding an area | Geofabrik | **Which region you chose** (or, for a custom area, the regions covering it) |
+| Routing | **Nobody** | Nothing. Start and end points never leave the Mac. |
+
+#### Compared with the other ways to run routing on the Mac
+
+| | Routing pack (GraphHopper helper) | Native Swift router (Phase 8) | Valhalla embedded (C++) |
+|---|---|---|---|
+| Matches FlockHopper's routes | **Yes**: same engine and model | Close, but its own engine | No: different engine. Its `exclude_polygons` work per segment. |
+| Add-on size | ≈ 170–200 MB + graphs | **0 MB** + graphs (≈ 100–300 MB per state) | ≈ 20–40 MB library (estimate) + tiles |
+| RAM to build one state | Ohio 4 GB (measured by FlockHopper) | ≈ 1–2 GB, streaming (estimate) | ≈ 2–4 GB (estimate) |
+| RAM while routing | ≈ 0.5–1.5 GB | ≈ 100–300 MB | ≈ 0.3–1 GB |
+| Turn restrictions, access rules, instructions | Mature, in many languages | **We build them**, the hard part | Mature |
+| Effort | **≈ 3–4 weeks** | ≈ 6–10 weeks | ≈ 4–6 weeks (packaging C++ for macOS; `valhalla-mobile` is iOS-only) |
+| Memory-safe parsing | JVM | **Swift** | C++ |
+
+**Recommendation.** Ship the **routing pack** as the on-device option, because it reproduces
+FlockHopper exactly and reuses a mature router. Remote engines stay in the list for anyone who
+doesn't want a 200 MB add-on. Keep the native Swift router (Phase 8) as the long-term way to drop
+the Java runtime and the multi-gigabyte build RAM. Its `PBFReader` and `PBFClip` are built in this
+phase anyway.
 
 ---
 
@@ -856,9 +1017,33 @@ entry. Nothing ships to users before Phase 2.
 - QA: Letter and A4, black-and-white printer, 1–40 page routes, a trip with unavoidable cameras,
   and GPX imported into OsmAnd and Garmin BaseCamp.
 
-### Phase 8 — Research: on-device routing (not committed)
-- A prototype graph builder (Geofabrik state PBF → compact edge file) and A* with camera penalties
-  per edge.
+### Phase 7b — On-device routing pack (3–4 weeks)
+- `Sources/GridCore/Maps/`
+  - `GeofabrikIndex.swift`: parse `index-v1.json`, regions covering a rectangle.
+  - `PBFReader.swift` and `PBFClip.swift`: streaming, keeps whole ways, tested with fixtures.
+  - `RoutingPackPlan.swift`: download, disk, RAM and time estimates, plus the refusal rule.
+  - `RouteHostProtocol.swift`: Codable JSON-lines messages.
+- `RouteHost/GridRouteHost.java` + `scripts/build-routehost.sh`: compiled with a JDK at GRID build
+  time and copied into `GRID.app/Contents/Resources`.
+- `Sources/Grid/Maps/`
+  - `RoutingPackInstaller.swift`: pinned SHA-256, Adoptium and Maven Central URLs, unpacking,
+    `codesign --verify`.
+  - `RouteHostProcess.swift`: `sandbox-exec` profile, `-Xmx`, idle exit, cancellation.
+  - `OnDeviceRouteProvider.swift`
+  - `RoutingPackSettings.swift`: area picker, map rectangle, progress, Update, Remove.
+- `LICENSES.md`: GraphHopper (Apache-2.0, NOTICE), plus a note that the JRE is downloaded from
+  Adoptium and not redistributed.
+- QA:
+  - Build Rhode Island and Colorado on 8 and 16 GB Macs.
+  - Cancel mid-build.
+  - Remove.
+  - Route parity with FlockHopper on 20 fixed trips.
+  - The helper can't open a socket (sandbox test).
+
+### Phase 8 — Research: native Swift router (not committed)
+- A prototype graph builder (reusing `PBFReader`) and A* with camera penalties per edge.
+- If it matches the routing pack's quality, it replaces the Java helper and drops about 200 MB and
+  multi-GB build RAM.
 - Measure graph size, query time and instruction quality against FlockHopper on the same trips.
 - Ship it only if it is good enough to replace a server.
 
@@ -879,7 +1064,8 @@ entry. Nothing ships to users before Phase 2.
 | GPU, battery or memory cost of glow | Medium / low | Glow is skipped with Effects › Glow off. Half-res bloom. Paused when hidden. On-demand frames. |
 | Opaque Metal view for accessibility | High / medium | Accessible list view, keyboard camera controls, labelled controls. |
 | Routing gives a false sense of being unseen | Medium / high | Wording says "mapped cameras" throughout; unavoidable cameras are listed; the disclaimer is on screen and on every printed page; the data date is shown. |
-| Start and end points sent to a third-party engine | High (by design) / high | Routing is off by default; a one-time ROUTE-NET consent names the host; self-hosting is documented and recommended; POST bodies only; nothing stored unless saved. |
+| Start and end points sent to a third-party engine | High (by design) / high | Routing is off by default; a one-time ROUTE-NET consent names the host; the **on-device routing pack** keeps them local; POST bodies only; nothing stored unless saved. |
+| Routing pack: graph builds exhaust RAM, or Java/GraphHopper need security updates | Medium / medium | Peak-RAM estimate with a refusal over 50% of physical memory, cancellable low-priority builds, pinned versions updated with GRID releases, a sandboxed helper with no network, and Remove in one click. |
 | The public FlockHopper API changes, rate-limits or disappears (no published terms; deployed v2.0.0 differs from the public source) | Medium / high | It's only a preset after the maintainers agree; the endpoint is configurable; Codable decoding tolerates unknown fields; Valhalla is the second engine. |
 | Apple Maps data accidentally used on GRID's map | Low / high | Not imported in the Maps module except for the `maps://` hand-off; a code-review checklist item in ARCHITECTURE.md. |
 | GPX navigators re-route through cameras | Medium / medium | Warning in the export dialog; a track (`trk`) is included so the course can be followed as is. |
@@ -906,7 +1092,8 @@ as the widget hosts. With the Map never opened, GRID's memory use is unchanged.
 | MapLibre Native fallback | **≈ +10–15 MB**, plus 1–3 MB if glyph ranges for the label font are bundled | The iOS dynamic xcframework zip for 6.27.0 is 10.1 MB and holds device and simulator slices. A stripped arm64-only macOS framework should land in this range. The 7.0 zip is 164 MB only because it bundles debug symbols. |
 | MapKit (only as a permitted fallback) | 0 | System framework |
 | Traffic, ALPR, routing clients, print, GPX | < 0.5 MB together | Pure Swift |
-| On-device router (Phase 8) | < 1 MB of code | The graph is downloaded and built per region, not bundled |
+| Routing pack (§7.5) | ≈ 30 KB (`GridRouteHost.jar`) | The JRE and GraphHopper (≈ 75–105 MB download, ≈ 170–200 MB on disk) are an **optional add-on** in Application Support, not part of the app |
+| Native Swift router (Phase 8) | < 1 MB of code | The graph is downloaded and built per region, not bundled |
 
 So the recommended path keeps GRID at **about 18–19 MB**. The MapLibre fallback roughly **doubles**
 it to about 30 MB.
@@ -921,7 +1108,9 @@ it to about 30 MB.
 | Traffic on | +≈ 5–20 MB | same | Flow tiles for the viewport, memory only |
 | Route computed (remote engine) | +< 5 MB | same | Geometry, maneuvers, scored cameras |
 | Printing a route | +≈ 50–150 MB **while printing** | raster snapshots: similar | Freed when the print job finishes |
-| On-device routing (Phase 8) | +≈ 100–300 MB **while routing** | same | Graph memory-mapped; only touched pages count; A* working set grows with trip length |
+| Routing pack: building an area | **separate helper process**: about 13× the PBF (Rhode Island ≈ 0.7 GB, Ohio 4 GB, Texas ≈ 9–10 GB) **only during the build** | same | GRID refuses builds over half of physical RAM |
+| Routing pack: routing | helper ≈ 0.5–1.5 GB **while routing**, then it exits after 5 min idle | same | Graph memory-mapped |
+| Native Swift router (Phase 8) | +≈ 100–300 MB **while routing** | same | Graph memory-mapped; only touched pages count; A* working set grows with trip length |
 | Map hidden for more than 30 s | back to **+≈ 0–10 MB** | MapLibre keeps more internal state; ≈ 30–60 MB | Freed by the rule above |
 
 ### 11.3 Disk (Application Support, all clearable with Clear Map Data)
@@ -933,7 +1122,9 @@ it to about 30 MB.
 | Overpass cell cache | < 5 MB | 24 h TTL |
 | Saved routes | KB each | Only if saved |
 | Offline PMTiles extract (Phase 5) | ≈ 50–150 MB for a metro area, hundreds of MB to ≈ 1 GB for a state at z0–14 | Optional; the planet build is about 139 GB, so never the planet |
-| On-device routing graph (Phase 8) | ≈ 100–300 MB per state | Built from a Geofabrik PBF, deleted after the build. California's PBF is 1.34 GB, the whole US 12.3 GB. |
+| Routing pack engine | ≈ 170–200 MB | JRE + GraphHopper; Remove deletes it |
+| Routing pack graph per area | ≈ 0.3× the PBF: Rhode Island ≈ 16 MB, Colorado ≈ 120 MB, Texas ≈ 220 MB (estimates). The PBF itself (53 MB – 1.34 GB) exists only during the build | |
+| Native Swift routing graph (Phase 8) | ≈ 100–300 MB per state | Built from a Geofabrik PBF, deleted after the build. California's PBF is 1.34 GB, the whole US 12.3 GB. |
 
 ### 11.4 Outside GRID: a self-hosted routing engine
 
@@ -941,13 +1132,15 @@ This isn't GRID's memory, but it is the Mac's if the user runs the engine locall
 
 | Engine | One state | Whole US |
 |---|---|---|
-| FlockHopper (GraphHopper JVM, contraction hierarchies off) | ≈ 2–4 GB RAM | ≈ 8–16 GB RAM |
+| FlockHopper (GraphHopper JVM, contraction hierarchies off) | **Ohio: 4 GB RAM, about 5 min to build** (FlockHopper README) | **28 GB heap / 32 GB RAM, 2–3 h to build, about 15 GB of disk** (FlockHopper README) |
 | Valhalla | ≈ 1–2 GB RAM to serve. Building the tiles needs more. | ≈ 8–16 GB RAM to build |
 
 - On macOS, Docker Desktop adds its own VM, roughly 1–2 GB more.
 - For the whole US, a separate always-on machine is more practical than a laptop.
-- One state fits comfortably on a 16 GB Mac.
-- Phase 0 measures this for one state (§9).
+- A mid-size state fits on a 16 GB Mac. A large one (California) or the whole US doesn't, so use a
+  sub-state or a custom area.
+- The **routing pack (§7.5)** uses the same engine without Docker. Its build RAM follows the
+  FlockHopper figures above, and serving needs about 0.5–1.5 GB, only while routing.
 
 ## 12. Out of scope (unless requested)
 - Live turn-by-turn voice navigation in GRID. A laptop shouldn't be used while driving; §8's
