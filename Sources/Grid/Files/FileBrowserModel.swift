@@ -13,20 +13,31 @@ enum FileSearchMode: String, CaseIterable {
 @MainActor
 final class FileBrowserModel {
     private(set) var currentURL: URL
-    private(set) var entries: [FileEntry] = []
+    private(set) var entries: [FileEntry] = [] { didSet { recomputeVisible() } }
     private(set) var error: ListingError?
     private(set) var loading = false
     private var backStack: [URL] = []
     private var forwardStack: [URL] = []
 
-    var sortKey: FileSortKey = .name
-    var ascending = true
-    var query = "" { didSet { if mode == .deep { scheduleDeepSearch() } } }
-    var mode: FileSearchMode = .here { didSet { if mode == .deep { scheduleDeepSearch() } else { cancelDeepSearch() } } }
-    var selectionID: String?
+    var sortKey: FileSortKey = .name { didSet { recomputeVisible() } }
+    var ascending = true { didSet { recomputeVisible() } }
+    var query = "" { didSet { if mode == .deep { scheduleDeepSearch() }; recomputeVisible() } }
+    var mode: FileSearchMode = .here { didSet { if mode == .deep { scheduleDeepSearch() } else { cancelDeepSearch() }; recomputeVisible() } }
+
+    /// Primary ("cursor") selection: drives the inspector and keyboard movement. Setting it
+    /// directly makes it the only selected item.
+    var selectionID: String? {
+        didSet { if !extendingSelection { selectedIDs = selectionID.map { [$0] } ?? []; anchorID = selectionID } }
+    }
+    /// Full selection (multi-select with ⌘/⇧).
+    private(set) var selectedIDs: Set<String> = []
+    @ObservationIgnored private var anchorID: String?
+    @ObservationIgnored private var extendingSelection = false
+    /// Row currently being renamed inline.
+    var renamingID: String?
 
     // Recursive search state (real counts, not decoration)
-    private(set) var deepResults: [FileEntry] = []
+    private(set) var deepResults: [FileEntry] = [] { didSet { if mode == .deep { recomputeVisible() } } }
     private(set) var deepScanned = 0
     private(set) var deepSkipped = 0
     private(set) var deepRunning = false
@@ -37,7 +48,10 @@ final class FileBrowserModel {
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     @ObservationIgnored private var deepTask: Task<Void, Never>?
     @ObservationIgnored private var watcher: DispatchSourceFileSystemObject?
+    /// Paths to select once they appear in the listing (after create/paste/rename).
+    @ObservationIgnored var pendingSelection: [String]?
     @ObservationIgnored var onError: ((String) -> Void)?
+    @ObservationIgnored var onNavigate: ((URL) -> Void)?
     /// Asked before opening something that would *run* rather than display. Call the closure
     /// to proceed. If unset, such files are refused.
     @ObservationIgnored var confirmRun: ((URL, _ reason: String, _ proceed: @escaping () -> Void) -> Void)?
@@ -57,10 +71,65 @@ final class FileBrowserModel {
     var canGoForward: Bool { !forwardStack.isEmpty }
     var canGoUp: Bool { currentURL.path != "/" }
 
-    /// Rows currently shown: filtered folder listing, or recursive results.
-    var visible: [FileEntry] {
-        if mode == .deep && !query.trimmingCharacters(in: .whitespaces).isEmpty { return deepResults }
-        return FileListing.sorted(FileListing.filter(entries, query: query), by: sortKey, ascending: ascending)
+    /// Rows currently shown: filtered folder listing, or recursive results. Cached: recomputed
+    /// only when entries, sort, query, or mode change (it used to re-sort on every access).
+    private(set) var visible: [FileEntry] = []
+
+    private func recomputeVisible() {
+        if mode == .deep && !query.trimmingCharacters(in: .whitespaces).isEmpty {
+            visible = deepResults
+        } else {
+            visible = FileListing.sorted(FileListing.filter(entries, query: query), by: sortKey, ascending: ascending)
+        }
+    }
+
+    /// Selected entries in display order.
+    var selectedEntries: [FileEntry] {
+        guard !selectedIDs.isEmpty else { return [] }
+        return visible.filter { selectedIDs.contains($0.id) }
+    }
+
+    // MARK: Selection
+
+    /// Mouse click with Finder semantics: ⌘ toggles, ⇧ extends a range from the anchor.
+    func click(_ id: String, command: Bool, shift: Bool) {
+        if shift, let anchor = anchorID, let a = visible.firstIndex(where: { $0.id == anchor }),
+           let b = visible.firstIndex(where: { $0.id == id }) {
+            setSelection(Set(visible[min(a, b)...max(a, b)].map(\.id)), cursor: id, keepAnchor: true)
+        } else if command {
+            var set = selectedIDs
+            if set.contains(id) { set.remove(id) } else { set.insert(id) }
+            setSelection(set, cursor: set.contains(id) ? id : set.first, keepAnchor: false)
+        } else {
+            selectionID = id
+        }
+    }
+
+    func selectAll() {
+        setSelection(Set(visible.map(\.id)), cursor: selectionID ?? visible.first?.id, keepAnchor: true)
+    }
+
+    /// ⇧↑ / ⇧↓: grow or shrink the range from the anchor.
+    func extendSelection(_ delta: Int) {
+        guard !visible.isEmpty else { return }
+        let cursor = visible.firstIndex { $0.id == selectionID } ?? 0
+        let next = max(0, min(visible.count - 1, cursor + delta))
+        let anchor = anchorID.flatMap { id in visible.firstIndex { $0.id == id } } ?? cursor
+        setSelection(Set(visible[min(anchor, next)...max(anchor, next)].map(\.id)), cursor: visible[next].id, keepAnchor: true)
+    }
+
+    private func setSelection(_ ids: Set<String>, cursor: String?, keepAnchor: Bool) {
+        extendingSelection = true
+        selectionID = cursor
+        extendingSelection = false
+        selectedIDs = ids
+        if !keepAnchor { anchorID = cursor }
+    }
+
+    /// Selects specific paths after an operation (e.g. pasted items).
+    func select(paths: [String]) {
+        let set = Set(paths)
+        setSelection(set, cursor: paths.first, keepAnchor: false)
     }
 
     var selectedEntry: FileEntry? {
@@ -78,6 +147,7 @@ final class FileBrowserModel {
         }
         let previous = currentURL
         currentURL = target
+        onNavigate?(target)
         query = ""
         mode = .here
         // Going up selects the folder we came from, like Finder.
@@ -136,7 +206,16 @@ final class FileBrowserModel {
             case .success(let items):
                 self.entries = items
                 self.error = nil
-                if let sel = self.selectionID, !items.contains(where: { $0.id == sel }) { self.selectionID = nil }
+                let ids = Set(items.map(\.id))
+                if let sel = self.selectionID, !ids.contains(sel) {
+                    self.selectionID = nil
+                } else if !self.selectedIDs.isSubset(of: ids) {
+                    self.setSelection(self.selectedIDs.intersection(ids), cursor: self.selectionID, keepAnchor: true)
+                }
+                if let pending = self.pendingSelection, pending.allSatisfy(ids.contains) {
+                    self.select(paths: pending)
+                    self.pendingSelection = nil
+                }
                 self.watch(url)
             case .failure(let e):
                 self.entries = []
@@ -279,6 +358,22 @@ final class FileBrowserModel {
             return "It is an executable program."
         }
         return nil
+    }
+
+    /// "Open With": a specific app. Still asks first if that app would execute the file.
+    func open(_ url: URL, with appURL: URL) {
+        let report = onError
+        let go = {
+            NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration()) { _, err in
+                if let err { DispatchQueue.main.async { report?("Could not open “\(url.lastPathComponent)”: \(err.localizedDescription)") } }
+            }
+        }
+        if let bid = Bundle(url: appURL)?.bundleIdentifier, Self.executingApps.contains(bid) {
+            let reason = "\(appURL.deletingPathExtension().lastPathComponent) runs files as programs."
+            if let confirmRun { confirmRun(url, reason, go) } else { onError?("Refused to run “\(url.lastPathComponent)”.") }
+            return
+        }
+        go()
     }
 
     private func launch(_ url: URL) {

@@ -12,12 +12,14 @@ struct InspectorView: View {
 
     var body: some View {
         Panel(index: "02.1", title: "Inspector", suffix: "meta", clipped: false) {
-            if let e = app.files.selectedEntry {
+            if app.files.selectedIDs.count > 1 {
+                MultiSelectionSummary()
+            } else if let e = app.files.selectedEntry {
                 InspectorContent(entry: e).id(e.id)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     SectionLabel("no selection")
-                    Text("Select an item to see its details.\n\n↑ ↓  move\n⏎    open\n⌘↑   enclosing folder\n⌥⌘T  terminal here")
+                    Text("Select an item to see its details.\n\n↑ ↓   move   ⇧↑↓ extend\n⏎     open   Space quick look\n⌘↑    enclosing folder\n⇧⌘N   new folder\n⌘C ⌘V copy · paste (⌥⌘V move)\n⌘⌫    move to Trash   ⌘Z undo\n⌥⌘T   terminal here")
                         .font(GridFont.small).foregroundStyle(theme.textDim)
                     Spacer()
                 }
@@ -25,6 +27,41 @@ struct InspectorView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+}
+
+private struct MultiSelectionSummary: View {
+    @Environment(AppState.self) private var app
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        let items = app.files.selectedEntries
+        let folders = items.filter(\.isNavigableFolder).count
+        let bytes = items.compactMap(\.size).reduce(0, +)
+        let urls = items.map(\.url)
+        VStack(alignment: .leading, spacing: 12) {
+            Text("\(items.count) items selected").font(GridFont.bodyStrong).foregroundStyle(theme.text)
+            VStack(alignment: .leading, spacing: 4) {
+                SectionLabel("contents")
+                Text("\(items.count - folders) file\(items.count - folders == 1 ? "" : "s") · \(folders) folder\(folders == 1 ? "" : "s")")
+                    .font(GridFont.small).foregroundStyle(theme.text)
+                SectionLabel("size of files")
+                Text(Formatters.size(bytes) + (folders > 0 ? "  (folders not counted)" : ""))
+                    .font(GridFont.small).foregroundStyle(theme.text)
+            }
+            TerminatedRule()
+            VStack(alignment: .leading, spacing: 6) {
+                Button("Quick Look") { QuickLook.shared.show(urls) }
+                Button("Insert \(items.count) Paths in Terminal") { app.insertPathsIntoTerminal(urls) }
+                Button("Copy") { app.fileOps.copyToPasteboard(urls) }
+                Button("Copy Paths") { app.files.copyPaths(urls); app.flash(.info, "Copied paths") }
+                Button("Move to Trash") { app.fileOps.trash(urls) }
+            }
+            .buttonStyle(GridButtonStyle(compact: true))
+            Spacer()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -107,6 +107,61 @@ enum DebugHooks {
             if let id = app.terminals.activeID { app.requestCloseTerminal(id) }
         case "confirm":
             if let conf = app.confirmation { app.confirmation = nil; conf.onConfirm() }
+        case "setting":
+            let on = (c["value"] as? Bool) ?? false
+            switch c["key"] as? String {
+            case "grid": app.settings.gridBackdrop = on
+            case "glow": app.settings.glow = on
+            case "motion": app.settings.motion = on
+            default: break
+            }
+        case "click":
+            if let id = c["id"] as? String { app.files.click(id, command: (c["command"] as? Bool) ?? false, shift: (c["shift"] as? Bool) ?? false) }
+        case "fileop":
+            let ops = app.fileOps
+            let urls = app.files.selectedEntries.map(\.url)
+            switch c["op"] as? String {
+            case "newFolder": ops.newFolder()
+            case "rename":
+                if let e = app.files.selectedEntry, let name = c["name"] as? String {
+                    let err = ops.rename(e, to: name)
+                    app.flash(err == nil ? .info : .error, err ?? "renamed")
+                    app.files.renamingID = nil
+                }
+            case "trash": ops.trash(urls)
+            case "duplicate": ops.duplicate(urls)
+            case "copy": ops.copyToPasteboard(urls)
+            case "paste": ops.pasteFromPasteboard(into: app.files.currentURL, move: (c["move"] as? Bool) ?? false)
+            case "transfer":
+                if let paths = c["paths"] as? [String], let dir = c["dir"] as? String {
+                    ops.transfer(paths.map { URL(fileURLWithPath: $0) }, into: URL(fileURLWithPath: dir), move: (c["move"] as? Bool) ?? false)
+                }
+            case "undo": ops.undo()
+            case "alternate":
+                if let conf = app.confirmation { app.confirmation = nil; conf.onAlternate() }
+            default: break
+            }
+        case "split":
+            app.split((c["axis"] as? String) == "down" ? .vertical : .horizontal)
+        case "closeTab":
+            if let id = app.terminals.activeTabID { app.requestCloseTab(id) }
+        case "deck":
+            app.deckVisible = (c["value"] as? Bool) ?? !app.deckVisible
+        case "addWidget":
+            if let k = WidgetKind(rawValue: c["kind"] as? String ?? "") { _ = app.widgets.add(k) }
+        case "widget":
+            // {"cmd":"widget","index":0,"op":"remove"|"expand"|"collapse"|"moveToEnd"|"set","key":..,"value":..}
+            let idx = (c["index"] as? Int) ?? 0
+            guard app.widgets.widgets.indices.contains(idx) else { break }
+            let w = app.widgets.widgets[idx]
+            switch c["op"] as? String {
+            case "remove": app.widgets.remove(w.id)
+            case "expand": app.widgets.update(w.id) { $0.expanded.toggle() }
+            case "collapse": app.widgets.update(w.id) { $0.collapsed.toggle() }
+            case "moveToEnd": app.widgets.move(w.id, before: nil)
+            case "set": app.widgets.set(w.id, c["key"] as? String ?? "", c["value"] as? String)
+            default: break
+            }
         case "cancel":
             if let conf = app.confirmation { app.confirmation = nil; conf.onCancel() }
         case "present":
@@ -132,7 +187,7 @@ enum DebugHooks {
                 s.refresh()
                 return ["number": s.number, "pid": s.shellPID, "cwd": s.cwd ?? "", "fg": s.foregroundName ?? "",
                         "cols": s.columns, "rows": s.rows, "exited": s.exited, "exitCode": s.exitCode.map { Int($0) } ?? -999,
-                        "title": s.programTitle, "focus": s.hasFocus, "metal": s.view.isUsingMetalRenderer,
+                        "title": s.programTitle, "focus": s.hasFocus, "bell": s.bellPending, "metal": s.view.isUsingMetalRenderer,
                         "screen": (s.view.terminalContentSnapshot(region: .viewport)?.rows.map { r in
                             var t = r.text; while t.last == " " { t.removeLast() }; return t } ?? []), "descendants": ProcessInspector.descendants(of: s.shellPID).map { Int($0) }]
             }
@@ -141,8 +196,14 @@ enum DebugHooks {
                 "panel": app.panel.rawValue, "sessions": sessions, "active": app.terminals.active?.number ?? 0,
                 "files": ["dir": app.files.currentURL.path, "count": app.files.visible.count, "error": errorText,
                           "deep": app.files.deepResults.count, "deepRunning": app.files.deepRunning,
-                          "selected": app.files.selectionID ?? ""],
+                          "selected": app.files.selectionID ?? "", "selectedCount": app.files.selectedIDs.count,
+                          "renaming": app.files.renamingID ?? "", "busy": app.fileOps.busy ?? "",
+                          "undo": app.fileOps.undoLabel ?? ""],
                 "apps": app.apps.records.count, "confirmation": app.confirmation?.code ?? "",
+                "tabs": app.terminals.tabs.map { t in ["panes": t.panes.map(\.number), "axis": t.axis == .horizontal ? "h" : "v",
+                                                         "focused": t.focused?.number ?? 0, "title": t.title] },
+                "widgets": app.widgets.widgets.map { ["kind": $0.kind.rawValue, "expanded": $0.expanded, "collapsed": $0.collapsed] },
+                "deck": app.deckVisible,
                 "notice": app.notice?.text ?? "", "recents": app.apps.recents,
             ]
             if let data = try? JSONSerialization.data(withJSONObject: st, options: [.prettyPrinted, .sortedKeys]) {

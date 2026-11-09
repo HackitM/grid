@@ -50,7 +50,7 @@ struct Theme: Equatable {
         case .legacy:
             return Theme(id: id,
                 bg0: Color(hex: 0x030608), bg1: Color(hex: 0x070C0F), bg2: Color(hex: 0x0C1418), bg3: Color(hex: 0x050A0C),
-                text: Color(hex: 0xDDF4F8), textDim: Color(hex: 0x8DB0B9), textMute: Color(hex: 0x557079), textOnAccent: Color(hex: 0x021014),
+                text: Color(hex: 0xDDF4F8), textDim: Color(hex: 0x8DB0B9), textMute: Color(hex: 0x65858F), textOnAccent: Color(hex: 0x021014),
                 accent: Color(hex: 0x6FE3F5), accentSoft: Color(hex: 0x6FE3F5, alpha: 0.13), glow: Color(hex: 0x2CCBEA),
                 line: Color(hex: 0x6FE3F5, alpha: 0.18), lineStrong: Color(hex: 0x6FE3F5, alpha: 0.75),
                 ok: Color(hex: 0x7CF0C0), warn: Color(hex: 0xFFC56B), danger: Color(hex: 0xFF6B57),
@@ -59,7 +59,7 @@ struct Theme: Equatable {
         case .ares:
             return Theme(id: id,
                 bg0: Color(hex: 0x070404), bg1: Color(hex: 0x0D0807), bg2: Color(hex: 0x170D0B), bg3: Color(hex: 0x0A0605),
-                text: Color(hex: 0xF6E6E1), textDim: Color(hex: 0xBE958B), textMute: Color(hex: 0x7A5850), textOnAccent: Color(hex: 0x140302),
+                text: Color(hex: 0xF6E6E1), textDim: Color(hex: 0xBE958B), textMute: Color(hex: 0x9D746A), textOnAccent: Color(hex: 0x140302),
                 accent: Color(hex: 0xFF4A2B), accentSoft: Color(hex: 0xFF4A2B, alpha: 0.15), glow: Color(hex: 0xFF2C10),
                 line: Color(hex: 0xFF4A2B, alpha: 0.20), lineStrong: Color(hex: 0xFF5A3C, alpha: 0.85),
                 ok: Color(hex: 0x8FE3C2), warn: Color(hex: 0xFFD27A), danger: Color(hex: 0xFFFFFF),
@@ -68,7 +68,7 @@ struct Theme: Equatable {
         case .amber:
             return Theme(id: id,
                 bg0: Color(hex: 0x060504), bg1: Color(hex: 0x0C0A07), bg2: Color(hex: 0x15110B), bg3: Color(hex: 0x090705),
-                text: Color(hex: 0xF5EBDA), textDim: Color(hex: 0xBBA27C), textMute: Color(hex: 0x76654B), textOnAccent: Color(hex: 0x140D02),
+                text: Color(hex: 0xF5EBDA), textDim: Color(hex: 0xBBA27C), textMute: Color(hex: 0x917C5C), textOnAccent: Color(hex: 0x140D02),
                 accent: Color(hex: 0xFFB547), accentSoft: Color(hex: 0xFFB547, alpha: 0.14), glow: Color(hex: 0xFF9A1A),
                 line: Color(hex: 0xFFB547, alpha: 0.18), lineStrong: Color(hex: 0xFFB547, alpha: 0.80),
                 ok: Color(hex: 0x8FE3C2), warn: Color(hex: 0xFFE08A), danger: Color(hex: 0xFF6B57),

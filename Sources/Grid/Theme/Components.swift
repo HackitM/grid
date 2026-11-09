@@ -153,7 +153,12 @@ struct Panel<Content: View, Trailing: View>: View {
             content()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(theme.bg1)
+        .background {
+            ZStack {
+                theme.bg1
+                if effects.gridBackdrop { GridBackdrop() }
+            }
+        }
         .clipShape(ClippedRect(topRight: clipped))
         .overlay(
             ClippedRect(topRight: clipped)
@@ -291,18 +296,32 @@ struct StateBlock<Actions: View>: View {
     }
 }
 
-/// Optional faint grid backdrop (off by default). Static: no animation.
+/// Optional grid backdrop (off by default): minor cells with a stronger major line every 4th.
+/// Static (no animation); drawn behind panel content, so text contrast is unaffected.
 struct GridBackdrop: View {
     @Environment(\.theme) private var theme
+    var step: CGFloat = 24
     var body: some View {
         Canvas { ctx, size in
-            let step: CGFloat = 32
-            var p = Path()
+            var minor = Path(), major = Path()
+            var i = 0
             var x: CGFloat = 0
-            while x <= size.width { p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: size.height)); x += step }
+            while x <= size.width {
+                var p = i % 4 == 0 ? major : minor
+                p.move(to: CGPoint(x: x + 0.5, y: 0)); p.addLine(to: CGPoint(x: x + 0.5, y: size.height))
+                if i % 4 == 0 { major = p } else { minor = p }
+                x += step; i += 1
+            }
+            i = 0
             var y: CGFloat = 0
-            while y <= size.height { p.move(to: CGPoint(x: 0, y: y)); p.addLine(to: CGPoint(x: size.width, y: y)); y += step }
-            ctx.stroke(p, with: .color(theme.accent.opacity(0.035)), lineWidth: 1)
+            while y <= size.height {
+                var p = i % 4 == 0 ? major : minor
+                p.move(to: CGPoint(x: 0, y: y + 0.5)); p.addLine(to: CGPoint(x: size.width, y: y + 0.5))
+                if i % 4 == 0 { major = p } else { minor = p }
+                y += step; i += 1
+            }
+            ctx.stroke(minor, with: .color(theme.accent.opacity(0.055)), lineWidth: 1)
+            ctx.stroke(major, with: .color(theme.accent.opacity(0.11)), lineWidth: 1)
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)

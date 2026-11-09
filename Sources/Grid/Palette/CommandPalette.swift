@@ -19,7 +19,15 @@ struct PaletteItem: Identifiable {
 enum PaletteBuilder {
     static func commands(_ app: AppState) -> [PaletteItem] {
         var c: [PaletteItem] = [
-            .init(id: "new-term", section: "COMMAND", title: "New Terminal Session", glyph: "+", shortcut: "⌘T") { app.newTerminal() },
+            .init(id: "new-term", section: "COMMAND", title: "New Terminal Tab", glyph: "+", shortcut: "⌘T") { app.newTerminal() },
+            .init(id: "split-right", section: "COMMAND", title: "Split Pane Right", glyph: "▥", shortcut: "⌘D") { app.split(.horizontal) },
+            .init(id: "split-down", section: "COMMAND", title: "Split Pane Down", glyph: "▤", shortcut: "⇧⌘D") { app.split(.vertical) },
+            .init(id: "deck", section: "COMMAND", title: app.deckVisible ? "Hide Widget Deck" : "Show Widget Deck", glyph: "▦", shortcut: "⌘J") {
+                if app.panel != .terminal { app.show(.terminal); app.deckVisible = true } else { app.deckVisible.toggle() }
+            },
+            .init(id: "new-folder", section: "COMMAND", title: "New Folder", subtitle: PathResolver.abbreviate(app.files.currentURL.path), glyph: "+", shortcut: "⇧⌘N") {
+                app.show(.files); app.fileOps.newFolder()
+            },
             .init(id: "go-term", section: "COMMAND", title: "Go to Terminal", glyph: "01", shortcut: "⌥⌘1") { app.show(.terminal); app.focusTerminal() },
             .init(id: "go-files", section: "COMMAND", title: "Go to Files", glyph: "02", shortcut: "⌥⌘2") { app.show(.files) },
             .init(id: "go-apps", section: "COMMAND", title: "Go to Applications", glyph: "03", shortcut: "⌥⌘3") { app.show(.apps) },
@@ -38,6 +46,16 @@ enum PaletteBuilder {
             .init(id: "fx-motion", section: "COMMAND", title: app.settings.motion ? "Disable Motion" : "Enable Motion", glyph: "≈") { app.settings.motion.toggle() },
             .init(id: "fx-grid", section: "COMMAND", title: app.settings.gridBackdrop ? "Hide Grid Backdrop" : "Show Grid Backdrop", glyph: "#") { app.settings.gridBackdrop.toggle() },
         ]
+        if let label = app.fileOps.undoLabel, app.fileOps.canUndo {
+            c.append(.init(id: "undo-file", section: "COMMAND", title: label, glyph: "↶", shortcut: "⌘Z") { app.fileOps.undo() })
+        }
+        for k in WidgetKind.allCases {
+            c.append(.init(id: "widget-\(k.rawValue)", section: "WIDGET", title: "Add Widget: \(k.title)", subtitle: k.blurb, glyph: "+") {
+                _ = app.widgets.add(k)
+                if app.panel != .terminal { app.show(.terminal) }
+                app.deckVisible = true
+            })
+        }
         for t in ThemeID.allCases {
             c.append(.init(id: "theme-\(t.rawValue)", section: "COMMAND", title: "Theme: \(t.label)", glyph: t == app.settings.theme ? "●" : "○") { app.setTheme(t) })
         }
@@ -126,10 +144,17 @@ struct CommandPalette: View {
     @State private var query = ""
     @State private var selected = 0
     @State private var appeared = false
+    /// Results are computed only when the query changes (or the palette opens), never as a side
+    /// effect of unrelated app state updating, so scrolling never triggers a rebuild.
+    @State private var items: [PaletteItem] = []
     @FocusState private var focused: Bool
 
+    private func rebuild() {
+        items = PaletteBuilder.build(app, query: query)
+        selected = 0
+    }
+
     var body: some View {
-        let items = PaletteBuilder.build(app, query: query)
         VStack(spacing: 0) {
             // Header: Ares-style double rule with terminators + label.
             HStack(spacing: 8) {
@@ -147,7 +172,7 @@ struct CommandPalette: View {
                     .font(GridFont.mono(14))
                     .foregroundStyle(theme.text)
                     .focused($focused)
-                    .onSubmit { run(items) }
+                    .onSubmit { run() }
                     .onKeyPress(.downArrow) { move(1, items.count); return .handled }
                     .onKeyPress(.upArrow) { move(-1, items.count); return .handled }
                     .onExitCommand { close() }
@@ -171,14 +196,15 @@ struct CommandPalette: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
+                            ForEach(items.indices, id: \.self) { i in
+                                let item = items[i]
                                 if i == 0 || items[i - 1].section != item.section {
                                     SectionLabel(item.section, color: theme.textMute)
                                         .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 3)
                                 }
                                 PaletteRow(item: item, selected: i == selected)
                                     .id(i)
-                                    .onTapGesture { selected = i; run(items) }
+                                    .onTapGesture { selected = i; run() }
                             }
                         }
                         .padding(.bottom, 6)
@@ -189,18 +215,25 @@ struct CommandPalette: View {
             }
         }
         .frame(width: 640)
-        .background(theme.bg1)
         .clipShape(ClippedRect(cut: 12, topRight: true, bottomLeft: true))
+        // Shadows live on static background/outline shapes, never on the scrolling content:
+        // a shadow on the content forces the whole list to be re-composited every frame.
+        .background(
+            ClippedRect(cut: 12, topRight: true, bottomLeft: true)
+                .fill(theme.bg1)
+                .shadow(color: .black.opacity(0.6), radius: 30, y: 10)
+        )
         .overlay(ClippedRect(cut: 12, topRight: true, bottomLeft: true)
             .stroke(theme.lineStrong, lineWidth: Metrics.hairline)
-            .shadow(color: effects.glow ? theme.glow.opacity(0.5) : .clear, radius: 8))
-        .shadow(color: .black.opacity(0.6), radius: 30, y: 10)
+            .shadow(color: effects.glow ? theme.glow.opacity(0.5) : .clear, radius: 8)
+            .allowsHitTesting(false))
         .opacity(appeared || !effects.motion ? 1 : 0)
         .onAppear {
+            rebuild()
             focused = true
             withAnimation(effects.motion ? .easeOut(duration: 0.14) : nil) { appeared = true }
         }
-        .onChange(of: query) { _, _ in selected = 0 }
+        .onChange(of: query) { _, _ in rebuild() }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Command palette")
     }
@@ -210,7 +243,7 @@ struct CommandPalette: View {
         selected = (selected + d + n) % n
     }
 
-    private func run(_ items: [PaletteItem]) {
+    private func run() {
         guard items.indices.contains(selected), items[selected].enabled else { return }
         let action = items[selected].action
         close()

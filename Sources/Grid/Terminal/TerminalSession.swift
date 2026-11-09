@@ -26,6 +26,8 @@ final class TerminalSession: Identifiable {
     var hasFocus = false
     /// A foreground job finished while this tab was not visible.
     var unseenCompletion = false
+    /// The program rang the bell (BEL) while this pane wasn't focused.
+    var bellPending = false
 
     var isBusy: Bool { foregroundName != nil && !exited }
 
@@ -45,6 +47,10 @@ final class TerminalSession: Identifiable {
         delegateProxy = proxy
         view.processDelegate = proxy
         view.onFocusChange = { [weak self] f in self?.hasFocus = f }
+        view.onBell = { [weak self] in
+            guard let self, !self.hasFocus else { return }
+            self.bellPending = true
+        }
     }
 
     var displayTitle: String {
@@ -78,13 +84,15 @@ final class TerminalSession: Identifiable {
         guard !exited, let process = view.process else { return false }
         let pid = process.shellPid
         guard pid > 0 else { return false }
-        if let d = ProcessInspector.currentDirectory(pid: pid) { cwd = d }
+        // Assign only on change: @Observable notifies on every write, and this runs every second,
+        // so unconditional writes would re-render every view that reads session state.
+        if let d = ProcessInspector.currentDirectory(pid: pid), d != cwd { cwd = d }
         let wasBusy = isBusy
+        var fg: String?
         if let pg = ProcessInspector.foregroundProcessGroup(ptyMaster: process.childfd), pg != pid {
-            foregroundName = ProcessInspector.name(pid: pg) ?? "job"
-        } else {
-            foregroundName = nil
+            fg = ProcessInspector.name(pid: pg) ?? "job"
         }
+        if fg != foregroundName { foregroundName = fg }
         return wasBusy && !isBusy
     }
 

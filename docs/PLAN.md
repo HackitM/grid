@@ -25,20 +25,31 @@
 - [x] Code review fixes: locked-down QA hook, ⌘W never quits, single-confirmation guard,
       regular-file-only previews, identity-checked kill escalation, run confirmation for executables
 
-## Milestone 2 — Daily-use polish (next)
-- [ ] Split panes (⌘D / ⇧⌘D) inside a terminal tab
-- [ ] File operations: new folder, rename, copy/move with conflict dialog, Move to Trash (never
-      permanent delete by default), undo where possible
-- [ ] Multi-select in Files (⇧/⌘ click, ⇧↑↓), drag multiple paths
-- [ ] Quick Look panel (Space) and “Open With…” submenu
-- [ ] Persist layout: sidebar/inspector visibility, widths (draggable dividers), last folder,
-      window frame; optionally restore session directories (not processes)
-- [ ] Terminal find bar styling; per-session title overrides; bell indicator
+## Milestone 2 — Daily-use polish ✅ (mostly)
+- [x] Fixes: command-palette scroll lag (shadow off the scrolling layer, results cached, no
+      per-second re-renders from terminal polling); grid backdrop drawn inside panels
+- [x] Split panes (⌘D / ⇧⌘D, ⌥⌘←/→), up to 4 per tab, one axis per tab
+- [x] File operations: new folder, rename, duplicate, copy/move with Replace/Keep Both/Skip,
+      Move to Trash, Delete Immediately (confirmed), multi-step undo (incl. restoring replaced items)
+- [x] Multi-select (⌘/⇧ click, ⇧↑↓, ⌘A), multi-path drag into the terminal, drop into Files
+- [x] Quick Look (Space) and Open With
+- [x] Persist layout: sidebar/inspector/deck visibility, draggable widths, last folder
+      (window frame is restored by macOS)
+- [x] Tab rename (double-click); bell indicator
+- [x] App icon; SwiftTerm license shipped in the bundle
+- [x] Contrast: textMute raised to ≥ 4.6:1 (WCAG AA) on all themes
+- [x] Performance: cached file listing; 2M-line output in ~4 s
+- [ ] Terminal find bar styling
 - [ ] Keyboard shortcut customization beyond the palette key
-- [ ] App icon; release script copying SwiftTerm LICENSE into the bundle
-- [ ] Accessibility pass with VoiceOver; contrast check for textMute on all themes
-- [ ] Performance: profile large folders (10k+ entries) and heavy terminal output
+- [ ] VoiceOver walkthrough (needs a person)
+- [ ] Unequal pane sizes (draggable pane dividers), mixed-axis split layouts
 - [ ] Optional OSC 7 / OSC 133 shell integration file (opt-in, documented) for prompt marks
+
+## Widget deck ✅
+- [x] Deck panel (⌘J) with drag-reorder, settings face, expand/collapse, remove, gallery, persistence
+- [x] Clock, System, Network, Storage, Power, Sessions, Pinned Apps, Git, Notes, Recent Files
+- [ ] Ideas: calendar (EventKit needs a permission prompt), weather (network — out of scope
+      unless requested), per-widget accent, a full-screen deck panel
 
 ## Milestone 3 — Web
 - [ ] Reader prototype: hidden non-persistent WKWebView + Readability in isolated content world →

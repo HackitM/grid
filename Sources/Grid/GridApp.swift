@@ -90,11 +90,18 @@ struct GridCommands: Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Session") { app.newTerminal() }.keyboardShortcut("t", modifiers: .command)
             Button("New Session in Files Folder") { app.openTerminalHere() }.keyboardShortcut("t", modifiers: [.command, .option])
+            Button("New Folder") {
+                if !filesVisible { app.show(.files) }
+                app.fileOps.newFolder()
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
+            .disabled(terminalFocused)
             Divider()
-            // ⌘W never quits GRID by accident: it closes the active terminal session in the
-            // Terminal panel; on other panels it returns to the terminal. Only with no sessions
-            // left does it close the window (which quits the single-window app).
-            Button(app.panel == .terminal || app.terminals.sessions.isEmpty ? "Close Session" : "Back to Terminal") {
+            // ⌘W never quits GRID by accident: it closes the focused pane (or the tab when it has
+            // one pane) in the Terminal panel; on other panels it returns to the terminal. Only with
+            // no sessions left does it close the window (which quits the single-window app).
+            Button(app.panel != .terminal && !app.terminals.sessions.isEmpty ? "Back to Terminal"
+                   : ((app.terminals.activeTab?.panes.count ?? 0) > 1 ? "Close Pane" : "Close Tab")) {
                 if app.confirmation != nil { NSSound.beep(); return }
                 if app.panel != .terminal && !app.terminals.sessions.isEmpty {
                     app.show(.terminal)
@@ -106,6 +113,11 @@ struct GridCommands: Commands {
                 }
             }
             .keyboardShortcut("w", modifiers: .command)
+            Button("Close Tab") {
+                if let id = app.terminals.activeTabID { app.requestCloseTab(id) }
+            }
+            .keyboardShortcut("w", modifiers: [.command, .shift])
+            .disabled(app.terminals.activeTabID == nil)
         }
         CommandGroup(after: .textEditing) {
             Button("Find") {
@@ -158,6 +170,10 @@ struct GridCommands: Commands {
             .keyboardShortcut("b", modifiers: .command)
             Button(app.inspectorVisible ? "Hide Inspector" : "Show Inspector") { app.inspectorVisible.toggle() }
                 .keyboardShortcut("i", modifiers: .command)
+            Button(app.deckVisible ? "Hide Widget Deck" : "Show Widget Deck") {
+                if app.panel != .terminal { app.show(.terminal); app.deckVisible = true } else { app.deckVisible.toggle() }
+            }
+            .keyboardShortcut("j", modifiers: .command)
             Menu("Theme") {
                 ForEach(ThemeID.allCases) { t in
                     Button((t == app.settings.theme ? "● " : "   ") + t.label) { app.setTheme(t) }
@@ -166,15 +182,24 @@ struct GridCommands: Commands {
             Divider()
         }
         CommandMenu("Session") {
-            Button("Previous Session") { app.terminals.cycle(-1); app.show(.terminal) }
+            Button("Split Right") { app.split(.horizontal) }.keyboardShortcut("d", modifiers: .command)
+            Button("Split Down") { app.split(.vertical) }.keyboardShortcut("d", modifiers: [.command, .shift])
+            Button("Next Pane") { app.terminals.cyclePane(1); app.focusTerminal() }
+                .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+                .disabled((app.terminals.activeTab?.panes.count ?? 0) < 2)
+            Button("Previous Pane") { app.terminals.cyclePane(-1); app.focusTerminal() }
+                .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+                .disabled((app.terminals.activeTab?.panes.count ?? 0) < 2)
+            Divider()
+            Button("Previous Tab") { app.terminals.cycle(-1); app.show(.terminal) }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
-            Button("Next Session") { app.terminals.cycle(1); app.show(.terminal) }
+            Button("Next Tab") { app.terminals.cycle(1); app.show(.terminal) }
                 .keyboardShortcut("]", modifiers: [.command, .shift])
             Divider()
             ForEach(1...9, id: \.self) { n in
-                Button("Session \(n)") { app.terminals.selectIndex(n - 1); app.show(.terminal) }
+                Button("Tab \(n)") { app.terminals.selectIndex(n - 1); app.show(.terminal) }
                     .keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: .command)
-                    .disabled(app.terminals.sessions.count < n)
+                    .disabled(app.terminals.tabs.count < n)
             }
             Divider()
             Button("Clear Scrollback") {

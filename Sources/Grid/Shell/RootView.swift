@@ -165,6 +165,10 @@ private struct StatusBar: View {
                 HStack(spacing: 6) {
                     Text(n.tone == .error ? "✕" : "✓")
                     Text(n.text).lineLimit(1)
+                    if let label = n.actionLabel, let action = n.action {
+                        Button(label) { app.notice = nil; action() }
+                            .buttonStyle(GridButtonStyle(compact: true))
+                    }
                 }
                 .font(GridFont.small)
                 .foregroundStyle(n.tone == .error ? theme.danger : theme.ok)
@@ -222,9 +226,16 @@ private struct ConfirmationOverlay: View {
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     Spacer()
-                    Button("Cancel") { dismiss(confirm: false) }
+                    Button(confirmation.cancelLabel) { dismiss(confirm: false) }
                         .keyboardShortcut(.cancelAction)
                         .buttonStyle(GridButtonStyle())
+                    if let alt = confirmation.alternateLabel {
+                        Button(alt) {
+                            app.confirmation = nil
+                            confirmation.onAlternate()
+                        }
+                        .buttonStyle(GridButtonStyle())
+                    }
                     Button(confirmation.confirmLabel) { dismiss(confirm: true) }
                         .keyboardShortcut(.defaultAction)
                         .buttonStyle(GridButtonStyle(prominent: true))

@@ -25,7 +25,7 @@ Source of truth for tokens: `Sources/Grid/Theme/Theme.swift`. Components: `Theme
 | bg3 | `#050A0C` | `#0A0605` | `#090705` | inset fields, previews |
 | text | `#DDF4F8` | `#F6E6E1` | `#F5EBDA` | primary content |
 | textDim | `#8DB0B9` | `#BE958B` | `#BBA27C` | metadata |
-| textMute | `#557079` | `#7A5850` | `#76654B` | labels, disabled |
+| textMute | `#65858F` | `#9D746A` | `#917C5C` | labels, metadata (≥ 4.6:1 on bg2, WCAG AA) |
 | accent | `#6FE3F5` | `#FF4A2B` | `#FFB547` | focus / selection / active |
 | accentSoft | accent @ 13% | @ 15% | @ 14% | selected row fill |
 | line | accent @ 18% | @ 20% | @ 18% | resting hairline |

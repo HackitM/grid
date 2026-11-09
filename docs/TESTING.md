@@ -2,7 +2,7 @@
 
 ## Automated
 ```bash
-swift test          # 36 unit tests (GridCore): quoting (incl. real zsh round-trip), ranking,
+swift test          # 42 unit tests (GridCore): quoting (incl. real zsh round-trip), ranking,
                     # paths, URL validation, palette grammar, env, listing, perms, symlinks,
                     # app discovery, libproc cwd tracking
 ```
@@ -43,6 +43,17 @@ display is awake.
 | Quit confirmation (busy) | ✅ | in-app QUIT.ACTIVE confirmation; cleanup ran after confirm |
 | TCC behaviour | ✅ (expected) | first access to `~/Desktop` from a shell or Files prompts “GRID would like to access…”; work waits off the main thread, UI stays responsive |
 | Review fixes (2026-11-08, Fable review) | ✅ | QA socket absent without `--qa`, 0600 + same-user with it, removed on quit; confirmations can't overwrite each other; 13 FIFO selections then `/usr/bin` still lists; `.command` and Mach-O ask before running (script did not run); pipeline with dead group leader + HUP-ignoring member killed on close; quit leaves no orphans; release binary has 0 QA symbols/strings |
+| Palette scroll lag (fix) | ✅ | shadow moved off the scrolling layer; results computed per query; terminal poll no longer re-assigns unchanged values (it re-rendered every observer once a second) |
+| Grid backdrop (fix) | ✅ | visible inside panel bodies (minor + major lines), off by default |
+| Split panes | ✅ | 3 panes created, focused-pane marker, closing focused pane refocuses neighbour; new pane opens in focused pane's cwd |
+| File operations (on disk) | ✅ | new folder → inline rename (invalid name rejected); ⌘/⇧ multi-select (2, then 5); Keep Both → `a 2.txt` with original intact; Replace moves the existing item to Trash; undo restores copies, replacements, and trashed items; copy-into-itself refused; duplicate → `b 2.txt` |
+| Widget deck | ✅ | 7 widgets added/expanded/configured; CPU, memory, and load measured; network rates live; time zones with offsets; Git shows branch + counts in a repo and "Not a git repository" elsewhere |
+| Git widget race (found + fixed) | ✅ | a slower refresh for the previous folder overwrote the current one; now dropped; rapid `cd repo → /tmp → repo → /tmp` settles correctly |
+| Bell indicator | ✅ | BEL from an unfocused pane sets the pane/tab BELL tag |
+| Heavy output | ✅ | `seq 1 2000000` completed in 4.3 s, UI responsive |
+| Quit with split panes | ✅ | jobs in multiple panes incl. a HUP-ignoring pipeline member: no orphans |
+| Contrast | ✅ | textMute ≥ 4.6:1 on bg2 in all themes (was 3.0–3.5) |
+| Release bundle | ✅ | icon + SwiftTerm license in Resources; 0 QA strings |
 | Remote web content → privileged functions | n/a | no embedded web content in M1 (external browser only); non-http(s) schemes refused (unit tested) |
 
 ## Manual checklist (needs a person at the keyboard)
@@ -53,3 +64,8 @@ display is awake.
 - [ ] VoiceOver: rail items, tabs, file rows and app rows announce name + selected state
 - [ ] System Settings › Accessibility › Reduce Motion → transitions stop
 - [ ] Copy/paste and mouse selection in the terminal; `htop`/`less` mouse scrolling
+- [ ] Scroll the command palette quickly (lag fix)
+- [ ] Drag widget cards to reorder; drag panel dividers; double-click a divider to reset
+- [ ] Drag several selected files into the terminal (all paths inserted, quoted)
+- [ ] Space opens Quick Look on the selection; Open With submenu lists apps
+- [ ] Double-click a terminal tab to rename it

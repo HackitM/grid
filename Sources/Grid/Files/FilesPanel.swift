@@ -5,10 +5,12 @@ struct FilesPanel: View {
     @Environment(AppState.self) private var app
 
     var body: some View {
-        HStack(spacing: Metrics.gutter) {
+        HStack(spacing: 0) {
             FileBrowserView(compact: false)
             if app.inspectorVisible {
-                InspectorView().frame(width: 290)
+                ResizeHandle(width: Binding(get: { app.layout.inspectorWidth }, set: { app.layout.inspectorWidth = $0 }),
+                             range: 220...520, defaultValue: 290, edge: .trailing)
+                InspectorView().frame(width: app.layout.inspectorWidth)
             }
         }
     }

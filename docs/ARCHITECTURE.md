@@ -106,6 +106,17 @@ the next scan; missing apps are flagged, never silently launched. Same-name apps
 Spotlight (`NSMetadataQuery`) is not used: a deterministic scan works with indexing disabled and
 found 163 apps on the development Mac.
 
+### Widget deck
+`WidgetStore` keeps an ordered list of `WidgetInstance` (kind, collapsed, expanded, string-map
+config) persisted as JSON in UserDefaults, so new options never break saved layouts.
+`SystemMonitor` samples CPU (`host_processor_info` tick deltas), memory
+(`host_statistics64`: active + wired + compressed), load (`getloadavg`), network (`getifaddrs`
+byte counters, 32-bit wrap handled), and power (IOKit power sources) every 2 s. It runs only
+while a widget that needs it is on screen (reference-counted). The Git widget runs `/usr/bin/git`
+with structured arguments, `-c core.fsmonitor=false`, `--no-optional-locks`, no terminal prompts,
+and a 3 s timeout. It first checks that developer tools exist (`xcode-select -p`), so a periodic
+refresh can never trigger the "install tools" dialog. Results for a stale folder are discarded.
+
 ### Command palette
 Application commands only — never sent to a shell. Free text ranks commands, sessions, apps; input
 that looks like a path offers Files / new terminal / open; a web address offers “open in default

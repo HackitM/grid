@@ -254,11 +254,18 @@ private struct ColumnHeader: View {
 
 // MARK: - List
 
+/// Pasteboard type carrying all dragged paths (an NSItemProvider holds a single file URL, so
+/// multi-item drags into the terminal use this JSON array alongside the first URL).
+extension NSPasteboard.PasteboardType {
+    static let gridPaths = NSPasteboard.PasteboardType("local.grid.paths")
+}
+
 private struct FileList: View {
     @Environment(AppState.self) private var app
     @Environment(\.theme) private var theme
     let compact: Bool
     var listFocused: FocusState<Bool>.Binding
+    @State private var dropTargeted = false
 
     var body: some View {
         let m = app.files
@@ -267,12 +274,17 @@ private struct FileList: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(rows) { e in
-                        FileRow(entry: e, compact: compact, selected: e.id == m.selectionID,
+                        FileRow(entry: e, compact: compact, selected: m.selectedIDs.contains(e.id),
+                                isCursor: e.id == m.selectionID, renaming: m.renamingID == e.id,
                                 showParent: m.mode == .deep && !m.query.isEmpty, root: m.currentURL)
                             .id(e.id)
                             .onTapGesture(count: 2) { m.activate(e) }
-                            .simultaneousGesture(TapGesture().onEnded { m.selectionID = e.id; listFocused.wrappedValue = true })
-                            .onDrag { NSItemProvider(object: e.url as NSURL) }
+                            .simultaneousGesture(TapGesture().onEnded {
+                                let mods = NSEvent.modifierFlags
+                                m.click(e.id, command: mods.contains(.command), shift: mods.contains(.shift))
+                                listFocused.wrappedValue = true
+                            })
+                            .onDrag { dragProvider(for: e, m) }
                             .contextMenu { FileContextMenu(entry: e) }
                     }
                 }
@@ -282,22 +294,52 @@ private struct FileList: View {
             .focused(listFocused)
             .onChange(of: m.selectionID) { _, id in
                 if let id { withAnimation(nil) { proxy.scrollTo(id) } }
+                QuickLook.shared.update(m.selectedEntries.map(\.url))
             }
             .onKeyPress(phases: .down) { press in handle(press, m) }
+            .onCopyCommand { m.selectedEntries.map { NSItemProvider(object: $0.url as NSURL) } }
+            .onPasteCommand(of: [.fileURL]) { _ in app.fileOps.pasteFromPasteboard(into: m.currentURL, move: false) }
+            // Dropping files from Finder (or another GRID folder) copies them here.
+            .dropDestination(for: URL.self) { urls, _ in
+                let files = urls.filter(\.isFileURL)
+                guard !files.isEmpty, !files.allSatisfy({ $0.deletingLastPathComponent().standardizedFileURL == m.currentURL.standardizedFileURL }) else { return false }
+                app.fileOps.transfer(files, into: m.currentURL, move: false)
+                return true
+            } isTargeted: { dropTargeted = $0 }
+            .overlay { if dropTargeted { Rectangle().stroke(theme.accent, lineWidth: 1.5).allowsHitTesting(false) } }
         }
     }
 
+    private func dragProvider(for e: FileEntry, _ m: FileBrowserModel) -> NSItemProvider {
+        // Drag the whole selection if the row is part of it; otherwise just this row.
+        let urls = m.selectedIDs.contains(e.id) ? m.selectedEntries.map(\.url) : [e.url]
+        let provider = NSItemProvider(object: (urls.first ?? e.url) as NSURL)
+        if let data = try? JSONEncoder().encode(urls.map(\.path)) {
+            provider.registerDataRepresentation(forTypeIdentifier: NSPasteboard.PasteboardType.gridPaths.rawValue, visibility: .ownProcess) { done in
+                done(data, nil); return nil
+            }
+        }
+        return provider
+    }
+
     private func handle(_ press: KeyPress, _ m: FileBrowserModel) -> KeyPress.Result {
+        if m.renamingID != nil { return .ignored }
         let cmd = press.modifiers.contains(.command)
+        let shift = press.modifiers.contains(.shift)
+        let opt = press.modifiers.contains(.option)
+        let ops = app.fileOps
         switch press.key {
         case .downArrow:
-            if cmd, let e = m.selectedEntry { m.activate(e) } else { m.moveSelection(1) }
+            if cmd, let e = m.selectedEntry { m.activate(e) } else if shift { m.extendSelection(1) } else { m.moveSelection(1) }
             return .handled
         case .upArrow:
-            if cmd { m.goUp() } else { m.moveSelection(-1) }
+            if cmd { m.goUp() } else if shift { m.extendSelection(-1) } else { m.moveSelection(-1) }
             return .handled
         case .return:
             if let e = m.selectedEntry { m.activate(e) }
+            return .handled
+        case .space:
+            QuickLook.shared.toggle(m.selectedEntries.map(\.url))
             return .handled
         case .leftArrow where !cmd:
             m.goUp(); return .handled
@@ -308,17 +350,33 @@ private struct FileList: View {
         case .end: if let l = m.visible.last { m.selectionID = l.id }; return .handled
         case .pageDown: m.moveSelection(15); return .handled
         case .pageUp: m.moveSelection(-15); return .handled
+        case .delete where cmd:
+            let urls = m.selectedEntries.map(\.url)
+            if opt { ops.requestDeleteImmediately(urls) } else { ops.trash(urls) }
+            return .handled
         default:
-            return .ignored
+            break
+        }
+        guard cmd else { return .ignored }
+        switch press.characters.lowercased() {
+        case "a": m.selectAll(); return .handled
+        case "z" where !shift: ops.undo(); return .handled
+        case "v" where opt: ops.pasteFromPasteboard(into: m.currentURL, move: true); return .handled
+        case "c" where !opt: ops.copyToPasteboard(m.selectedEntries.map(\.url)); return .handled
+        case "v": ops.pasteFromPasteboard(into: m.currentURL, move: false); return .handled
+        default: return .ignored
         }
     }
 }
 
 private struct FileRow: View {
+    @Environment(AppState.self) private var app
     @Environment(\.theme) private var theme
     let entry: FileEntry
     let compact: Bool
     let selected: Bool
+    let isCursor: Bool
+    let renaming: Bool
     let showParent: Bool
     let root: URL
     @State private var hover = false
@@ -330,11 +388,15 @@ private struct FileRow: View {
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundStyle(entry.isNavigableFolder ? theme.accent : theme.textMute)
                     .frame(width: 14)
-                Text(entry.name)
-                    .font(GridFont.body)
-                    .foregroundStyle(entry.isBrokenSymlink ? theme.textMute : (entry.isHidden ? theme.textDim : theme.text))
-                    .strikethrough(entry.isBrokenSymlink, color: theme.textMute)
-                    .lineLimit(1).truncationMode(.middle)
+                if renaming {
+                    RenameField(entry: entry)
+                } else {
+                    Text(entry.name)
+                        .font(GridFont.body)
+                        .foregroundStyle(entry.isBrokenSymlink ? theme.textMute : (entry.isHidden ? theme.textDim : theme.text))
+                        .strikethrough(entry.isBrokenSymlink, color: theme.textMute)
+                        .lineLimit(1).truncationMode(.middle)
+                }
                 if entry.isSymlink { Text("→").font(GridFont.small).foregroundStyle(theme.textMute).help("Symbolic link") }
                 if showParent {
                     Text(relativeParent)
@@ -355,6 +417,10 @@ private struct FileRow: View {
         .padding(.horizontal, 10)
         .frame(height: Metrics.rowHeight)
         .gridRowBackground(selected: selected, hovered: hover, theme: theme)
+        .overlay(alignment: .leading) {
+            // Keyboard cursor inside a multi-selection: a brighter, taller bar.
+            if isCursor && app.files.selectedIDs.count > 1 { Rectangle().fill(theme.text).frame(width: 2) }
+        }
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .accessibilityElement(children: .combine)
@@ -377,25 +443,101 @@ private struct FileRow: View {
     }
 }
 
+/// Inline rename: Return commits, Esc cancels; the name stem is preselected like Finder.
+private struct RenameField: View {
+    @Environment(AppState.self) private var app
+    @Environment(\.theme) private var theme
+    let entry: FileEntry
+    @State private var text = ""
+    @State private var error: String?
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            TextField("", text: $text)
+                .textFieldStyle(.plain)
+                .font(GridFont.body)
+                .foregroundStyle(theme.text)
+                .padding(.horizontal, 4)
+                .background(theme.bg3)
+                .overlay(Rectangle().stroke(error == nil ? theme.lineStrong : theme.danger, lineWidth: 1))
+                .focused($focused)
+                .onSubmit(commit)
+                .onExitCommand { app.files.renamingID = nil }
+                .onChange(of: focused) { _, f in if !f && app.files.renamingID == entry.id { commit() } }
+            if let error { Text("✕ \(error)").font(GridFont.small).foregroundStyle(theme.danger).lineLimit(1) }
+        }
+        .onAppear {
+            text = entry.name
+            DispatchQueue.main.async { focused = true }
+        }
+    }
+
+    private func commit() {
+        guard app.files.renamingID == entry.id else { return }
+        if let problem = app.fileOps.rename(entry, to: text) {
+            error = problem
+            focused = true
+        } else {
+            app.files.renamingID = nil
+        }
+    }
+}
+
 struct FileContextMenu: View {
     @Environment(AppState.self) private var app
     let entry: FileEntry
 
+    /// Right-clicking inside the selection acts on all of it; outside, on just this item.
+    private var targets: [FileEntry] {
+        app.files.selectedIDs.contains(entry.id) ? app.files.selectedEntries : [entry]
+    }
+
     var body: some View {
+        let urls = targets.map(\.url)
+        let multi = urls.count > 1
         Button(entry.isNavigableFolder ? "Open Folder" : "Open") { app.files.activate(entry) }
-        if let appURL = app.files.defaultApp(for: entry.url), !entry.isNavigableFolder {
-            Text("Default app: \(appURL.deletingPathExtension().lastPathComponent)")
-        }
+        if !entry.isNavigableFolder && !multi { OpenWithMenu(url: entry.url) }
+        Button("Quick Look") { QuickLook.shared.show(urls) }
         Divider()
         if entry.isNavigableFolder {
             Button("Open Terminal Here") { app.openTerminalHere(entry.url) }
         } else {
             Button("Open Terminal in Enclosing Folder") { app.openTerminalHere(entry.url.deletingLastPathComponent()) }
         }
-        Button("Insert Path in Terminal") { app.insertPathsIntoTerminal([entry.url]) }
+        Button(multi ? "Insert \(urls.count) Paths in Terminal" : "Insert Path in Terminal") { app.insertPathsIntoTerminal(urls) }
         Divider()
-        Button("Copy Path") { app.files.copyPaths([entry.url]); app.flash(.info, "Copied path") }
-        Button("Reveal in Finder") { app.files.reveal([entry.url]) }
+        if !multi { Button("Rename") { app.files.selectionID = entry.id; app.files.renamingID = entry.id } }
+        Button("Duplicate") { app.fileOps.duplicate(urls) }
+        Button("Copy") { app.fileOps.copyToPasteboard(urls) }
+        Button("Paste Into Current Folder") { app.fileOps.pasteFromPasteboard(into: app.files.currentURL, move: false) }
+        if entry.isNavigableFolder && !multi {
+            Button("Paste Into “\(entry.name)”") { app.fileOps.pasteFromPasteboard(into: entry.url, move: false) }
+        }
+        Button("Copy Path\(multi ? "s" : "")") { app.files.copyPaths(urls); app.flash(.info, "Copied path\(multi ? "s" : "")") }
+        Button("Reveal in Finder") { app.files.reveal(urls) }
+        Divider()
+        Button("Move to Trash") { app.fileOps.trash(urls) }
+        Button("Delete Immediately…") { app.fileOps.requestDeleteImmediately(urls) }
+    }
+}
+
+/// "Open With ▸" listing the apps LaunchServices says can open the file.
+struct OpenWithMenu: View {
+    @Environment(AppState.self) private var app
+    let url: URL
+
+    var body: some View {
+        let appsForFile = NSWorkspace.shared.urlsForApplications(toOpen: url)
+        let defaultApp = app.files.defaultApp(for: url)
+        Menu("Open With") {
+            ForEach(appsForFile, id: \.self) { appURL in
+                Button(appURL.deletingPathExtension().lastPathComponent + (appURL == defaultApp ? " (default)" : "")) {
+                    app.files.open(url, with: appURL)
+                }
+            }
+            if appsForFile.isEmpty { Text("No applications found") }
+        }
     }
 }
 
@@ -407,7 +549,11 @@ private struct StatusLine: View {
     var body: some View {
         let m = app.files
         HStack(spacing: 8) {
-            if m.mode == .deep && !m.query.isEmpty {
+            if let busy = app.fileOps.busy {
+                ProgressView().controlSize(.mini).tint(theme.accent)
+                Text(busy).foregroundStyle(theme.text)
+                Spacer()
+            } else if m.mode == .deep && !m.query.isEmpty {
                 if m.deepRunning { ProgressView().controlSize(.mini).tint(theme.accent) }
                 Text("\(m.deepResults.count)\(m.deepTruncated ? "+" : "") found · \(m.deepScanned) scanned")
                 if m.deepSkipped > 0 { Text("· \(m.deepSkipped) unreadable skipped").foregroundStyle(theme.warn) }
@@ -415,8 +561,12 @@ private struct StatusLine: View {
                 if m.deepRunning { Button("Stop") { m.cancelDeepSearch() }.buttonStyle(GridButtonStyle(compact: true)) }
             } else {
                 Text("\(m.visible.count) item\(m.visible.count == 1 ? "" : "s")")
+                if m.selectedIDs.count > 1 {
+                    let bytes = m.selectedEntries.compactMap(\.size).reduce(0, +)
+                    Text("· \(m.selectedIDs.count) selected\(bytes > 0 ? " · " + Formatters.size(bytes) : "")").foregroundStyle(theme.textDim)
+                }
                 if !m.query.isEmpty { Text("· filtered from \(m.entries.count)") }
-                if m.showHidden { Text("· hidden shown") }
+                if m.showHidden && !compact { Text("· hidden shown") }
                 Spacer()
                 if m.loading { ProgressView().controlSize(.mini).tint(theme.accent) }
             }

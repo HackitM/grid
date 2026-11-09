@@ -6,16 +6,23 @@ import SwiftTerm
 /// focus notifications, safe file-path drops, and theme application.
 final class GridTerminalView: LocalProcessTerminalView {
     var onFocusChange: ((Bool) -> Void)?
+    var onBell: (() -> Void)?
 
     override init(frame: CGRect, font: NSFont?, options: TerminalOptions) {
         super.init(frame: frame, font: font, options: options)
-        registerForDraggedTypes([.fileURL])
+        registerForDraggedTypes([.fileURL, Self.gridPathsType])
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
     override var hasFocus: Bool {
         didSet { if oldValue != hasFocus { onFocusChange?(hasFocus) } }
+    }
+
+    /// BEL from the program: keep SwiftTerm's default (system beep) and flag the pane.
+    nonisolated override func bell(source: Terminal) {
+        super.bell(source: source)
+        DispatchQueue.main.async { [weak self] in self?.onBell?() }
     }
 
     // MARK: Theme
@@ -64,7 +71,14 @@ final class GridTerminalView: LocalProcessTerminalView {
         pasteText(text)
     }
 
+    /// Multi-item drags from GRID's own file list carry every path in this JSON array.
+    static let gridPathsType = NSPasteboard.PasteboardType("local.grid.paths")
+
     private func fileURLs(from info: NSDraggingInfo) -> [URL] {
+        if let data = info.draggingPasteboard.data(forType: Self.gridPathsType),
+           let paths = try? JSONDecoder().decode([String].self, from: data), !paths.isEmpty {
+            return paths.filter { $0.hasPrefix("/") }.map { URL(fileURLWithPath: $0) }
+        }
         let opts: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
         return (info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: opts) as? [URL]) ?? []
     }

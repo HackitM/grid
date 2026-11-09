@@ -323,3 +323,83 @@ final class ProcessInspectorTests: XCTestCase {
         XCTAssertTrue(ProcessInspector.children(of: getpid()).contains(p.processIdentifier))
     }
 }
+
+final class FileNamingTests: XCTestCase {
+    func testUniqueName() {
+        let taken: Set<String> = ["report.pdf", "report 2.pdf", "untitled folder", "a.tar.gz", "notes 7"]
+        XCTAssertEqual(FileNaming.uniqueName(for: "new.txt") { taken.contains($0) }, "new.txt")
+        XCTAssertEqual(FileNaming.uniqueName(for: "report.pdf") { taken.contains($0) }, "report 3.pdf")
+        XCTAssertEqual(FileNaming.uniqueName(for: "untitled folder", isDirectory: true) { taken.contains($0) }, "untitled folder 2")
+        XCTAssertEqual(FileNaming.uniqueName(for: "notes 7") { taken.contains($0) }, "notes 8")
+        XCTAssertEqual(FileNaming.uniqueName(for: "a.tar.gz") { taken.contains($0) }, "a.tar 2.gz")
+        XCTAssertEqual(FileNaming.uniqueName(for: "my.app.dir", isDirectory: true) { $0 == "my.app.dir" }, "my.app.dir 2")
+    }
+
+    func testValidate() {
+        XCTAssertNil(FileNaming.validate("ok name ✓.txt"))
+        XCTAssertNotNil(FileNaming.validate(""))
+        XCTAssertNotNil(FileNaming.validate("   "))
+        XCTAssertNotNil(FileNaming.validate("a/b"))
+        XCTAssertNotNil(FileNaming.validate(".."))
+        XCTAssertNotNil(FileNaming.validate("bad\nname"))
+        XCTAssertNotNil(FileNaming.validate(String(repeating: "x", count: 256)))
+    }
+
+    func testIsSameOrInside() {
+        XCTAssertTrue(FileNaming.isSameOrInside(URL(fileURLWithPath: "/a/b/c"), URL(fileURLWithPath: "/a/b")))
+        XCTAssertTrue(FileNaming.isSameOrInside(URL(fileURLWithPath: "/a/b"), URL(fileURLWithPath: "/a/b")))
+        XCTAssertFalse(FileNaming.isSameOrInside(URL(fileURLWithPath: "/a/bc"), URL(fileURLWithPath: "/a/b")))
+        XCTAssertFalse(FileNaming.isSameOrInside(URL(fileURLWithPath: "/a"), URL(fileURLWithPath: "/a/b")))
+    }
+}
+
+final class GitStatusTests: XCTestCase {
+    func testParse() {
+        let out = """
+        # branch.oid 1234abcd
+        # branch.head main
+        # branch.upstream origin/main
+        # branch.ab +2 -1
+        1 M. N... 100644 100644 100644 aaa bbb staged.swift
+        1 .M N... 100644 100644 100644 aaa bbb modified.swift
+        1 MM N... 100644 100644 100644 aaa bbb both.swift
+        2 R. N... 100644 100644 100644 aaa bbb R100 new.swift\told.swift
+        u UU N... 100644 100644 100644 100644 a b c conflict.swift
+        ? untracked file.txt
+        ? other.txt
+        """
+        let s = GitStatus.parse(porcelainV2: out)
+        XCTAssertEqual(s.branch, "main")
+        XCTAssertEqual(s.upstream, "origin/main")
+        XCTAssertEqual(s.ahead, 2)
+        XCTAssertEqual(s.behind, 1)
+        XCTAssertEqual(s.staged, 3)
+        XCTAssertEqual(s.modified, 2)
+        XCTAssertEqual(s.conflicted, 1)
+        XCTAssertEqual(s.untracked, 2)
+        XCTAssertFalse(s.isClean)
+    }
+
+    func testCleanDetached() {
+        let s = GitStatus.parse(porcelainV2: "# branch.oid abc\n# branch.head (detached)\n")
+        XCTAssertEqual(s.branch, "(detached)")
+        XCTAssertTrue(s.isClean)
+        XCTAssertNil(s.upstream)
+    }
+
+    /// Runs the real git on this repository to make sure the format we ask for parses.
+    func testAgainstRealGit() throws {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/git") else { throw XCTSkip("no git") }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        p.arguments = ["-C", FileManager.default.currentDirectoryPath, "status", "--porcelain=v2", "--branch"]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = Pipe()
+        try p.run()
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else { throw XCTSkip("not a git checkout") }
+        let s = GitStatus.parse(porcelainV2: String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+        XCTAssertFalse(s.branch.isEmpty)
+    }
+}
