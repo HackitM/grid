@@ -17,6 +17,7 @@ struct WidgetContent: View {
         case .notes: NotesWidget(widget: widget)
         case .folder: RecentFilesWidget(widget: widget)
         case .inspector: FileInspectorWidget(widget: widget)
+        case .music: NowPlayingWidget(widget: widget)
         case .custom: CustomWidgetView(widget: widget)
         }
     }
@@ -544,6 +545,18 @@ struct WidgetSettings: View {
             case .inspector:
                 toggle("Preview when expanded", widget.bool("preview", true)) { store.set(widget.id, "preview", $0 ? "1" : "0") }
                 Text("Follows the Files selection. Folder totals are measured only when you ask.").font(GridFont.small).foregroundStyle(theme.textMute)
+            case .music:
+                PickerRow(label: "Player", selection: widget.string("source", "auto"),
+                          options: [("auto", "Whichever is playing"), ("com.apple.Music", "Apple Music"), ("com.spotify.client", "Spotify")]) {
+                    store.set(widget.id, "source", $0)
+                }
+                PickerRow(label: "Artwork", selection: widget.string("art", ArtStyle.dots.rawValue),
+                          options: ArtStyle.allCases.map { ($0.rawValue, $0.label) }) {
+                    store.set(widget.id, "art", $0)
+                }
+                toggle("Show in the status bar on every page", widget.bool("status", true)) { store.set(widget.id, "status", $0 ? "1" : "0") }
+                Text("Track changes come from the players themselves. Controls and artwork need macOS Automation permission for the player, asked once when you press Connect or a control. Spotify artwork is downloaded from Spotify's image server; nothing else leaves your Mac.")
+                    .font(GridFont.small).foregroundStyle(theme.textMute).fixedSize(horizontal: false, vertical: true)
             case .custom:
                 CustomWidgetSettings(widget: widget)
             case .system, .battery, .notes:

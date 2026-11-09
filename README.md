@@ -34,6 +34,7 @@ A real terminal, a file browser, an app launcher, a widget deck and a web browse
 ### Files
 - A file browser with breadcrumbs, history, an editable path, sorting, filtering and a deep recursive search.
 - Folders **expand in place** as a tree (▸, or → / ←; ⌥ expands three levels).
+- Or view a folder as an **icon grid** (▦ in the panel header): GRID-drawn folders and pages, with badges on well-known folders and the file extension on each page. The icons trace themselves in one after another when a folder opens.
 - Everyday file operations: new folder, rename, duplicate, copy / paste / move, Move to Trash, multi-step undo, Quick Look and Open With.
 - The **File Inspector** shows exactly what a file will insert into the terminal before you drag it, and warns about executables and downloaded files.
 
@@ -42,7 +43,8 @@ A real terminal, a file browser, an app launcher, a widget deck and a web browse
 ![The widget deck docked under the terminal with cards side by side, in the Ares theme](docs/screenshots/deck.png)
 
 - **Dockable panels.** Drag Files, Terminal or the Widget Deck by its title bar to any edge of another panel. Terminal panes and tabs move the same way. The layout is saved.
-- **Widget deck (⌘J).** Clock, System, Network, Storage, Power, Sessions, Pinned Apps, Git, Notes, Recent Files and the File Inspector, all showing real measurements. Drop a card beside another for side-by-side rows, which works well with the deck docked at the bottom.
+- **Widget deck (⌘J).** Clock, System, Network, Storage, Power, Sessions, Pinned Apps, Git, Notes, Recent Files, the File Inspector and Now Playing, all showing real measurements. Drop a card beside another for side-by-side rows, which works well with the deck docked at the bottom.
+- **Now Playing** shows what Apple Music or Spotify is playing, with play/pause and skip. The cover art is redrawn in your theme's colour as a dot matrix or scan lines, the track also shows in the status bar on every page, and you can **pop any built-in widget out** into a small window that floats above every page (and, if you like, above other apps).
 - **Build your own widgets.** A widget is a folder with a `manifest.json` and some JavaScript. GRID draws it with its own components, so it always matches the design. Widgets run in a sandboxed helper process and can only use what you approve. See the [Widget API](docs/WIDGETS.md) and [nine examples](widgets/examples).
 
 ### Built-in browser
@@ -84,7 +86,7 @@ Palette commands are GRID commands. They are never sent to your shell.
 
 Three themes: **Legacy** (cyan), **Ares** (red) and **ENCOM** (amber). Glow, motion and the grid backdrop can each be turned off, and GRID respects Reduce Motion.
 
-Right-click and "⋯" menus are drawn in the same style, including web page menus and a terminal menu (Copy, Paste, Split…). You can switch back to standard macOS menus in **Settings › Effects**, and VoiceOver always gets standard menus.
+The window opens with a short build-on (its frame traces itself in, then the panels build), and menus unfold from a bright line and fold back into it. Both take well under a second, never hold up typing, and can be turned off. Right-click and "⋯" menus are drawn in the same style, including web page menus and a terminal menu (Copy, Paste, Split…). You can switch back to standard macOS menus in **Settings › Effects**, and VoiceOver always gets standard menus.
 
 <br clear="right">
 
@@ -104,6 +106,7 @@ Right-click and "⋯" menus are drawn in the same style, including web page menu
 ### First run
 - The first time a shell or the Files panel touches **Desktop, Documents, Downloads** or a removable or network volume, macOS asks for permission. That's the normal macOS privacy system, and GRID doesn't try to get around it. The command waits until you answer.
 - Your shell starts as a login shell, so it behaves just like it does in Terminal.app.
+- The **Now Playing** widget shows track changes without any permission. Its controls and artwork need macOS **Automation** permission for Music or Spotify; GRID asks only when you press Connect or a control, and never opens a player itself.
 
 ## Keyboard shortcuts
 
@@ -165,7 +168,7 @@ Use the `.app` bundle for real use rather than `swift run`, since macOS privacy 
 ## Privacy & security
 
 - **No accounts, telemetry, cloud services or AI features.** Settings, browsing data and history stay on your Mac. Terminal contents are never logged or stored.
-- **Network requests GRID makes on its own:** downloading the ad-blocking filter lists from their publishers (only while ad blocking is on), and Safari's standard fraudulent-site check in the browser. Everything else happens because you asked for it.
+- **Network requests GRID makes on its own:** downloading the ad-blocking filter lists from their publishers (only while ad blocking is on), Safari's standard fraudulent-site check in the browser, and Spotify cover art from Spotify's image server (only with a Now Playing widget following Spotify). Everything else happens because you asked for it.
 - **Web content is isolated.** Pages get no bridge into GRID, can't run commands, and can't open other apps without a click and a confirmation. Downloads are confirmed and quarantined like Safari's.
 - **Widgets are sandboxed.** Custom widgets run in a separate, locked-down process and only get the permissions you approve. Those are shown in plain words, with the exact commands, paths and hosts.
 - **macOS protections stay on.** GRID isn't App-Sandboxed (your shell needs to reach your files), so it ships outside the Mac App Store. It never tries to work around macOS privacy prompts.
@@ -181,6 +184,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full security model.
 - The Git widget runs `git status`. Like any prompt that shows git status, a malicious repository's config could run commands, so point it only at repositories you trust.
 - Some ads that uBlock Origin removes with page scripts (for example on YouTube) can't be blocked by Safari's content blocker.
 - App discovery scans the standard Applications folders, up to three levels deep.
+- Now Playing follows Apple Music and Spotify only. Audio in a browser or other apps can't be read: macOS 15.4 and later reserve the system-wide now-playing information for Apple's own apps.
 
 ## Documentation
 

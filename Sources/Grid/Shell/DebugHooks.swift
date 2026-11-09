@@ -145,6 +145,19 @@ enum DebugHooks {
                 let rep = NSBitmapImageRep(cgImage: img)
                 try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
             }
+        case "windows":
+            // {"cmd":"windows","path":"<dir>"}: real pixels of every visible GRID window (menus,
+            // floating widgets), one PNG each, plus frames.json (screen frames, bottom-left origin).
+            guard let dir = c["path"] as? String else { return }
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            var frames: [[String: Any]] = []
+            for (i, w) in NSApp.windows.enumerated() where w.isVisible && w.windowNumber > 0 {
+                guard let img = DebugHooks.captureWindow(CGWindowID(w.windowNumber)) else { continue }
+                let name = "w\(i).png"
+                try? NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: dir + "/" + name))
+                frames.append(["file": name, "class": String(describing: type(of: w)), "frame": [w.frame.minX, w.frame.minY, w.frame.width, w.frame.height]])
+            }
+            if let data = try? JSONSerialization.data(withJSONObject: frames) { try? data.write(to: URL(fileURLWithPath: dir + "/frames.json")) }
         case "snapshotTerm":
             guard let v = app.terminals.active?.view, let path,
                   let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
@@ -179,6 +192,8 @@ enum DebugHooks {
             case "systemMenus": app.settings.systemMenus = on
             case "globeActive": GlobeView.debugForceActive = on
             case "globeNoLabels": GlobeRenderer.debugNoLabels = on
+            case "filesGrid": app.settings.filesGrid = on; CascadeClock.shared.start()
+            case "startup": app.settings.startupAnimation = on
             default: break
             }
         case "click":
@@ -629,10 +644,32 @@ enum DebugHooks {
                 "drag": DockDrag.shared.payload?.string ?? "",
                 "dockTargets": DockDrag.shared.debugFrames,
                 "notice": app.notice?.text ?? "", "recents": app.apps.recents,
+                "nowPlaying": ["player": app.nowPlaying.player?.name ?? "", "title": app.nowPlaying.track?.title ?? "",
+                               "playing": app.nowPlaying.playing, "art": app.nowPlaying.artwork != nil, "active": app.nowPlaying.isActive,
+                               "access": app.nowPlaying.access.map { "\($0.key.name)=\($0.value)" }.sorted(),
+                               "position": app.nowPlaying.position(at: Date()) ?? -1],
+                "floating": app.floatingWidgets.debugFrames(),
+                "filesGrid": app.settings.filesGrid,
             ]
             if let data = try? JSONSerialization.data(withJSONObject: st, options: [.prettyPrinted, .sortedKeys]) {
                 try? data.write(to: URL(fileURLWithPath: path))
             }
+        case "nowPlaying":
+            // {"cmd":"nowPlaying","title":..,"artist":..,"album":..,"duration":s,"position":s,"playing":bool,"art":"<image path>","player":"music|spotify"}
+            // Injects a track as if the player had announced it (no Apple Events, no audio).
+            let player: NowPlaying.Player = (c["player"] as? String) == "spotify" ? .spotify : .music
+            let art = (c["art"] as? String).flatMap { NSImage(contentsOfFile: $0) }?.cgImage(forProposedRect: nil, context: nil, hints: nil).flatMap(ArtMatrix.init)
+            app.nowPlaying.debugInject(player: player, title: c["title"] as? String, artist: c["artist"] as? String ?? "",
+                                       album: c["album"] as? String ?? "", duration: c["duration"] as? Double,
+                                       position: c["position"] as? Double, playing: (c["playing"] as? Bool) ?? true, art: art)
+        case "slowMotion":
+            // {"cmd":"slowMotion","factor":10} stretches the startup build-on and menu unfold.
+            GridMotion.debugSlow = (c["factor"] as? Double) ?? 1
+        case "replayStartup":
+            NotificationCenter.default.post(name: .gridQAReplayStartup, object: nil)
+        case "floatShot":
+            // {"cmd":"floatShot","path":"<dir>"}: one PNG per floating widget window (rendered layer tree).
+            if let dir = c["path"] as? String { app.floatingWidgets.debugSnapshot(dir: dir) }
         case "quit":
             NSApp.terminate(nil)
         default:

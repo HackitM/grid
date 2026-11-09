@@ -136,6 +136,9 @@ private struct WidgetCard: View {
         return widget.string("package", "").hasPrefix("dev:") ? "DEV" : "3RD"
     }
 
+    /// Popped out into its own window (FloatingWidgets); the card stays here as a stub.
+    private var floating: Bool { FloatingWidgets.canFloat(widget) && widget.bool("float", false) }
+
     var body: some View {
         let store = app.widgets
         VStack(spacing: 0) {
@@ -154,6 +157,8 @@ private struct WidgetCard: View {
                 Group {
                     if editing {
                         WidgetSettings(widget: widget, done: toggleEditing)
+                    } else if floating {
+                        FloatingStub(widget: widget)
                     } else {
                         WidgetContent(widget: widget)
                     }
@@ -203,6 +208,10 @@ private struct WidgetCard: View {
                         store.update(widget.id) { $0.expanded.toggle() }
                     }
                 }
+                if FloatingWidgets.canFloat(widget) {
+                    smallButton(floating ? "pip.enter" : "pip.exit", floating ? "Dock back in the deck" : "Pop out: keep it above every page",
+                                active: floating) { togglePopOut() }
+                }
                 smallButton("gearshape", editing ? "Done configuring" : "Configure", active: editing) { toggleEditing() }
                 smallButton(widget.collapsed ? "chevron.down" : "chevron.up", widget.collapsed ? "Show" : "Collapse") {
                     store.update(widget.id) { $0.collapsed.toggle() }
@@ -215,6 +224,9 @@ private struct WidgetCard: View {
                         store.update(widget.id) { $0.expanded.toggle() }
                     }
                     GridMenuItem.action(editing ? "Done Configuring" : "Configure…") { toggleEditing() }
+                    if FloatingWidgets.canFloat(widget) {
+                        GridMenuItem.action(floating ? "Dock Back" : "Pop Out") { togglePopOut() }
+                    }
                     GridMenuItem.divider
                 }
                 GridMenuItem.action("Move Up", enabled: store.canNudge(widget.id, .top)) { store.nudge(widget.id, .top) }
@@ -228,6 +240,10 @@ private struct WidgetCard: View {
         }
     }
 
+    private func togglePopOut() {
+        if floating { app.floatingWidgets.dock(widget.id) } else { app.floatingWidgets.popOut(widget.id) }
+    }
+
     private func smallButton(_ symbol: String, _ label: String, active: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol).font(.system(size: 9, weight: .medium))
@@ -238,6 +254,26 @@ private struct WidgetCard: View {
         .buttonStyle(.plain)
         .help(label)
         .accessibilityLabel(label)
+    }
+}
+
+/// What a popped-out card shows in the deck.
+private struct FloatingStub: View {
+    @Environment(AppState.self) private var app
+    @Environment(\.theme) private var theme
+    let widget: WidgetInstance
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "pip").font(.system(size: 11)).foregroundStyle(theme.accent)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("FLOATING").font(GridFont.label).tracking(1.2).foregroundStyle(theme.textDim)
+                Text(widget.bool("floatAll", true) ? "Above all apps" : "Above GRID only")
+                    .font(GridFont.small).foregroundStyle(theme.textMute)
+            }
+            Spacer(minLength: 4)
+            Button("Dock Back") { app.floatingWidgets.dock(widget.id) }.buttonStyle(GridButtonStyle(compact: true))
+        }
     }
 }
 

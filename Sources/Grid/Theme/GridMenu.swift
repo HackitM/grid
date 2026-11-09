@@ -143,17 +143,22 @@ final class GridMenu {
         guard let screen else { return }
         let size = level.contentSize(maxHeight: screen.visibleFrame.height - 16)
         var origin: NSPoint
+        let anchorY: CGFloat
         switch anchor {
         case .point(let p):
+            anchorY = p.y
             origin = NSPoint(x: p.x, y: p.y - size.height)
             if origin.x + size.width > screen.visibleFrame.maxX { origin.x = p.x - size.width }
             if origin.y < screen.visibleFrame.minY { origin.y = min(p.y, screen.visibleFrame.maxY - size.height) }
         case .below(let r):
+            anchorY = r.minY
             origin = NSPoint(x: r.maxX - size.width, y: r.minY - 2 - size.height)
             if origin.y < screen.visibleFrame.minY { origin.y = r.maxY + 2 }
         }
         origin.x = max(screen.visibleFrame.minX + 4, min(origin.x, screen.visibleFrame.maxX - size.width - 4))
         origin.y = max(screen.visibleFrame.minY + 4, min(origin.y, screen.visibleFrame.maxY - size.height - 4))
+        // Opened above the pointer (no room below): unfold upwards from the bottom edge.
+        level.unfoldsUp = origin.y + size.height / 2 > anchorY
         present(level, contentFrame: NSRect(origin: origin, size: size))
         levels = [level]
         install(window: window)
@@ -214,13 +219,8 @@ final class GridMenu {
         panel.contentView = host
         level.panel = panel
         level.contentFrame = contentFrame
-        if fx.motion {
-            panel.alphaValue = 0
-            panel.orderFrontRegardless()
-            NSAnimationContext.runAnimationGroup { c in c.duration = 0.08; panel.animator().alphaValue = 1 }
-        } else {
-            panel.orderFrontRegardless()
-        }
+        // With Motion on, the view unfolds itself (MenuUnfold); its first frame is fully folded.
+        panel.orderFrontRegardless()
     }
 
     private func install(window: NSWindow?) {
@@ -554,6 +554,10 @@ final class GridMenuLevel {
     @ObservationIgnored fileprivate var contentFrame = NSRect.zero
     @ObservationIgnored fileprivate var rowFrames: [Int: CGRect] = [:]   // content coords, top-left origin
     @ObservationIgnored fileprivate var scrolls = false
+    /// Unfold from the bottom edge (the menu sits above its anchor).
+    @ObservationIgnored fileprivate var unfoldsUp = false
+    /// Set when the menu closes with Motion on: the view folds back into a line.
+    fileprivate var closing = false
 
     init(items: [GridMenuItem], title: String?, depth: Int) {
         self.items = items; self.title = title; self.depth = depth
@@ -626,8 +630,11 @@ final class GridMenuLevel {
         guard let panel else { return }
         self.panel = nil
         if fade {
-            NSAnimationContext.runAnimationGroup({ c in c.duration = 0.1; panel.animator().alphaValue = 0 },
-                                                 completionHandler: { panel.orderOut(nil) })
+            // The view folds up (MenuUnfold in reverse); the panel goes once that has played. It
+            // already ignores the mouse, so nothing waits on the animation.
+            panel.ignoresMouseEvents = true
+            closing = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + MenuUnfold.closeDuration + 0.02) { panel.orderOut(nil) }
         } else {
             panel.orderOut(nil)
         }
@@ -649,6 +656,8 @@ private struct GridMenuView: View {
     let level: GridMenuLevel
     let size: CGSize
     let owner: GridMenu
+    /// Unfold progress (MenuUnfold): 0 = a point at the anchor edge, 1 = fully open.
+    @State private var unfold: CGFloat = 0
 
     private static let space = "grid.menu"
 
@@ -656,7 +665,9 @@ private struct GridMenuView: View {
         VStack(spacing: 0) {
             if let title = level.title {
                 HStack(spacing: 6) {
-                    SectionLabel(title, color: theme.accent).lineLimit(1)
+                    // Ares text band: the title types on as the menu unfolds.
+                    TypeOnText(text: title.uppercased(), font: GridFont.label, color: theme.accent, tracking: 1.2, duration: 0.18)
+                        .lineLimit(1)
                     TerminatedRule()
                 }
                 .padding(.horizontal, 10)
@@ -690,6 +701,16 @@ private struct GridMenuView: View {
                 .allowsHitTesting(false)
         )
         .padding(GridMenu.inset)
+        .modifier(MenuUnfold(p: effects.motion ? unfold : 1, size: size, up: level.unfoldsUp,
+                             accent: theme.accent, glow: effects.glow ? theme.glow : .clear))
+        .onAppear {
+            guard effects.motion else { return }
+            withAnimation(MenuUnfold.openCurve) { unfold = 1 }
+        }
+        .onChange(of: level.closing) { _, closing in
+            guard closing, effects.motion else { return }
+            withAnimation(.timingCurve(0.5, 0, 0.9, 0.6, duration: MenuUnfold.closeDuration)) { unfold = 0 }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(level.title ?? "Menu")
     }
@@ -707,6 +728,63 @@ private struct GridMenuView: View {
                     .accessibilityAction { if item.isSelectable { owner.click(level.depth, i) } }
             }
         }
+    }
+}
+
+/// The menu's build-on, after the Ares board-room screens: a bright line draws across the edge
+/// nearest the pointer, the plate unfolds from it with a scan band lighting each row as it is
+/// uncovered, and the line fades. Closing plays it backwards: the plate folds into the line and
+/// the line shrinks away, like a CRT switching off. Rows are live from the first frame.
+private struct MenuUnfold: ViewModifier, Animatable {
+    static var openCurve: Animation { .timingCurve(0.2, 0.8, 0.3, 1, duration: 0.22 * GridMotion.debugSlow) }
+    static var closeDuration: Double { 0.13 * GridMotion.debugSlow }
+
+    var p: CGFloat
+    let size: CGSize      // the menu plate, without the shadow inset
+    let up: Bool
+    let accent: Color
+    let glow: Color
+    var animatableData: CGFloat { get { p } set { p = newValue } }
+
+    func body(content: Content) -> some View {
+        let inset = GridMenu.inset
+        let total = CGSize(width: size.width + inset * 2, height: size.height + inset * 2)
+        // The line draws first (0…0.3), the plate unfolds over the rest.
+        let line = min(1, max(0, p / 0.3))
+        let open = min(1, max(0, (p - 0.16) / 0.84))
+        let h = size.height * open
+        let edge = up ? total.height - inset - h : inset + h     // y of the moving edge
+        content
+            .mask(alignment: .topLeading) {
+                if p >= 1 {
+                    Rectangle()
+                } else {
+                    Rectangle()
+                        .frame(width: total.width, height: h + inset)
+                        .offset(y: up ? edge : 0)
+                }
+            }
+            .overlay(alignment: .topLeading) {
+                if p < 1 {
+                    ZStack(alignment: .topLeading) {
+                        // Scan band just inside the moving edge: lights the rows it passes.
+                        LinearGradient(colors: [accent.opacity(0), accent.opacity(0.22)],
+                                       startPoint: up ? .bottom : .top, endPoint: up ? .top : .bottom)
+                            .frame(width: size.width, height: min(22, h))
+                            .offset(x: inset, y: up ? edge : edge - min(22, h))
+                            .opacity(Double(sin(open * .pi)))
+                        // The edge line.
+                        Rectangle().fill(accent)
+                            .frame(width: max(0, size.width * line), height: 1.5)
+                            .shadow(color: glow, radius: 4)
+                            .offset(x: inset, y: edge - 0.75)
+                            .opacity(Double(1 - open * open))
+                    }
+                    .frame(width: total.width, height: total.height, alignment: .topLeading)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                }
+            }
     }
 }
 

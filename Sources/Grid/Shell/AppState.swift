@@ -86,6 +86,8 @@ final class AppState {
     let shortcuts = ShortcutStore()
     let widgets = WidgetStore()
     let widgetLibrary = WidgetLibrary()
+    let nowPlaying = NowPlaying()
+    let floatingWidgets = FloatingWidgets()
     let browser = BrowserModel()
     var paletteOpen = false
     var confirmation: Confirmation?
@@ -116,6 +118,10 @@ final class AppState {
         GridMenu.shared.app = self
         GridTerminalView.contextMenu = { [weak self] view in self?.terminalMenu(for: view) ?? [] }
         widgets.onRemove = { [weak self] keep in self?.widgetLibrary.pruneRuntimes(keeping: keep) }
+        floatingWidgets.app = self
+        widgets.onChange = { [weak self] in self?.widgetsChanged() }
+        // Floating widgets reopen once the app has finished launching.
+        DispatchQueue.main.async { [weak self] in self?.widgetsChanged() }
         browser.attach(self)
         configureDocking()
         // Restore the last Files folder if it still exists; remember it as the user navigates.
@@ -254,6 +260,22 @@ final class AppState {
 
     /// Clears the screen and scrollback of a session (display only) and asks an idle shell to
     /// redraw its prompt.
+    /// Keeps floating widget windows and the Now Playing listener in step with the deck.
+    func widgetsChanged() {
+        floatingWidgets.sync()
+        let music = widgets.widgets.filter { $0.kind == .music }
+        nowPlaying.setActive(!music.isEmpty)
+        if let first = music.first {
+            let source = NowPlaying.Player(rawValue: first.string("source", "auto"))
+            if nowPlaying.preferred != source { nowPlaying.preferred = source }
+        }
+    }
+
+    /// Whether the status bar shows the now-playing cell.
+    var showsNowPlayingInStatusBar: Bool {
+        widgets.widgets.contains { $0.kind == .music && $0.bool("status", true) }
+    }
+
     func clearScrollback(_ s: TerminalSession) {
         // Erase screen + scrollback in the emulator (ED 2 / ED 3); this is display-only.
         s.view.feed(text: "\u{1b}[H\u{1b}[2J\u{1b}[3J")

@@ -35,7 +35,7 @@ cp ThirdParty/readability/LICENSE.md "$APP/Contents/Resources/Licenses/Readabili
 
 if [[ -n "${SIGN_ID:-}" ]]; then
   codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP/Contents/MacOS/GridWidgetHost"
-  codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP"
+  codesign --force --options runtime --timestamp --entitlements scripts/Grid.entitlements --sign "$SIGN_ID" "$APP"
 else
   codesign --force --sign - "$APP/Contents/MacOS/GridWidgetHost"
   codesign --force --sign - "$APP"   # ad-hoc: fine for local use, not for distribution

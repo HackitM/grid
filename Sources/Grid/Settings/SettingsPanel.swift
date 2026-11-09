@@ -22,10 +22,12 @@ struct SettingsPanel: View {
                         toggle("Edge glow on focused panels", $s.glow)
                         toggle("Motion (transitions)", $s.motion,
                                note: s.reduceMotion ? "Off: macOS Reduce Motion is enabled." : nil)
+                        toggle("Startup build-on (under a second, never blocks typing)", $s.startupAnimation,
+                               note: s.motion && !s.reduceMotion ? nil : "Plays only while Motion is on.")
                         toggle("Grid backdrop (static, very faint)", $s.gridBackdrop)
                         toggle("Use standard macOS menus for right-click and ⋯ menus", $s.systemMenus,
                                note: NSWorkspace.shared.isVoiceOverEnabled ? "Standard menus are used while VoiceOver is running." : nil)
-                        Text("No scanlines, flicker, or boot sequences. Everything works with all effects off.")
+                        Text("No scanlines, flicker, or idle animation. Everything works with all effects off.")
                             .font(GridFont.small).foregroundStyle(theme.textMute)
                     }
                     group("05.3", "Terminal") {
