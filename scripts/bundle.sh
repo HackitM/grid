@@ -11,14 +11,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 MODE="${1:-release}"
 CONFIG="$MODE"
-APP="build/GRID.app"
+APP="${APP_OUT:-build/GRID.app}"      # APP_OUT=dist/GRID.app builds elsewhere (release script)
 if [[ "$MODE" == "qa" ]]; then CONFIG="debug"; APP="build/GRID-QA.app"; fi
 
 swift build -c "$CONFIG"
 BIN="$(swift build -c "$CONFIG" --show-bin-path)/Grid"
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$(dirname "$APP")" "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Grid"
 # Sandboxed runner for third-party widgets (docs/WIDGETS.md); lives beside the main binary.
 cp "$(swift build -c "$CONFIG" --show-bin-path)/GridWidgetHost" "$APP/Contents/MacOS/GridWidgetHost"

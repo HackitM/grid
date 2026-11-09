@@ -41,6 +41,11 @@ xcrun stapler staple build/GRID.app
 ```
 Include SwiftTerm's MIT license notice with binaries (see LICENSES.md).
 
+**Publishing a release:** bump `CFBundleShortVersionString` in `Resources/Info.plist`, write
+`docs/releases/<version>.md`, commit, then run `scripts/release.sh <version>`. It runs the tests,
+builds into `dist/`, zips the app, adds a SHA-256 file, tags `v<version>` and creates the GitHub
+Release with both attached.
+
 ## First run: what to expect
 - The first time a shell or the file browser touches **Desktop, Documents, Downloads**, or a
   removable/network volume, macOS asks “GRID would like to access…”. That's the normal privacy
