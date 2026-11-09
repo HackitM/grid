@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>GRID</string>
+	<key>CFBundleDisplayName</key>
+	<string>GRID</string>
+	<key>CFBundleIdentifier</key>
+	<string>local.grid.workspace</string>
+	<key>CFBundleExecutable</key>
+	<string>Grid</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.developer-tools</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+	<!-- Shown by macOS when a program started in a GRID terminal touches a protected location.
+	     GRID itself never requests these; the prompts come from tools you run. -->
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>A program running in a GRID terminal or file browser wants to access your Desktop folder.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>A program running in a GRID terminal or file browser wants to access your Documents folder.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>A program running in a GRID terminal or file browser wants to access your Downloads folder.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>A program running in a GRID terminal or file browser wants to access a removable volume.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>A program running in a GRID terminal or file browser wants to access a network volume.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>A program running in a GRID terminal wants to control another application.</string>
+</dict>
+</plist>

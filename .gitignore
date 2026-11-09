@@ -1,0 +1,7 @@
+.DS_Store
+.build/
+build/
+*.xcodeproj/xcuserdata/
+.swiftpm/
+# Reference media is copyrighted film material: keep it local, never commit or redistribute.
+inspo_media/
