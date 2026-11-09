@@ -70,6 +70,23 @@ A real terminal, a file browser, an app launcher, a widget deck and a web browse
 - **Extensions** in Chrome / Safari WebExtension format (macOS 15.4+) install after a permission review. Their buttons only appear once one is installed.
 - Web pages can't reach your terminal, files or apps. Downloads always ask first.
 
+### Map: ALPR cameras by region
+- **A map drawn in GRID's own style** (⌥⌘5). GRID's GPU renderer draws:
+  - glowing roads graded by class
+  - a faint grid floor over dark land and water
+  - wireframe buildings when you tilt it (two-finger rotate or ⌥-drag)
+  - labels in GRID's type
+
+  It follows your theme and only draws when something changes.
+- **ALPR cameras mapped by OpenStreetMap volunteers** (via [DeFlock](https://deflock.org)):
+  - **Choosing what to download:** a US state, a Canadian province, another country's region, or
+    an area you draw. GRID keeps them on your Mac and shows them offline.
+  - **Display:** each camera shows its facing direction. Zoomed out, they gather into counted
+    clusters. Click one for its vendor, operator and OpenStreetMap entry.
+  - **Each download asks first,** with the host, the number of requests and the size. Settings ›
+    Updates shows how current each region is.
+- **Locate** centres the map on you after asking. Your position stays in memory only.
+
 ### Command palette and themes
 
 <img src="docs/screenshots/palette.png" alt="The command palette in the ENCOM amber theme" width="640" align="right">
@@ -123,7 +140,7 @@ The window opens with a short build-on (its frame traces itself in, then the pan
 | **⌘1…⌘9**, **⇧⌘[ ⇧⌘]** | Select or cycle tabs |
 | **⌘F**, **⌘G** / **⇧⌘G** | Find, next / previous |
 | **⌘B** / **⌘J** | Show or hide Files / Widget Deck |
-| **⌥⌘1…⌥⌘4**, **⌘,** | Terminal · Files · Apps · Web · Settings |
+| **⌥⌘1…⌥⌘5**, **⌘,** | Terminal · Files · Apps · Web · Map · Settings |
 | **⌥⌘T** / **⇧⌘J** | New terminal in this folder / show the terminal's folder in Files |
 | **⇧⌘R** | Reader view (browser) |
 
@@ -173,6 +190,15 @@ Use the `.app` bundle for real use rather than `swift run`, since macOS privacy 
 
 - **No accounts, telemetry, cloud services or AI features.** Settings, browsing data and history stay on your Mac. Terminal contents are never logged or stored.
 - **Network requests GRID makes on its own:** downloading the ad-blocking filter lists from their publishers (only while ad blocking is on), Safari's standard fraudulent-site check in the browser, Spotify cover art from Spotify's image server (only with a Now Playing widget following Spotify), and **checking GitHub for a new GRID version once a day (only if you turned it on; no identifiers are sent)**. Everything else happens because you asked for it.
+- **Maps are opt-in.** The Map page downloads nothing until you click **Enable Map Data**. After that:
+  - **Map tiles** for the area you view come from OpenFreeMap, which learns roughly where you're
+    looking.
+  - **The region list** comes from Geofabrik, when you open it.
+  - **Cameras** come from DeFlock's camera host for the regions you choose (US and Canada), or from
+    an Overpass server elsewhere. That host learns which region you downloaded, and each download
+    asks first.
+  - **Your location** is read only when you click Locate, stays in memory, and is never stored or
+    sent by GRID.
 - **Web content is isolated.** Pages get no bridge into GRID, can't run commands, and can't open other apps without a click and a confirmation. Downloads are confirmed and quarantined like Safari's.
 - **Widgets are sandboxed.** Custom widgets run in a separate, locked-down process and only get the permissions you approve. Those are shown in plain words, with the exact commands, paths and hosts.
 - **macOS protections stay on.** GRID isn't App-Sandboxed (your shell needs to reach your files), so it ships outside the Mac App Store. It never tries to work around macOS privacy prompts.
@@ -188,6 +214,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full security model.
 - The Git widget runs `git status`. Like any prompt that shows git status, a malicious repository's config could run commands, so point it only at repositories you trust.
 - Some ads that uBlock Origin removes with page scripts (for example on YouTube) can't be blocked by Safari's content blocker.
 - App discovery scans the standard Applications folders, up to three levels deep.
+- Map camera data is only as complete and current as OpenStreetMap's volunteers have made it. The map has no search, traffic or routing yet.
 - Now Playing follows Apple Music and Spotify only. Audio in a browser or other apps can't be read: macOS 15.4 and later reserve the system-wide now-playing information for Apple's own apps.
 
 ## Documentation

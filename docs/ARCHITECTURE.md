@@ -231,6 +231,29 @@ minimum is macOS 15; extensions use WebKit's `WKWebExtension` API and need 15.4.
   header toggles for theme / reader / blocking. ⌘T ⌘W ⌘F ⌘[ ⌘] ⌘L and ⇧⌘[ ⇧⌘] act on the browser
   while the Web page is showing; a Browser menu adds Reload, Reader View and zoom.
 
+### Map (page 05)
+
+The authoritative plan is `docs/maps/IMPLEMENTATION.md`.
+
+**GridCore/Maps** is pure Swift and unit-tested:
+- `TileMath`/`MapProjection` (Web Mercator, view projection, tile cover).
+- `MVTDecoder`, `Earcut`, `LineTessellator`, `OpenMapTilesSchema` and `TileGeometryBuilder`
+  (tile-local geometry, uniform-table classes).
+- `LabelPlacer` and `TileSource`.
+- For cameras: `OSMSurveillance`, `DeFlock` (build, index, tiles), `GeoPolygon` math,
+  `RegionCatalog`, `OverpassQuery`, `CameraIndex`, `RegionPackage` (binary, bounds-checked) and
+  `FetchPolicy`.
+
+**Grid/Maps** is the app side:
+- **Rendering:** `MapRenderer` and `MapShaders` (Metal: grid floor, fills, stencil-masked ancestor
+  tiles, analytic line glow, extrusions, SDF overlays) and `MapMetalView` (on-demand drawing,
+  paused when hidden or unfocused).
+- **Data:** `TileStore` (disk cache, decoding off the main thread, memory LRU), `ALPRStore`
+  (catalogue, download plans, DeFlock and Overpass downloads, per-region storage, freshness) and
+  `LocationProvider` (one fix per click).
+- **Network and storage:** `MapNetwork` and `MapStorage`.
+- **Page:** `MapModel` and `MapPanel`.
+
 ## 5. Security & privacy
 - No telemetry, accounts, network services, or AI features. Settings live in UserDefaults; terminal
   contents are never logged or persisted.
@@ -262,6 +285,23 @@ minimum is macOS 15; extensions use WebKit's `WKWebExtension` API and need 15.4.
   Downloads, removable/network volumes, or another app via Apple Events, macOS asks, attributing
   the request to GRID. Full Disk Access is optional and only granted by the user.
 - **Distribution**: Developer ID signing + hardened runtime + notarization (see README).
+- **Map** (`Maps/`, `GridCore/Maps/`):
+  - **Network:** nothing is fetched before the user enables map data.
+    - All traffic goes through `MapNetwork`: one ephemeral session (no cookies, no URL cache),
+      an identifying User-Agent, https only, and a host allow-list per request.
+    - Redirects are followed only within the same host.
+    - Byte caps are enforced while the body arrives.
+  - **Remote data is untrusted:** tiles, TileJSON, the DeFlock index and tiles, the Geofabrik
+    catalogue, Overpass JSON, and region files on disk.
+    - It's parsed by total decoders with hard limits, fuzz-tested, and never trapping.
+    - Tile URLs come only from validated templates with integer substitution.
+  - **Paths:**
+    - Only integers, `RegionDescriptor.storageKey`, and a SHA-256 key for the tile source become
+      path components.
+    - The Maps folder and its parents are checked not to be symlinks; writes are atomic.
+  - **Downloads:** each camera download is confirmed with its host, request count and size.
+    Overpass requests are serial, with backoff and a daily budget.
+  - **Location:** read only on Locate, held in memory, never written, logged or put in a URL.
 - **Update checks** (`Updates/`, `GridCore/Updates/`): off until the user agrees; then at most one
   conditional request a day to `api.github.com` (`User-Agent: GRID`, no version, token or IDs),
   scheduled with `NSBackgroundActivityScheduler`. Release data is remote and untrusted: page and
