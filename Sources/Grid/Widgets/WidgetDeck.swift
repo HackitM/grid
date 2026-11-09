@@ -8,7 +8,6 @@ struct WidgetDeck: View {
     @Environment(\.theme) private var theme
     @State private var editing: Set<UUID> = []
     @State private var showGallery = false
-    @State private var endTargeted = false
 
     var body: some View {
         let store = app.widgets
@@ -50,14 +49,7 @@ struct WidgetDeck: View {
                     if !store.widgets.isEmpty {
                         // Drop zone to move a card to the end.
                         Rectangle().fill(Color.clear).frame(height: 28)
-                            .overlay(alignment: .top) {
-                                Rectangle().fill(theme.accent).frame(height: 2).opacity(endTargeted ? 1 : 0)
-                            }
-                            .dropDestination(for: String.self) { items, _ in
-                                guard let id = items.first.flatMap(UUID.init(uuidString:)) else { return false }
-                                withAnimation(.easeOut(duration: 0.15)) { store.move(id, before: nil) }
-                                return true
-                            } isTargeted: { endTargeted = $0 }
+                            .dockTarget(.widgetEnd)
                     }
                 }
                 .padding(8)
@@ -124,52 +116,17 @@ private struct WidgetCard: View {
     let index: Int
     let editing: Bool
     let toggleEditing: () -> Void
-    @State private var dropTargeted = false
     @State private var hover = false
 
     var body: some View {
         let store = app.widgets
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                // Drag handle: the card's ID travels as the drag payload.
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(hover ? theme.textDim : theme.textMute)
-                    .frame(width: 14, height: 16)
-                    .contentShape(Rectangle())
-                    .draggable(widget.id.uuidString) {
-                        Text(widget.kind.title.uppercased()).font(GridFont.label).tracking(1.2)
-                            .padding(6).background(theme.bg2).foregroundStyle(theme.accent)
-                    }
-                    .help("Drag to reorder")
-                Text(String(format: "W%02d", index + 1)).font(GridFont.label).foregroundStyle(editing ? theme.warn : theme.accent)
-                HStack(spacing: 0) {
-                    Text(widget.kind.title.uppercased()).foregroundStyle(theme.text)
-                    Text(" ." + widget.kind.suffix.uppercased()).foregroundStyle(theme.textMute)
-                }
-                .font(GridFont.label).tracking(1.2).lineLimit(1)
-                Spacer(minLength: 4)
-                if !widget.collapsed && !editing {
-                    smallButton(widget.expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
-                                widget.expanded ? "Compact" : "Expand") {
-                        store.update(widget.id) { $0.expanded.toggle() }
-                    }
-                }
-                smallButton("gearshape", editing ? "Done configuring" : "Configure", active: editing) { toggleEditing() }
-                smallButton(widget.collapsed ? "chevron.down" : "chevron.up", widget.collapsed ? "Show" : "Collapse") {
-                    store.update(widget.id) { $0.collapsed.toggle() }
-                }
-                Menu {
-                    Button("Move Up") { store.shift(widget.id, by: -1) }.disabled(index == 0)
-                    Button("Move Down") { store.shift(widget.id, by: 1) }.disabled(index == store.widgets.count - 1)
-                    Divider()
-                    Button("Remove Widget") { store.remove(widget.id) }
-                } label: {
-                    Image(systemName: "ellipsis").font(.system(size: 9)).foregroundStyle(theme.textDim).frame(width: 16, height: 16)
-                }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .help("Move or remove")
-                smallButton("xmark", "Remove widget") { withAnimation(effects.motion ? .easeOut(duration: 0.15) : nil) { store.remove(widget.id) } }
+            // Widest first: full header; without the ".SUFFIX"; then only the ⋯ menu beside the
+            // title (the folded buttons live in the menu too), so the title never disappears.
+            ViewThatFits(in: .horizontal) {
+                header(store, showSuffix: true, compact: false)
+                header(store, showSuffix: false, compact: false)
+                header(store, showSuffix: false, compact: true)
             }
             .padding(.horizontal, 6)
             .frame(height: 22)
@@ -190,18 +147,63 @@ private struct WidgetCard: View {
         .background(theme.bg3)
         .clipShape(ClippedRect(cut: 6))
         .overlay(ClippedRect(cut: 6).stroke(editing ? theme.warn.opacity(0.6) : (hover ? theme.lineStrong.opacity(0.5) : theme.line), lineWidth: Metrics.hairline))
-        .overlay(alignment: .top) {
-            // Insertion marker while another card is dragged over this one.
-            Rectangle().fill(theme.accent).frame(height: 2).offset(y: -5).opacity(dropTargeted ? 1 : 0)
-        }
         .onHover { hover = $0 }
-        .dropDestination(for: String.self) { items, _ in
-            guard let id = items.first.flatMap(UUID.init(uuidString:)), id != widget.id else { return false }
-            withAnimation(effects.motion ? .easeOut(duration: 0.15) : nil) { store.move(id, before: widget.id) }
-            return true
-        } isTargeted: { dropTargeted = $0 }
+        // A card dropped here moves before this one (GRID drag tracking; see DockDrag).
+        .dockTarget(.widget(widget.id))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(widget.kind.title) widget")
+    }
+
+    private func header(_ store: WidgetStore, showSuffix: Bool, compact: Bool) -> some View {
+        HStack(spacing: 6) {
+            // Drag handle: the card's ID travels as the drag payload.
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(hover ? theme.textDim : theme.textMute)
+                .frame(width: 14, height: 16)
+                .contentShape(Rectangle())
+                .dockDragSource(.widget(widget.id), label: widget.kind.title)
+                .hoverCursor(.openHand)
+                .help("Drag to reorder")
+            Text(String(format: "W%02d", index + 1)).font(GridFont.label).foregroundStyle(editing ? theme.warn : theme.accent)
+            HStack(spacing: 0) {
+                Text(widget.kind.title.uppercased()).foregroundStyle(theme.text)
+                if showSuffix { Text(" ." + widget.kind.suffix.uppercased()).foregroundStyle(theme.textMute) }
+            }
+            .font(GridFont.label).tracking(1.2).lineLimit(1)
+            .layoutPriority(compact ? 1 : 0)
+            Spacer(minLength: 4)
+            if !compact {
+                if !widget.collapsed && !editing {
+                    smallButton(widget.expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                                widget.expanded ? "Compact" : "Expand") {
+                        store.update(widget.id) { $0.expanded.toggle() }
+                    }
+                }
+                smallButton("gearshape", editing ? "Done configuring" : "Configure", active: editing) { toggleEditing() }
+                smallButton(widget.collapsed ? "chevron.down" : "chevron.up", widget.collapsed ? "Show" : "Collapse") {
+                    store.update(widget.id) { $0.collapsed.toggle() }
+                }
+            }
+            Menu {
+                if compact {
+                    Button(widget.collapsed ? "Show" : "Collapse") { store.update(widget.id) { $0.collapsed.toggle() } }
+                    Button(widget.expanded ? "Compact" : "Expand") { store.update(widget.id) { $0.expanded.toggle() } }
+                        .disabled(widget.collapsed || editing)
+                    Button(editing ? "Done Configuring" : "Configure…") { toggleEditing() }
+                    Divider()
+                }
+                Button("Move Up") { store.shift(widget.id, by: -1) }.disabled(index == 0)
+                Button("Move Down") { store.shift(widget.id, by: 1) }.disabled(index == store.widgets.count - 1)
+                Divider()
+                Button("Remove Widget") { store.remove(widget.id) }
+            } label: {
+                Image(systemName: "ellipsis").font(.system(size: 9)).foregroundStyle(theme.textDim).frame(width: 16, height: 16)
+            }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .help(compact ? "Widget actions" : "Move or remove")
+            smallButton("xmark", "Remove widget") { withAnimation(effects.motion ? .easeOut(duration: 0.15) : nil) { store.remove(widget.id) } }
+        }
     }
 
     private func smallButton(_ symbol: String, _ label: String, active: Bool = false, action: @escaping () -> Void) -> some View {
@@ -276,6 +278,7 @@ struct Sparkline: View {
 }
 
 struct Readout: View {
+    @Environment(\.effects) private var effects
     @Environment(\.theme) private var theme
     let label: String
     let value: String
@@ -283,7 +286,10 @@ struct Readout: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             SectionLabel(label).frame(width: 46, alignment: .leading)
+            // Measured values roll to their new number instead of jumping.
             Text(value).font(GridFont.mono(15, .medium)).foregroundStyle(theme.text).monospacedDigit()
+                .contentTransition(.numericText())
+                .animation(effects.motion ? .easeOut(duration: 0.3) : nil, value: value)
             if !detail.isEmpty { Text(detail).font(GridFont.small).foregroundStyle(theme.textDim).lineLimit(1) }
             Spacer(minLength: 0)
         }

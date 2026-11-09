@@ -69,13 +69,22 @@ message + actions; used for permission, missing, empty, and no-match states) ·
 `gridRowBackground` · `TerminatedRule` · `GridBackdrop`.
 
 ## Motion
-| Event | Motion | Duration |
+Taken from the reference films (`Theme/Motion.swift`). All motion is short, never delays input,
+and is skipped when Motion is off or macOS Reduce Motion is on.
+
+| Event | Motion (reference) | Duration |
 |---|---|---|
-| Focus change | border/glow/brackets ease-out | 140 ms |
-| Panel switch | cross-fade | 120 ms |
-| Palette open | opacity + header rule extends from the left (Ares bar build) | 140 ms |
-| Notice | fade in status bar; auto-dismiss 3 s (6 s errors) | 150 ms |
-| Background job done | static `DONE` tag on tab + square badge on rail (no animation) | — |
+| Panel appears (page switch, reopen, re-dock) | **Build-on** (Legacy light table): a bright trace runs around the frame from the top-left corner, the header rule extends, the plate expands from its centre; **Ares flash**: the plate lights as an accent fill that resolves | 340 ms |
+| Page switch | old page leaves at once; the new page builds on (no cross-fade) | 340 ms |
+| Command palette | build-on (both clipped corners) + header rule extends; first results cascade in | 340 ms |
+| List rows (open folder, new app search, palette open) | **Cascade** (Legacy cells popping in): rows slide in one after another; rows that appear by scrolling don't animate | 14 ms stagger, 160 ms |
+| Status notice | **Ares text band**: types on behind a sweeping highlight band that dims | 240 ms + 450 ms fade |
+| Empty / error states | left status bar draws top to bottom; title types on | 340 ms |
+| Focus change | border/glow ease-out; corner brackets snap in from just outside | 140 ms |
+| Rail / tab selection | the active marker slides to the new item (Ares selector) | spring 260 ms |
+| Dock target while dragging | half-panel highlight with a scan band sweeping toward the edge | 800 ms loop, only while hovering |
+| DONE / BELL tags | pop in from 60% with a brief flash | spring 260 ms |
+| Widget readouts | numbers roll to new values | 300 ms |
 
 No boot sequence, no idle animation, no flicker, no scanlines.
 

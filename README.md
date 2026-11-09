@@ -56,7 +56,7 @@ Include SwiftTerm's MIT license notice with binaries (see LICENSES.md).
 | ⌘D / ⇧⌘D, ⌥⌘← ⌥⌘→ | Split the focused pane right / down (mix freely), move between panes; drag dividers to resize |
 | ⌘F, ⌘G / ⇧⌘G | Find in the terminal (case / regex / whole word), next / previous match |
 | ⌘1…⌘9, ⇧⌘[ ⇧⌘] | Select / cycle tabs (double-click a tab to rename it) |
-| ⌘J | Widget deck |
+| ⌘B / ⌥⌘0 / ⌘J | Files / Terminal / Widget Deck panels (show or hide) |
 | ⌥⌘1…⌥⌘4, ⌘, | Terminal · Files · Apps · Web · Settings |
 | ⌘B / ⌘I | Files sidebar / inspector |
 | ⌥⌘T | New session in the current Files folder |
@@ -64,6 +64,7 @@ Include SwiftTerm's MIT license notice with binaries (see LICENSES.md).
 | ⌘L, ⌘F, ⌘[ ⌘] ⌘↑, ⇧⌘. | Files: path · filter · back/forward/up · hidden files |
 | ⇧⌘N, ⌘C ⌘V ⌥⌘V, ⌘⌫, ⌘Z | Files: new folder · copy/paste/move · Move to Trash · undo |
 | Space, ⇧↑↓, ⌘A, ⌘-click ⇧-click | Files: Quick Look · multi-select |
+| ▸ click, → / ←, ⌥→ | Files: expand / collapse folders in place (⌥ expands 3 levels) |
 | ⌘K | Clear scrollback |
 
 Every shortcut except ⌘1–⌘9 can be changed in **Settings › Keyboard**: click a shortcut and press
@@ -74,6 +75,14 @@ Palette grammar (application commands, never sent to the shell): `app Safari`,
 `files ~/Projects`, `term ~/Projects`, `web example.com`, `theme ares`.
 
 ## Implemented
+
+**Workspace docking:** Files, Terminal and the Widget Deck are dockable panels.
+- **Move:** drag a panel's title bar (≡) onto another panel's left, right, top or bottom edge; a highlight shows where it will land.
+- **Close and reopen:** × closes a panel, and closing the terminal panel only hides it, so sessions keep running. Reopen panels from the View menu, their shortcuts, or the buttons shown when everything is closed.
+- **Resize:** drag the dividers.
+- **Persists:** the layout is saved across launches; *View › Reset Workspace Layout* restores the default.
+
+**Terminal panes** move the same way. Drag a pane's header onto another pane's edge, onto a tab (to move it into that tab), or onto empty tab-bar space (to give it its own tab). Drag tabs to reorder them. Each pane header has its own ×.
 
 **Milestone 2:** split panes (up to 4 per tab), tab rename, bell indicator. File operations:
 new folder, inline rename, duplicate, copy/cut/paste and move, drag into Files, Move to Trash,

@@ -41,10 +41,7 @@ struct ResizeHandle: View {
                     .opacity(hover || start != nil ? 1 : 0)
             )
             .contentShape(Rectangle())
-            .onHover { inside in
-                hover = inside
-                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
-            }
+            .hoverCursor(.resizeLeftRight) { hover = $0 }
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { v in

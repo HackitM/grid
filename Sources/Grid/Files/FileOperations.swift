@@ -107,8 +107,12 @@ final class FileOperations {
 
     // MARK: Duplicate / copy / move
 
+    /// Duplicates each item beside itself (nested rows duplicate in their own folder).
     func duplicate(_ urls: [URL]) {
-        transfer(urls, into: files.currentURL, move: false)
+        let groups = Dictionary(grouping: urls) { $0.deletingLastPathComponent().standardizedFileURL.path }
+        for (dir, items) in groups.sorted(by: { $0.key < $1.key }) {
+            transfer(items, into: URL(fileURLWithPath: dir), move: false)
+        }
     }
 
     /// ⌘C: puts file URLs (for Finder and other apps) and plain paths on the pasteboard.
@@ -207,7 +211,10 @@ final class FileOperations {
             let landed = steps.compactMap { step -> String? in
                 switch step { case .moved(_, let to): to.path; case .copied(let u): u.path; default: nil }
             }
-            if dir.standardizedFileURL.path == self.files.currentURL.standardizedFileURL.path { self.files.pendingSelection = landed }
+            // Select what landed if it will be visible: the current folder or an expanded one.
+            if dir.standardizedFileURL.path == self.files.currentURL.standardizedFileURL.path || self.files.isExpanded(dir.path) {
+                self.files.pendingSelection = landed
+            }
             self.notice("\(move ? "Moved" : "Copied") \(self.count(urls)) to \(PathResolver.abbreviate(dir.path))", undo: true)
         }
     }

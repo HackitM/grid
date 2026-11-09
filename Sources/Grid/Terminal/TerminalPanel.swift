@@ -44,56 +44,103 @@ struct TerminalHostView: NSViewRepresentable {
     }
 }
 
+/// The Terminal workspace: dockable panels (Files, Terminal, Widget Deck) arranged by a split tree.
+/// Drag a panel's title bar onto another panel's edge to move it; × closes it; dividers resize.
 struct TerminalPanel: View {
     @Environment(AppState.self) private var app
     @Environment(\.theme) private var theme
 
     var body: some View {
+        let ws = app.workspace
+        if let tree = ws.tree {
+            GeometryReader { geo in
+                SplitTreeView(node: tree, divider: Metrics.gutter, dividerFill: theme.bg0,
+                              leafMinimum: { WorkspacePanel(nodeID: $0).map(WorkspaceLayout.minimumSize) ?? .zero },
+                              onResize: { ws.resize(split: $0, divider: $1, by: $2, minFraction: $3) },
+                              onEqualize: { ws.equalize(split: $0) }) { id in
+                    if let p = WorkspacePanel(nodeID: id) {
+                        panel(p)
+                            .environment(\.panelChrome, PanelChrome(drag: .panel(p), onClose: { app.closePanel(p) },
+                                                                     closeHelp: "Close \(p.title)" + app.shortcuts.hint(p.toggleCommand)))
+                            .dockTarget(.panel(p))
+                    }
+                }
+                // The model repairs its fractions for the real size, so stored and rendered agree.
+                .onAppear { ws.viewport = geo.size }
+                .onChange(of: geo.size) { _, s in ws.viewport = s }
+            }
+        } else {
+            VStack {
+                Spacer()
+                StateBlock(code: "WORKSPACE.EMPTY", title: "All panels are closed",
+                           message: "Your terminal sessions keep running. Reopen a panel:") {
+                    Button("Terminal" + app.shortcuts.hint(.toggleTerminalPanel)) { ws.show(.terminal); app.focusTerminal() }
+                    Button("Files" + app.shortcuts.hint(.toggleSidebar)) { ws.show(.files) }
+                    Button("Widget Deck" + app.shortcuts.hint(.toggleDeck)) { ws.show(.deck) }
+                }
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private func panel(_ p: WorkspacePanel) -> some View {
+        switch p {
+        case .files: FileBrowserView(compact: true)
+        case .terminal: TerminalSessionsPanel()
+        case .deck: WidgetDeck()
+        }
+    }
+}
+
+/// The terminal panel itself: tabs, panes, and session controls.
+private struct TerminalSessionsPanel: View {
+    @Environment(AppState.self) private var app
+    @Environment(\.theme) private var theme
+
+    var body: some View {
         let tm = app.terminals
-        HStack(spacing: 0) {
-            if app.filesSidebar {
-                FileBrowserView(compact: true)
-                    .frame(width: app.layout.sidebarWidth)
-                ResizeHandle(width: Binding(get: { app.layout.sidebarWidth }, set: { app.layout.sidebarWidth = $0 }),
-                             range: 220...560, defaultValue: 300, edge: .leading)
-            }
-            Panel(index: "01", title: "Terminal", suffix: tm.active.map { "tty-\(String(format: "%02d", $0.number))" } ?? "idle",
-                  focused: tm.active?.hasFocus ?? false) {
-                HStack(spacing: 2) {
-                    IconButton(symbol: "sidebar.left", label: "Toggle Files sidebar" + app.shortcuts.hint(.toggleSidebar), active: app.filesSidebar) {
-                        app.filesSidebar.toggle()
-                    }
-                    IconButton(symbol: "folder.badge.gearshape", label: "Show terminal directory in Files" + app.shortcuts.hint(.revealTerminalDirectory),
-                               disabled: tm.active == nil) { app.revealTerminalDirectoryInFiles() }
-                    IconButton(symbol: "rectangle.split.2x1", label: "Split right" + app.shortcuts.hint(.splitRight),
-                               disabled: (tm.activeTab?.panes.count ?? 0) >= TerminalManager.maxPanesPerTab) { app.split(.horizontal) }
-                    IconButton(symbol: "rectangle.split.1x2", label: "Split down" + app.shortcuts.hint(.splitDown),
-                               disabled: (tm.activeTab?.panes.count ?? 0) >= TerminalManager.maxPanesPerTab) { app.split(.vertical) }
-                    IconButton(symbol: "plus", label: "New tab" + app.shortcuts.hint(.newTab)) { app.newTerminal() }
-                    IconButton(symbol: "square.grid.2x2", label: "Toggle widget deck" + app.shortcuts.hint(.toggleDeck), active: app.deckVisible) {
-                        app.deckVisible.toggle()
-                    }
+        let canSplit = (tm.activeTab?.panes.count ?? 0) < TerminalManager.maxPanesPerTab
+        Panel(index: "01", title: "Terminal", suffix: tm.active.map { "tty-\(String(format: "%02d", $0.number))" } ?? "idle",
+              focused: tm.active?.hasFocus ?? false) {
+            HStack(spacing: 2) {
+                IconButton(symbol: "sidebar.left", label: "Toggle Files panel" + app.shortcuts.hint(.toggleSidebar), active: app.filesSidebar) {
+                    app.filesSidebar.toggle()
                 }
-            } content: {
-                VStack(spacing: 0) {
-                    TabStrip()
-                    Rectangle().fill(theme.line).frame(height: Metrics.hairline)
-                    if let t = tm.activeTab {
-                        PaneLayout(tab: t)
-                    } else {
-                        Spacer()
-                        StateBlock(code: "NO.SESSION", title: "No terminal sessions",
-                                   message: "Start a shell session in your home folder or any folder from Files.") {
-                            Button("New Session  ⌘T") { app.newTerminal() }
-                        }
-                        Spacer()
-                    }
+                IconButton(symbol: "folder.badge.gearshape", label: "Show terminal directory in Files" + app.shortcuts.hint(.revealTerminalDirectory),
+                           disabled: tm.active == nil) { app.revealTerminalDirectoryInFiles() }
+                IconButton(symbol: "rectangle.split.2x1", label: "Split right" + app.shortcuts.hint(.splitRight), disabled: !canSplit) { app.split(.horizontal) }
+                IconButton(symbol: "rectangle.split.1x2", label: "Split down" + app.shortcuts.hint(.splitDown), disabled: !canSplit) { app.split(.vertical) }
+                IconButton(symbol: "plus", label: "New tab" + app.shortcuts.hint(.newTab)) { app.newTerminal() }
+                IconButton(symbol: "square.grid.2x2", label: "Toggle widget deck" + app.shortcuts.hint(.toggleDeck), active: app.deckVisible) {
+                    app.deckVisible.toggle()
                 }
             }
-            if app.deckVisible {
-                ResizeHandle(width: Binding(get: { app.layout.deckWidth }, set: { app.layout.deckWidth = $0 }),
-                             range: 240...520, defaultValue: 300, edge: .trailing)
-                WidgetDeck().frame(width: app.layout.deckWidth)
+        } overflow: {
+            // Same actions as the toolbar, for a header too narrow to show the buttons.
+            Button("New Tab" + app.shortcuts.hint(.newTab)) { app.newTerminal() }
+            Button("Split Right" + app.shortcuts.hint(.splitRight)) { app.split(.horizontal) }.disabled(!canSplit)
+            Button("Split Down" + app.shortcuts.hint(.splitDown)) { app.split(.vertical) }.disabled(!canSplit)
+            Divider()
+            Button((app.filesSidebar ? "Hide" : "Show") + " Files Panel" + app.shortcuts.hint(.toggleSidebar)) { app.filesSidebar.toggle() }
+            Button("Show Terminal Directory in Files" + app.shortcuts.hint(.revealTerminalDirectory)) { app.revealTerminalDirectoryInFiles() }
+                .disabled(tm.active == nil)
+            Button((app.deckVisible ? "Hide" : "Show") + " Widget Deck" + app.shortcuts.hint(.toggleDeck)) { app.deckVisible.toggle() }
+        } content: {
+            VStack(spacing: 0) {
+                TabStrip()
+                Rectangle().fill(theme.line).frame(height: Metrics.hairline)
+                if let t = tm.activeTab {
+                    PaneLayout(tab: t)
+                } else {
+                    Spacer()
+                    StateBlock(code: "NO.SESSION", title: "No terminal sessions",
+                               message: "Start a shell session in your home folder or any folder from Files.") {
+                        Button("New Session" + app.shortcuts.hint(.newTab)) { app.newTerminal() }
+                    }
+                    Spacer()
+                }
             }
         }
     }
@@ -104,107 +151,14 @@ struct TerminalPanel: View {
 private struct PaneLayout: View {
     let tab: TerminalTab
     var body: some View {
-        PaneTreeView(node: tab.layout, tab: tab, multi: tab.panes.count > 1)
-    }
-}
-
-private struct PaneTreeView: View {
-    let node: SplitTree
-    let tab: TerminalTab
-    let multi: Bool
-
-    var body: some View {
-        switch node {
-        case .leaf(let id):
+        let multi = tab.panes.count > 1
+        SplitTreeView(node: tab.layout, divider: 6, minLeaf: 120,
+                      onResize: { tab.resize(split: $0, divider: $1, by: $2, minFraction: $3) },
+                      onEqualize: { tab.equalize(split: $0) }) { id in
             if let s = tab.session(id) {
-                PaneView(session: s, focusedPane: s.id == tab.focusedPaneID, showMarker: multi)
-            }
-        case .split(let sid, let axis, let children, let fractions):
-            SplitContainer(splitID: sid, axis: axis, children: children, fractions: fractions, tab: tab, multi: multi)
-        }
-    }
-}
-
-private struct SplitContainer: View {
-    @Environment(\.theme) private var theme
-    let splitID: UUID
-    let axis: SplitAxis
-    let children: [SplitTree]
-    let fractions: [Double]
-    let tab: TerminalTab
-    let multi: Bool
-
-    static let divider: CGFloat = 6
-    static let minPane: CGFloat = 120
-
-    var body: some View {
-        GeometryReader { geo in
-            let horizontal = axis == .horizontal
-            let total = max((horizontal ? geo.size.width : geo.size.height) - Self.divider * CGFloat(children.count - 1), 1)
-            let layout = horizontal ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
-            layout {
-                ForEach(Array(children.enumerated()), id: \.element.nodeID) { i, child in
-                    if i > 0 {
-                        PaneDivider(axis: axis, total: total, minFraction: min(Double(Self.minPane / total), 0.45)) { delta, minF in
-                            tab.resize(split: splitID, divider: i - 1, by: delta, minFraction: minF)
-                        } reset: {
-                            tab.equalize(split: splitID)
-                        }
-                    }
-                    PaneTreeView(node: child, tab: tab, multi: multi)
-                        .frame(width: horizontal ? total * CGFloat(fractions[i]) : nil,
-                               height: horizontal ? nil : total * CGFloat(fractions[i]))
-                }
+                PaneView(session: s, tab: tab, focusedPane: s.id == tab.focusedPaneID, showMarker: multi)
             }
         }
-    }
-}
-
-/// A draggable gutter between two panes.
-private struct PaneDivider: View {
-    @Environment(\.theme) private var theme
-    let axis: SplitAxis
-    let total: CGFloat
-    let minFraction: Double
-    let onDrag: (_ delta: Double, _ minFraction: Double) -> Void
-    let reset: () -> Void
-    @State private var last: CGFloat = 0
-    @State private var dragging = false
-    @State private var hover = false
-
-    var body: some View {
-        let horizontal = axis == .horizontal
-        Rectangle()
-            .fill(theme.bg1)
-            .frame(width: horizontal ? SplitContainer.divider : nil, height: horizontal ? nil : SplitContainer.divider)
-            .overlay(
-                Rectangle()
-                    .fill(dragging ? theme.accent : (hover ? theme.lineStrong : theme.line))
-                    .frame(width: horizontal ? 1 : nil, height: horizontal ? nil : 1)
-            )
-            .contentShape(Rectangle())
-            .onHover { inside in
-                hover = inside
-                if inside { (horizontal ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).push() } else { NSCursor.pop() }
-            }
-            .gesture(
-                DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                    .onChanged { v in
-                        let t = horizontal ? v.translation.width : v.translation.height
-                        if !dragging { dragging = true; last = 0 }
-                        let step = t - last
-                        last = t
-                        onDrag(Double(step / total), minFraction)
-                    }
-                    .onEnded { _ in dragging = false; last = 0 }
-            )
-            .onTapGesture(count: 2) { reset() }
-            .help("Drag to resize panes · double-click to even them out")
-            .accessibilityElement()
-            .accessibilityLabel("Pane divider")
-            .accessibilityAdjustableAction { dir in
-                onDrag(dir == .increment ? 0.05 : -0.05, minFraction)
-            }
     }
 }
 
@@ -212,6 +166,7 @@ private struct PaneView: View {
     @Environment(AppState.self) private var app
     @Environment(\.theme) private var theme
     let session: TerminalSession
+    let tab: TerminalTab
     let focusedPane: Bool
     let showMarker: Bool
 
@@ -222,27 +177,42 @@ private struct PaneView: View {
                 .padding(.leading, 8).padding(.top, showMarker ? 18 : 4).padding(.trailing, 2)
                 .accessibilityLabel("Terminal session \(session.number)")
             if showMarker {
-                // Pane header: which pane is focused, by bar + label (not color alone).
+                // Pane header: which pane is focused (bar + label, not color alone). Drag it to move
+                // the pane; × closes just this pane.
                 VStack(spacing: 0) {
                     HStack(spacing: 6) {
+                        Image(systemName: "line.3.horizontal").font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(theme.textMute)
                         Text(String(format: "%02d", session.number)).font(GridFont.label)
                             .foregroundStyle(focusedPane ? theme.accent : theme.textMute)
                         Text(session.displayTitle).font(.system(size: 9.5, design: .monospaced))
                             .foregroundStyle(focusedPane ? theme.textDim : theme.textMute).lineLimit(1)
                         if session.isBusy { Text("◆").font(.system(size: 6)).foregroundStyle(theme.accent) }
-                        if session.bellPending { Tag("bell", color: theme.warn) }
+                        if session.bellPending { Tag("bell", color: theme.warn).popIn() }
                         Spacer()
                         if focusedPane { SectionLabel("active", color: theme.accent) }
+                        Button { app.requestCloseTerminal(session.id) } label: {
+                            Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(theme.textDim).frame(width: 14, height: 14).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Close this pane" + app.shortcuts.hint(.closePane))
+                        .accessibilityLabel("Close pane \(session.number)")
                     }
                     .padding(.horizontal, 8).frame(height: 16)
-                    .background(focusedPane ? theme.accentSoft : Color.clear)
+                    .background(focusedPane ? theme.accentSoft : theme.bg1.opacity(0.9))
+                    .contentShape(Rectangle())
+                    .onTapGesture { app.terminals.select(session.id); app.focusTerminal() }
+                    .dockDragSource(.pane(session.id), label: "Pane \(String(format: "%02d", session.number)) · \(session.displayTitle)")
+                    .help("Drag to move this pane (onto another pane's edge, a tab, or the tab bar)")
                     Rectangle().fill(focusedPane ? theme.accent : theme.line).frame(height: focusedPane ? 1.5 : Metrics.hairline)
-                    Spacer()
+                        .allowsHitTesting(false)
+                    Spacer().allowsHitTesting(false)
                 }
-                .allowsHitTesting(false)
             }
             if session.exited { ExitedBar(session: session) }
         }
+        .dockTarget(.pane(session.id))
         .overlay(alignment: .topTrailing) {
             if session.find.visible {
                 TerminalFindBar(session: session).padding(.top, showMarker ? 22 : 6).padding(.trailing, 10)
@@ -255,17 +225,26 @@ private struct PaneView: View {
 private struct TabStrip: View {
     @Environment(AppState.self) private var app
     @Environment(\.theme) private var theme
+    @Environment(\.effects) private var effects
+    /// The active-tab marker slides between tabs.
+    @Namespace private var selector
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 0) {
                 ForEach(Array(app.terminals.tabs.enumerated()), id: \.element.id) { i, t in
-                    TabItem(tab: t, position: i, active: t.id == app.terminals.activeTabID)
+                    TabItem(tab: t, position: i, active: t.id == app.terminals.activeTabID, selector: selector)
                 }
+
             }
         }
         .frame(height: 26)
         .background(theme.bg1)
+        .animation(effects.motion ? GridMotion.snap : nil, value: app.terminals.activeTabID)
+        // The whole strip (outside the tabs, which are smaller targets) accepts drops: a pane gets
+        // its own tab; a tab moves to the end.
+        .dockTarget(.tabBar)
+        .help("Drop a pane on the tab bar to move it into its own tab")
     }
 }
 
@@ -275,6 +254,7 @@ private struct TabItem: View {
     let tab: TerminalTab
     let position: Int
     let active: Bool
+    let selector: Namespace.ID
     @State private var hover = false
     @State private var editing = false
     @State private var draft = ""
@@ -306,8 +286,8 @@ private struct TabItem: View {
                     .frame(maxWidth: 160, alignment: .leading)
             }
             if tab.panes.count > 1 { Text("⊞\(tab.panes.count)").font(GridFont.label).foregroundStyle(theme.textMute) }
-            if tab.hasUnseenCompletion { Tag("done") }
-            if tab.hasBell { Tag("bell", color: theme.warn) }
+            if tab.hasUnseenCompletion { Tag("done").popIn() }
+            if tab.hasBell { Tag("bell", color: theme.warn).popIn() }
             if let f = tab.focused, f.exited, tab.panes.count == 1 { Tag("exit \(f.exitCode.map(String.init) ?? "?")", color: theme.textMute) }
             Button {
                 app.requestCloseTab(tab.id)
@@ -324,7 +304,9 @@ private struct TabItem: View {
         .padding(.horizontal, 10)
         .frame(height: 26)
         .background(active ? theme.bg2 : (hover ? theme.bg2.opacity(0.5) : .clear))
-        .overlay(alignment: .top) { if active { Rectangle().fill(theme.accent).frame(height: 2) } }
+        .overlay(alignment: .top) {
+            if active { Rectangle().fill(theme.accent).frame(height: 2).matchedGeometryEffect(id: "tab.active", in: selector) }
+        }
         .overlay(alignment: .trailing) { Rectangle().fill(theme.line).frame(width: Metrics.hairline) }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { beginRename() }
@@ -333,6 +315,9 @@ private struct TabItem: View {
             app.focusTerminal()
         })
         .onHover { hover = $0 }
+        .dockDragSource(.tab(tab.id), label: "Tab · " + tab.title)
+        // A tab dropped here goes before this one; a pane dropped here moves into this tab.
+        .dockTarget(.tab(tab.id))
         .contextMenu {
             Button("Rename Tab…") { beginRename() }
             if tab.customTitle != nil { Button("Use Automatic Name") { tab.customTitle = nil } }

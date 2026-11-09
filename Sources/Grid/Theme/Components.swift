@@ -112,39 +112,60 @@ struct Tag: View {
 ///
 ///   ┌ 01 TERMINAL .SESSION ─────────────── trailing ┐
 ///   │ content                                        │
-struct Panel<Content: View, Trailing: View>: View {
+/// Optional window-like chrome for a top-level panel: a drag grip on the title bar (to re-dock it)
+/// and a close button. Supplied by the container through the environment.
+struct PanelChrome {
+    var drag: DragPayload?
+    var onClose: (() -> Void)?
+    var closeHelp = "Close"
+}
+
+private struct PanelChromeKey: EnvironmentKey { static let defaultValue = PanelChrome() }
+extension EnvironmentValues {
+    var panelChrome: PanelChrome {
+        get { self[PanelChromeKey.self] }
+        set { self[PanelChromeKey.self] = newValue }
+    }
+}
+
+/// Header layout, widest first: the full title with suffix and all trailing controls; the title
+/// without its suffix; then the title alone with the trailing controls folded into an overflow
+/// menu (when the panel provides one). The title itself is never dropped.
+///
+/// Sizing: header controls are 22-24 pt each, so a six-button toolbar plus × needs ≈ 190 pt
+/// before the title gets any room; the cascade keeps "01 TERMINAL" readable down to ≈ 150 pt.
+struct Panel<Content: View, Trailing: View, Overflow: View>: View {
     @Environment(\.theme) private var theme
     @Environment(\.effects) private var effects
+    @Environment(\.panelChrome) private var chrome
+    @State private var gripHover = false
     let index: String
     let title: String
     let suffix: String
     var focused: Bool
     var clipped: Bool
+    /// Whether `overflow` has menu items for the collapsed header.
+    let hasOverflow: Bool
     @ViewBuilder var trailing: () -> Trailing
+    /// Menu items standing in for `trailing` when the header is too narrow to show the buttons.
+    @ViewBuilder var overflow: () -> Overflow
     @ViewBuilder var content: () -> Content
 
     init(index: String, title: String, suffix: String = "", focused: Bool = false, clipped: Bool = true,
          @ViewBuilder trailing: @escaping () -> Trailing,
+         @ViewBuilder overflow: @escaping () -> Overflow,
          @ViewBuilder content: @escaping () -> Content) {
         self.index = index; self.title = title; self.suffix = suffix; self.focused = focused
-        self.clipped = clipped; self.trailing = trailing; self.content = content
+        self.clipped = clipped; self.trailing = trailing; self.overflow = overflow; self.content = content
+        self.hasOverflow = Overflow.self != EmptyView.self
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Text(index)
-                    .font(GridFont.label)
-                    .foregroundStyle(focused ? theme.accent : theme.textMute)
-                HStack(spacing: 0) {
-                    Text(title.uppercased()).foregroundStyle(focused ? theme.text : theme.textDim)
-                    if !suffix.isEmpty {
-                        Text(" ." + suffix.uppercased()).foregroundStyle(theme.textMute)
-                    }
-                }
-                .font(GridFont.label).tracking(1.4).lineLimit(1)
-                Spacer(minLength: 8)
-                trailing()
+            ViewThatFits(in: .horizontal) {
+                header(showSuffix: true, compact: false)
+                header(showSuffix: false, compact: false)
+                header(showSuffix: false, compact: true)
             }
             .padding(.horizontal, 10)
             .frame(height: Metrics.headerHeight)
@@ -152,6 +173,7 @@ struct Panel<Content: View, Trailing: View>: View {
             Rectangle().fill(focused ? theme.lineStrong.opacity(0.6) : theme.line).frame(height: Metrics.hairline)
             content()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .environment(\.panelChrome, PanelChrome())   // nested panels don't inherit chrome
         }
         .background {
             ZStack {
@@ -166,12 +188,104 @@ struct Panel<Content: View, Trailing: View>: View {
                 .shadow(color: (focused && effects.glow) ? theme.glow.opacity(0.55) : .clear, radius: 5)
         )
         .overlay(
+            // Focus selector: brackets snap in from just outside the frame.
             CornerBrackets()
                 .stroke(theme.accent, lineWidth: 2)
                 .padding(-2)
+                .scaleEffect(focused ? 1 : 1.035)
                 .opacity(focused ? 1 : 0)
         )
         .animation(effects.motion ? .easeOut(duration: 0.14) : nil, value: focused)
+        // Legacy build-on whenever a panel appears (panel switch, reopen, re-dock).
+        .buildOn(topRight: clipped)
+    }
+
+    /// One header variant. In the compact one the trailing controls give way to the overflow
+    /// menu (or disappear when the panel has none) so the title keeps its room; it is the last
+    /// resort, so its title may still truncate on an extremely narrow panel.
+    private func header(showSuffix: Bool, compact: Bool) -> some View {
+        HStack(spacing: 8) {
+            // Title area: the drag handle when the panel is dockable.
+            HStack(spacing: 8) {
+                if chrome.drag != nil {
+                    Image(systemName: "line.3.horizontal")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(gripHover ? theme.accent : theme.textMute)
+                }
+                Text(index)
+                    .font(GridFont.label)
+                    .foregroundStyle(focused ? theme.accent : theme.textMute)
+                HStack(spacing: 0) {
+                    Text(title.uppercased()).foregroundStyle(focused ? theme.text : theme.textDim)
+                    if showSuffix && !suffix.isEmpty {
+                        Text(" ." + suffix.uppercased()).foregroundStyle(theme.textMute)
+                    }
+                }
+                .font(GridFont.label).tracking(1.4).lineLimit(1)
+                .layoutPriority(compact ? 1 : 0)
+                Spacer(minLength: 8)
+            }
+            .contentShape(Rectangle())
+            .modifier(PanelDragSource(payload: chrome.drag, title: title, hover: $gripHover))
+            if compact {
+                if hasOverflow {
+                    Menu { overflow() } label: {
+                        Image(systemName: "ellipsis").font(.system(size: 11)).foregroundStyle(theme.textDim).frame(width: 22, height: 20)
+                    }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .help("More actions")
+                    .accessibilityLabel("More actions")
+                }
+            } else {
+                trailing()
+            }
+            if let close = chrome.onClose {
+                IconButton(symbol: "xmark", label: chrome.closeHelp, action: close)
+            }
+        }
+    }
+}
+
+/// Makes a title bar draggable (re-docking) with an open-hand cursor and a labelled drag preview.
+private struct PanelDragSource: ViewModifier {
+    @Environment(\.theme) private var theme
+    let payload: DragPayload?
+    let title: String
+    @Binding var hover: Bool
+
+    func body(content: Content) -> some View {
+        if let payload {
+            content
+                .hoverCursor(.openHand) { hover = $0 }
+                .dockDragSource(payload, label: title)
+                .help("Drag the title bar to move this panel")
+        } else {
+            content
+        }
+    }
+}
+
+/// Shows `cursor` while hovering. Tracks whether it pushed, so it never pops what it didn't push
+/// and restores the cursor if the view disappears mid-hover (e.g. a panel re-docked while hovered).
+struct HoverCursor: ViewModifier {
+    let cursor: NSCursor
+    var onChange: ((Bool) -> Void)? = nil
+    @State private var pushed = false
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { inside in
+                onChange?(inside)
+                if inside && !pushed { cursor.push(); pushed = true }
+                else if !inside && pushed { NSCursor.pop(); pushed = false }
+            }
+            .onDisappear { if pushed { NSCursor.pop(); pushed = false } }
+    }
+}
+
+extension View {
+    func hoverCursor(_ cursor: NSCursor, onChange: ((Bool) -> Void)? = nil) -> some View {
+        modifier(HoverCursor(cursor: cursor, onChange: onChange))
     }
 }
 
@@ -258,6 +372,8 @@ struct GridField: View {
 /// Shared empty / error / permission state block. Uses a glyph + words, never color alone.
 struct StateBlock<Actions: View>: View {
     @Environment(\.theme) private var theme
+    @Environment(\.effects) private var effects
+    @State private var barShown = true
     enum Tone { case neutral, warning, error }
     let tone: Tone
     let code: String
@@ -283,7 +399,7 @@ struct StateBlock<Actions: View>: View {
                 Text(glyph).font(GridFont.bodyStrong).foregroundStyle(color)
                 SectionLabel(code, color: color)
             }
-            Text(title).font(GridFont.title).foregroundStyle(theme.text)
+            TypeOnText(text: title, font: GridFont.title, color: theme.text, duration: 0.3)
             Text(message).font(GridFont.body).foregroundStyle(theme.textDim)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) { actions() }
@@ -291,8 +407,17 @@ struct StateBlock<Actions: View>: View {
         }
         .padding(16)
         .frame(maxWidth: 460, alignment: .leading)
-        .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 2) }
+        .overlay(alignment: .leading) {
+            // The status bar draws itself top to bottom.
+            Rectangle().fill(color).frame(width: 2)
+                .scaleEffect(y: barShown ? 1 : 0, anchor: .top)
+        }
         .background(theme.bg2.opacity(0.5))
+        .onAppear {
+            guard effects.motion else { barShown = true; return }
+            barShown = false
+            withAnimation(GridMotion.build) { barShown = true }
+        }
     }
 }
 
@@ -346,10 +471,20 @@ extension StateBlock where Actions == EmptyView {
     }
 }
 
-extension Panel where Trailing == EmptyView {
+extension Panel where Trailing == EmptyView, Overflow == EmptyView {
     init(index: String, title: String, suffix: String = "", focused: Bool = false, clipped: Bool = true,
          @ViewBuilder content: @escaping () -> Content) {
         self.init(index: index, title: title, suffix: suffix, focused: focused, clipped: clipped,
-                  trailing: { EmptyView() }, content: content)
+                  trailing: { EmptyView() }, overflow: { EmptyView() }, content: content)
+    }
+}
+
+extension Panel where Overflow == EmptyView {
+    /// A panel whose trailing controls simply hide when the header gets too narrow for them.
+    init(index: String, title: String, suffix: String = "", focused: Bool = false, clipped: Bool = true,
+         @ViewBuilder trailing: @escaping () -> Trailing,
+         @ViewBuilder content: @escaping () -> Content) {
+        self.init(index: index, title: title, suffix: suffix, focused: focused, clipped: clipped,
+                  trailing: trailing, overflow: { EmptyView() }, content: content)
     }
 }

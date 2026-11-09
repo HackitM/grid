@@ -125,7 +125,7 @@ struct GridCommands: Commands {
     @MainActor
     static func dependencies(_ app: AppState) -> [AnyHashable] {
         let t = app.terminals
-        return [app.panel, app.filesSidebar, app.inspectorVisible, app.deckVisible, app.confirmation != nil,
+        return [app.panel, app.filesSidebar, app.inspectorVisible, app.deckVisible, app.terminalPanelVisible, app.confirmation != nil,
                 t.active?.hasFocus, t.active?.find.visible, t.activeTab?.panes.count, t.tabs.count,
                 t.sessions.isEmpty, t.activeTabID, t.activeID,
                 app.files.canGoBack, app.files.canGoForward, app.files.canGoUp, app.files.showHidden,
@@ -233,6 +233,13 @@ struct GridCommands: Commands {
                 if app.panel != .terminal { app.show(.terminal); app.deckVisible = true } else { app.deckVisible.toggle() }
             }
             .keyboardShortcut(key(.toggleDeck))
+            Button(app.terminalPanelVisible ? "Hide Terminal Panel" : "Show Terminal Panel") {
+                if app.panel != .terminal { app.show(.terminal); app.terminalPanelVisible = true }
+                else if app.terminalPanelVisible { app.closePanel(.terminal) }
+                else { app.terminalPanelVisible = true; app.focusTerminal() }
+            }
+            .keyboardShortcut(key(.toggleTerminalPanel))
+            Button("Reset Workspace Layout") { app.workspace.reset() }
             Menu("Theme") {
                 ForEach(ThemeID.allCases) { t in
                     Button((t == app.settings.theme ? "● " : "   ") + t.label) { app.setTheme(t) }

@@ -117,6 +117,29 @@ it rebuilds its NSMenu items lazily, so `CommandsRefresher` observes exactly the
 read, republishes it, and asks the menus to refresh. Otherwise titles, enabled states, and new
 shortcuts would stay stale until a menu was opened.
 
+### Workspace docking and drag-and-drop
+The Terminal workspace is itself a `SplitTree` whose leaves are fixed panel IDs (Files, Terminal,
+Deck). `WorkspaceLayout` persists it as JSON (validated and repaired on load) with point-based
+minimum sizes per panel.
+
+Re-docking uses **GRID's own drag tracking** (`Shell/DockDrag.swift`), not the system
+drag-and-drop:
+- **Why:** the system mechanism (`NSDraggingSession` via `.onDrag`/`.onDrop`) didn't reliably tell
+  a drop target when the pointer moved on to another target or when a drag was cancelled. That left
+  several highlights lit at once and drops unapplied.
+- **How:** these drags never leave the window, so sources (panel title bars, pane headers, tabs,
+  widget handles) use a plain `DragGesture`. Targets register their window frames. `DockDrag` picks
+  the single innermost target that accepts the payload, plus the nearest edge for panels and panes.
+  One overlay draws one highlight and a label that follows the pointer. The move is applied on
+  mouse-up; Esc cancels.
+- **Rules:** which payload may land where, and what a drop does, live in
+  `AppState.configureDocking()`.
+- **Testing:** the QA hooks drive the same controller with simulated pointer paths.
+
+System drag-and-drop is still used where it belongs: dragging files to Finder, other apps, or the
+terminal. Terminal NSViews stay owned by their sessions, so moving a pane only changes where its
+host view sits.
+
 ### Widget deck
 `WidgetStore` keeps an ordered list of `WidgetInstance` (kind, collapsed, expanded, string-map
 config) persisted as JSON in UserDefaults, so new options never break saved layouts.

@@ -45,6 +45,29 @@ final class TerminalTab: Identifiable {
         return true
     }
 
+    /// Detaches a pane without ending its session (for moving it elsewhere). Returns the session,
+    /// or nil if it isn't here or is the tab's only pane.
+    func release(_ id: UUID) -> TerminalSession? {
+        guard panes.count > 1, let s = sessionsByID[id] else { return nil }
+        _ = remove(id)
+        return s
+    }
+
+    /// Re-docks a pane next to another pane of this tab (drag a pane header onto a pane's edge).
+    func movePane(_ id: UUID, to target: UUID, edge: DropEdge) {
+        guard id != target, sessionsByID[id] != nil, sessionsByID[target] != nil else { return }
+        layout = layout.moving(id, to: target, edge: edge).balanced(minFraction: 0.15)
+        focusedPaneID = id
+    }
+
+    /// Adds an existing session beside the focused pane (split right).
+    func adopt(_ s: TerminalSession) {
+        let target = focusedPaneID
+        sessionsByID[s.id] = s
+        layout = layout.splitting(target, axis: .horizontal, with: s.id)
+        focusedPaneID = s.id
+    }
+
     func resize(split: UUID, divider: Int, by delta: Double, minFraction: Double) {
         layout = layout.resizing(splitID: split, divider: divider, by: delta, minFraction: minFraction)
     }
@@ -184,6 +207,39 @@ final class TerminalManager {
             tabs.removeAll { $0.id == t.id }
             if activeTabID == t.id { activeTabID = tabs.isEmpty ? nil : tabs[min(ti, tabs.count - 1)].id }
         }
+    }
+
+    // MARK: Moving panes and tabs (drag and drop)
+
+    /// Moves a pane into another tab (beside that tab's focused pane). A pane that is alone in its
+    /// tab moves with the tab closing behind it.
+    func movePane(_ id: UUID, toTab targetID: UUID) {
+        guard let source = tab(containing: id), source.id != targetID,
+              let target = tabs.first(where: { $0.id == targetID }), let s = source.session(id),
+              target.panes.count < Self.maxPanesPerTab else { return }
+        if source.panes.count == 1 {
+            tabs.removeAll { $0.id == source.id }
+        } else {
+            _ = source.release(id)
+        }
+        target.adopt(s)
+        activeTabID = target.id
+    }
+
+    /// Moves a pane out of a multi-pane tab into a new tab of its own.
+    func detachPane(_ id: UUID) {
+        guard let source = tab(containing: id), let s = source.release(id),
+              let i = tabs.firstIndex(where: { $0.id == source.id }) else { return }
+        let t = TerminalTab(first: s)
+        tabs.insert(t, at: i + 1)
+        activeTabID = t.id
+    }
+
+    /// Reorders tabs: `id` moves to just before `before` (or to the end when nil).
+    func moveTab(_ id: UUID, before: UUID?) {
+        guard id != before, let from = tabs.firstIndex(where: { $0.id == id }) else { return }
+        let t = tabs.remove(at: from)
+        if let before, let to = tabs.firstIndex(where: { $0.id == before }) { tabs.insert(t, at: to) } else { tabs.append(t) }
     }
 
     func closeTab(_ id: UUID) {

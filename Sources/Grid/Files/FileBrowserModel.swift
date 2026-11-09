@@ -36,6 +36,25 @@ final class FileBrowserModel {
     /// Row currently being renamed inline.
     var renamingID: String?
 
+    // Outline (expandable folders). Expansion is remembered per root folder for the session;
+    // children listings are cached by path and refreshed by their own directory watchers.
+    /// Folders expanded in the current root (paths). Descendants of a collapsed folder stay in
+    /// the set so reopening it restores them, like Finder.
+    private(set) var expanded: Set<String> = []
+    @ObservationIgnored private var expandedByRoot: [String: Set<String>] = [:]
+    private(set) var children: [String: FileTreeChildren] = [:]
+    /// Flattened outline rows in display order (entries and inline placeholders). Cached like `visible`.
+    private(set) var rows: [FileTreeRow] = []
+    /// Number of expanded folder rows currently shown.
+    private(set) var expandedVisibleCount = 0
+    /// Entries reachable through expanded folders (unfiltered), for selection lookups.
+    @ObservationIgnored private var entryIndex: [String: FileEntry] = [:]
+    @ObservationIgnored private var childTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var childWatchers: [String: DispatchSourceFileSystemObject] = [:]
+    @ObservationIgnored private var childReloadWork: [String: DispatchWorkItem] = [:]
+    /// Folders whose children should be expanded too once loaded (⌥→), with levels remaining.
+    @ObservationIgnored private var recursivePending: [String: Int] = [:]
+
     // Recursive search state (real counts, not decoration)
     private(set) var deepResults: [FileEntry] = [] { didSet { if mode == .deep { recomputeVisible() } } }
     private(set) var deepScanned = 0
@@ -64,7 +83,7 @@ final class FileBrowserModel {
 
     var showHidden: Bool {
         get { settings.showHiddenFiles }
-        set { settings.showHiddenFiles = newValue; load() }
+        set { settings.showHiddenFiles = newValue; children.removeAll(); load() }
     }
 
     var canGoBack: Bool { !backStack.isEmpty }
@@ -75,12 +94,22 @@ final class FileBrowserModel {
     /// only when entries, sort, query, or mode change (it used to re-sort on every access).
     private(set) var visible: [FileEntry] = []
 
+    /// Entries at any depth that the current view can resolve (roots plus children of expanded folders).
+    var loadedCount: Int { entryIndex.count }
+
     private func recomputeVisible() {
         if mode == .deep && !query.trimmingCharacters(in: .whitespaces).isEmpty {
             visible = deepResults
+            rows = deepResults.map { FileTreeRow(id: $0.id, kind: .entry($0), depth: 0, parentID: nil, isExpanded: false) }
+            expandedVisibleCount = 0
         } else {
-            visible = FileListing.sorted(FileListing.filter(entries, query: query), by: sortKey, ascending: ascending)
+            rows = FileTree.flatten(roots: entries, children: children, expanded: expanded,
+                                    sortKey: sortKey, ascending: ascending, query: query)
+            visible = rows.compactMap(\.entry)
+            expandedVisibleCount = rows.reduce(0) { $0 + ($1.isExpanded ? 1 : 0) }
         }
+        entryIndex = FileTree.reachable(roots: entries, children: children, expanded: expanded)
+        syncChildWatchers()
     }
 
     /// Selected entries in display order.
@@ -134,8 +163,11 @@ final class FileBrowserModel {
 
     var selectedEntry: FileEntry? {
         guard let id = selectionID else { return nil }
-        return visible.first { $0.id == id } ?? entries.first { $0.id == id }
+        return entryIndex[id] ?? visible.first { $0.id == id }
     }
+
+    /// Entry for a row id at any loaded depth.
+    func entry(for id: String) -> FileEntry? { entryIndex[id] }
 
     // MARK: Navigation
 
@@ -146,7 +178,10 @@ final class FileBrowserModel {
             forwardStack.removeAll()
         }
         let previous = currentURL
+        expandedByRoot[previous.path] = expanded
         currentURL = target
+        expanded = expandedByRoot[target.path] ?? []
+        recursivePending.removeAll()
         onNavigate?(target)
         query = ""
         mode = .here
@@ -204,18 +239,17 @@ final class FileBrowserModel {
             self.loading = false
             switch result {
             case .success(let items):
+                // A newly opened folder's rows cascade in (Legacy build); reloads only animate new rows.
+                if self.entries.isEmpty || self.entries.first?.url.deletingLastPathComponent() != items.first?.url.deletingLastPathComponent() {
+                    CascadeClock.shared.start()
+                }
                 self.entries = items
                 self.error = nil
-                let ids = Set(items.map(\.id))
-                if let sel = self.selectionID, !ids.contains(sel) {
-                    self.selectionID = nil
-                } else if !self.selectedIDs.isSubset(of: ids) {
-                    self.setSelection(self.selectedIDs.intersection(ids), cursor: self.selectionID, keepAnchor: true)
-                }
-                if let pending = self.pendingSelection, pending.allSatisfy(ids.contains) {
-                    self.select(paths: pending)
-                    self.pendingSelection = nil
-                }
+                // Expanded folders may have changed too (file ops reload the root); refresh them
+                // silently from cache so the outline stays consistent.
+                for id in self.expanded where self.entryIndex[id] != nil { self.loadChildren(of: id, silent: self.children[id] != nil) }
+                self.pruneSelection()
+                self.applyPendingSelection()
                 self.watch(url)
             case .failure(let e):
                 self.entries = []
@@ -223,6 +257,176 @@ final class FileBrowserModel {
                 self.unwatch()
             }
         }
+    }
+
+    /// Drops selected ids that no longer resolve to a loaded entry.
+    private func pruneSelection() {
+        if let sel = selectionID, entryIndex[sel] == nil {
+            selectionID = nil
+        } else if !selectedIDs.allSatisfy({ entryIndex[$0] != nil }) {
+            setSelection(selectedIDs.filter { entryIndex[$0] != nil }, cursor: selectionID, keepAnchor: true)
+        }
+    }
+
+    private func applyPendingSelection() {
+        guard let pending = pendingSelection, pending.allSatisfy({ entryIndex[$0] != nil }) else { return }
+        select(paths: pending)
+        pendingSelection = nil
+    }
+
+    // MARK: Outline (expand / collapse)
+
+    func isExpanded(_ id: String) -> Bool { expanded.contains(id) }
+
+    func canExpand(_ id: String) -> Bool { entryIndex[id].map(FileTree.isExpandable) ?? false }
+
+    /// Shows a folder's children under it. `recursive` (⌥) also opens the folders inside, a few
+    /// levels deep and only while the outline stays reasonably small.
+    func expand(_ id: String, recursive: Bool = false) {
+        guard let e = entryIndex[id], FileTree.isExpandable(e) else { return }
+        expanded.insert(id)
+        expandedByRoot[currentURL.path] = expanded
+        if recursive { recursivePending[id] = FileTree.recursiveDepth }
+        let cached = children[id]?.entries != nil
+        loadChildren(of: id, silent: cached)
+        recomputeVisible()
+        if cached { applyRecursion(id) }
+    }
+
+    func collapse(_ id: String) {
+        guard expanded.contains(id) else { return }
+        expanded.remove(id)
+        expandedByRoot[currentURL.path] = expanded
+        recursivePending.removeValue(forKey: id)
+        recomputeVisible()
+        // A selection inside the collapsed subtree moves to the folder (Finder).
+        let inside = { (p: String) in p.hasPrefix(id + "/") }
+        if let sel = selectionID, inside(sel) {
+            selectionID = id
+        } else if selectedIDs.contains(where: inside) {
+            var set = selectedIDs.filter { !inside($0) }
+            set.insert(id)
+            setSelection(set, cursor: selectionID, keepAnchor: true)
+        }
+    }
+
+    func toggleExpanded(_ id: String, recursive: Bool = false) {
+        if expanded.contains(id) && !recursive { collapse(id) } else { expand(id, recursive: recursive) }
+    }
+
+    /// → key: expand a collapsed folder; if it is already open, step to its first child.
+    func expandOrDescend(option: Bool = false) {
+        guard let e = selectedEntry, FileTree.isExpandable(e) else { return }
+        if option { expand(e.id, recursive: true); return }
+        guard expanded.contains(e.id) else { expand(e.id); return }
+        if let i = rows.firstIndex(where: { $0.id == e.id }), i + 1 < rows.count, rows[i + 1].parentID == e.id,
+           let child = rows[i + 1].entry {
+            selectionID = child.id
+        }
+    }
+
+    /// ← key: collapse an open folder; otherwise select the parent row, or go up a folder at the top level.
+    func collapseOrAscend() {
+        if let e = selectedEntry {
+            if expanded.contains(e.id) && FileTree.isExpandable(e) { collapse(e.id); return }
+            if let row = rows.first(where: { $0.id == e.id }), let parent = row.parentID { selectionID = parent; return }
+        }
+        goUp()
+    }
+
+    private func loadChildren(of id: String, silent: Bool) {
+        guard let e = entryIndex[id] else { return }
+        childTasks[id]?.cancel()
+        let url = e.url, hidden = settings.showHiddenFiles
+        if !silent {
+            // Only show the inline "loading…" row if the listing is actually slow.
+            Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(150))
+                guard let self, self.childTasks[id] != nil, self.children[id] == nil else { return }
+                self.children[id] = .loading
+                self.recomputeVisible()
+            }
+        }
+        childTasks[id] = Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<[FileEntry], ListingError> in
+                do { return .success(try FileListing.list(url, showHidden: hidden)) }
+                catch let e as ListingError { return .failure(e) }
+                catch { return .failure(.other(url.path, error.localizedDescription)) }
+            }.value
+            guard let self, !Task.isCancelled else { return }
+            self.childTasks[id] = nil
+            switch result {
+            case .success(let items): self.children[id] = .loaded(items)
+            case .failure(let err): self.children[id] = .failed(Self.describe(err))
+            }
+            self.recomputeVisible()
+            self.pruneSelection()
+            self.applyPendingSelection()
+            self.applyRecursion(id)
+        }
+    }
+
+    private static func describe(_ e: ListingError) -> String {
+        switch e {
+        case .permissionDenied: return "No permission to read this folder"
+        case .notFound: return "Folder not found"
+        case .notADirectory: return "Not a folder"
+        case .other(_, let msg): return msg
+        }
+    }
+
+    /// Continues a recursive expansion once `id`'s children are known.
+    private func applyRecursion(_ id: String) {
+        guard let left = recursivePending.removeValue(forKey: id), left > 0, let kids = children[id]?.entries else { return }
+        var budget = FileTree.recursiveRowLimit - rows.count
+        var changed = false
+        for k in kids where FileTree.isExpandable(k) && !expanded.contains(k.id) {
+            let known = children[k.id]?.entries
+            budget -= known?.count ?? 1
+            guard budget > 0 else { break }
+            expanded.insert(k.id)
+            changed = true
+            if left > 1 { recursivePending[k.id] = left - 1 }
+            loadChildren(of: k.id, silent: known != nil)
+        }
+        guard changed else { return }
+        expandedByRoot[currentURL.path] = expanded
+        recomputeVisible()
+        for k in kids where recursivePending[k.id] != nil && children[k.id]?.entries != nil { applyRecursion(k.id) }
+    }
+
+    // MARK: Watching expanded folders
+
+    private func syncChildWatchers() {
+        let wanted = Set(rows.lazy.filter(\.isExpanded).map(\.id))
+        for (path, src) in childWatchers where !wanted.contains(path) {
+            src.cancel()
+            childWatchers[path] = nil
+            childReloadWork[path]?.cancel()
+            childReloadWork[path] = nil
+        }
+        for path in wanted where childWatchers[path] == nil {
+            let fd = Darwin.open(path, O_EVTONLY)
+            guard fd >= 0 else { continue }
+            let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
+            src.setEventHandler { [weak self] in
+                MainActor.assumeIsolated { self?.debouncedChildReload(path) }
+            }
+            src.setCancelHandler { Darwin.close(fd) }
+            src.resume()
+            childWatchers[path] = src
+        }
+    }
+
+    private func debouncedChildReload(_ path: String) {
+        childReloadWork[path]?.cancel()
+        let w = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.childReloadWork[path] = nil
+            self.loadChildren(of: path, silent: true)
+        }
+        childReloadWork[path] = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: w)
     }
 
     // MARK: Watching (refresh when the folder changes on disk)

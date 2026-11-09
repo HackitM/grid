@@ -2,14 +2,15 @@
 
 ## Automated
 ```bash
-swift test          # 50 unit tests (GridCore): quoting (incl. real zsh round-trip), ranking,
+swift test          # 95 unit tests (GridCore): quoting (incl. real zsh round-trip), ranking,
                     # paths, URL validation, palette grammar, env, listing, perms, symlinks,
                     # app discovery, libproc cwd tracking
 ```
 
 ## Workflow QA (DEBUG build)
-`scripts/bundle.sh debug` builds a DEBUG app with QA hooks (compiled out of release builds), and
-`open build/GRID.app --args --qa` enables them for that launch only (status bar: “△ QA HOOKS”).
+`scripts/bundle.sh qa` builds a DEBUG app as `build/GRID-QA.app` with its own bundle ID and
+preferences (so it runs beside your everyday GRID), and `open -g build/GRID-QA.app --args --qa`
+enables the QA hooks for that launch only (status bar: “△ QA HOOKS”). Release builds have no hooks.
 Build the controller with `swiftc -O -o build/gridctl scripts/qa/gridctl.swift`, then
 `source scripts/qa/run.sh` for `g`, `gtype`, `gstate`, `gscreen`, `gsnap` helpers. They talk to the
 app over a private Unix socket (`$DARWIN_USER_TEMP_DIR/grid-qa.sock`, 0600, same-user only) and read
@@ -61,6 +62,14 @@ display is awake.
 | Find in terminal | ✅ | 120 plain matches with next stepping; case-sensitive 1 vs insensitive 2; regex `line 1[0-9]{2} ` = 21; invalid regex flagged; close clears |
 | Shortcut validation | ✅ | ⌃C refused (terminal), ⌘T refused (in use by New Tab), ⌘K refused (Clear Scrollback) |
 | Menu staleness (found + fixed) | ✅ | menu titles/shortcuts didn't update ("Show Files Sidebar" stuck; rebinding ignored until a menu opened); now refreshed on change: after rebinding Split Right to ⌥⌘E, ⌥⌘E splits and ⌘D no longer does |
+| Workspace docking | ✅ | default `H[files \| terminal]`; show deck; deck→left of files; files→bottom of terminal; close terminal (notice says sessions keep running); reopen; close all → empty state; rebuild; layout identical after relaunch |
+| Narrow docks (found + fixed) | ✅ | docking beside a small panel left both at 9%; now every panel keeps ≥ 20% (`balanced`) |
+| Docking review fixes (Fable) | ✅ | balance recursion removed (re-balance once per change; `balanced` made idempotent, 5,000-case test + the exact oscillating input); per-kind private drag types (foreign text/files never match; payload read from the drop, round trip verified for panel/pane/tab, not exposed as plain text); full-width tab-bar drop zone; 6-pane cap on drops; "done" badge respects a closed terminal panel; hover cursors can't get stuck; 120 rapid re-docks stable |
+| Dynamic layout fixes (Fable) | ✅ | stuck "DOCK" highlight: drag sessions now end themselves (mouse-state watcher runs inside AppKit's drag loop), highlights clear whenever the drag ends; drops resolve the payload synchronously when the private type matches; panels have point minimums (terminal ≥ 360 pt), docking shares by weight (terminal 3 : 1 : 1), squeezed v1 layouts repaired on load (seeded `[0.55, 0.17, 0.28]` → `[0.33, 0.50, 0.17]`); narrow title bars collapse to title + ⋯ instead of vanishing |
+| Animations | ✅ | frame captures at 50–140 ms show the build-on trace + accent flash on panels and palette; page switches no longer double-expose |
+| GRID drag tracking (replaces system DnD) | ✅ | real controller driven by simulated pointer paths: targets register true frames (panels, panes, tab, tab bar, widget cards, list end); deck→bottom of files, files→right of terminal, self-drop ignored, cancel leaves no state; pane→pane edge, pane→tab bar (new tab), tab reorder, pane→into tab, widget reorder; mid-drag capture shows exactly one highlight + pointer label |
+| Folder tree (Fable) | ✅ | expand to depth 3 with indentation guides; inline error row for unreadable folders; packages not expandable; → ← ⌥→; expansion restored on back; filter shows nested match with ancestors; nested rename/duplicate stay in their folder; watcher picks up changes in expanded folders |
+| Pane moves | ✅ | `H[1 \| 2 \| 3]` → 3 to bottom of 1 → `H[V[1 / 3] \| 2]` → 2 to left of 1 → `V[H[2 \| 1] / 3]` |
 | Remote web content → privileged functions | n/a | no embedded web content in M1 (external browser only); non-http(s) schemes refused (unit tested) |
 
 ## Manual checklist (needs a person at the keyboard)
@@ -78,3 +87,11 @@ display is awake.
 - [ ] Double-click a terminal tab to rename it
 - [ ] Settings › Keyboard: record a new shortcut, try a conflicting one, reset
 - [ ] ⌘F in a pane, then ⏎ / ⇧⏎ / ⌘G / ⇧⌘G; drag a pane divider; ⇧⌘D works with the real keyboard
+- [ ] Drag a panel title bar onto each edge of another panel (highlight shows the target half)
+- [ ] Drag a pane header onto another pane, onto a tab, and onto empty tab-bar space; drag a tab to reorder
+- [ ] Close each panel with ×; reopen with ⌘B / ⌥⌘0 / ⌘J
+- [ ] Files: click a folder's ▸ (expands in place, no navigation); ⌥-click; ⇧-click a range across levels; drag a nested file into the terminal
+- [ ] Cancel a panel drag with Esc / release outside the window: no highlight remains
+- [ ] Narrow the terminal panel: header collapses to `01 TERMINAL ⋯ ×` with a working menu
+- [ ] Switch pages, open the palette, open a folder: build-on / cascade feel quick, not in the way
+- [ ] Settings › Effects › Motion off (and macOS Reduce Motion): all animation stops

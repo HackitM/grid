@@ -39,6 +39,31 @@ enum DebugHooks {
         }
     }
 
+    static func describePanels(_ t: SplitTree) -> String {
+        switch t {
+        case .leaf(let id): return WorkspacePanel(nodeID: id)?.rawValue ?? "?"
+        case .split(_, let axis, let children, let f):
+            let parts = zip(children, f).map { describePanels($0.0) + String(format: " %.2f", $0.1) }
+            return (axis == .horizontal ? "H[" : "V[") + parts.joined(separator: axis == .horizontal ? " | " : " / ") + "]"
+        }
+    }
+
+    static func target(_ s: String, _ app: AppState) -> DockTarget? {
+        let parts = s.split(separator: ":", maxSplits: 1).map(String.init)
+        switch parts.first {
+        case "panel": return parts.count == 2 ? WorkspacePanel(rawValue: parts[1]).map { .panel($0) } : nil
+        case "pane":   // by session number in the active tab
+            guard parts.count == 2, let n = Int(parts[1]), let s = app.terminals.activeTab?.panes.first(where: { $0.number == n }) else { return nil }
+            return .pane(s.id)
+        case "tab":    // by position (1-based)
+            guard parts.count == 2, let n = Int(parts[1]), app.terminals.tabs.indices.contains(n - 1) else { return nil }
+            return .tab(app.terminals.tabs[n - 1].id)
+        case "tabBar": return .tabBar
+        case "widgetEnd": return .widgetEnd
+        default: return nil
+        }
+    }
+
     static func uninstall() {
         server?.stop()
         server = nil
@@ -200,6 +225,44 @@ enum DebugHooks {
             // Dispatch like a real keypress (window → menus), not by calling the menu directly.
             if let ev { NSApp.sendEvent(ev) }
             try? "sent".write(toFile: path, atomically: true, encoding: .utf8)
+        case "workspace":
+            // {"cmd":"workspace","op":"move","panel":"deck","target":"files","edge":"left"} | "hide"/"show" panel | "reset"
+            let ws = app.workspace
+            let panel = WorkspacePanel(rawValue: c["panel"] as? String ?? "")
+            switch c["op"] as? String {
+            case "move":
+                if let panel, let t = WorkspacePanel(rawValue: c["target"] as? String ?? ""), let e = DropEdge(rawValue: c["edge"] as? String ?? "") {
+                    ws.move(panel, to: t, edge: e)
+                }
+            case "hide": if let panel { app.closePanel(panel) }
+            case "show": if let panel { ws.show(panel) }
+            case "reset": ws.reset()
+            default: break
+            }
+        case "dockDrag":
+            // Simulates a GRID drag through the real controller (hit testing + drop):
+            // {"cmd":"dockDrag","payload":"grid-panel:deck","to":"panel:files","edge":"left"}
+            //   picks a point inside the target's registered frame near that edge.
+            // or {"cmd":"dockDrag","payload":"...","points":[[x,y],...],"commit":true} in window coordinates.
+            guard let p = DragPayload(c["payload"] as? String ?? "") else { break }
+            var pts: [CGPoint] = ((c["points"] as? [[Double]]) ?? []).map { CGPoint(x: $0[0], y: $0[1]) }
+            if pts.isEmpty, let to = c["to"] as? String, let t = DebugHooks.target(to, app), let r = DockDrag.shared.frame(of: t) {
+                let e = DropEdge(rawValue: c["edge"] as? String ?? "")
+                var pt = CGPoint(x: r.midX, y: r.midY)
+                switch e { case .left?: pt.x = r.minX + r.width * 0.1; case .right?: pt.x = r.maxX - r.width * 0.1
+                case .top?: pt.y = r.minY + r.height * 0.1; case .bottom?: pt.y = r.maxY - r.height * 0.1; case nil: break }
+                pts = [CGPoint(x: pt.x + 30, y: pt.y + 30), pt]
+            }
+            DockDrag.shared.simulate(p, label: (c["label"] as? String) ?? "qa", points: pts,
+                                     commit: (c["commit"] as? Bool) ?? true, hold: (c["hold"] as? Bool) ?? false)
+        case "dockEnd":
+            DockDrag.shared.finishSimulated(commit: (c["commit"] as? Bool) ?? true)
+        case "movePane":
+            // {"cmd":"movePane","from":<session number>,"to":<session number>,"edge":"bottom"} within the active tab
+            if let t = app.terminals.activeTab, let f = c["from"] as? Int, let to = c["to"] as? Int, let e = DropEdge(rawValue: c["edge"] as? String ?? ""),
+               let a = t.panes.first(where: { $0.number == f }), let b = t.panes.first(where: { $0.number == to }) {
+                t.movePane(a.id, to: b.id, edge: e)
+            }
         case "find":
             // {"cmd":"find","query":"x","regex":false,"case":false} ; {"cmd":"find","op":"next"|"prev"|"close"}
             guard let s = app.terminals.active else { break }
@@ -247,6 +310,16 @@ enum DebugHooks {
             if let q = c["query"] as? String { app.files.query = q }
             if let m = c["mode"] as? String, let mode = FileSearchMode(rawValue: m) { app.files.mode = mode }
             if let sel = c["select"] as? String { app.files.selectionID = sel }
+            // Outline: {"expand":"/path","recursive":true} | {"collapse":"/path"} | {"key":"left"|"right","option":true}
+            if let p = c["expand"] as? String { app.files.expand(p, recursive: (c["recursive"] as? Bool) ?? false) }
+            if let p = c["collapse"] as? String { app.files.collapse(p) }
+            switch c["key"] as? String {
+            case "right": app.files.expandOrDescend(option: (c["option"] as? Bool) ?? false)
+            case "left": app.files.collapseOrAscend()
+            case "down": app.files.moveSelection(1)
+            case "up": app.files.moveSelection(-1)
+            default: break
+            }
         case "sidebar":
             app.filesSidebar = (c["value"] as? Bool) ?? !app.filesSidebar
         case "theme":
@@ -261,7 +334,7 @@ enum DebugHooks {
             guard let path else { return }
             let sessions: [[String: Any]] = app.terminals.sessions.map { s in
                 s.refresh()
-                return ["number": s.number, "pid": s.shellPID, "cwd": s.cwd ?? "", "fg": s.foregroundName ?? "",
+                return ["id": s.id.uuidString, "number": s.number, "pid": s.shellPID, "cwd": s.cwd ?? "", "fg": s.foregroundName ?? "",
                         "cols": s.columns, "rows": s.rows, "exited": s.exited, "exitCode": s.exitCode.map { Int($0) } ?? -999,
                         "title": s.programTitle, "focus": s.hasFocus, "bell": s.bellPending,
                         "find": ["visible": s.find.visible, "index": s.find.index, "total": s.find.total, "invalid": s.find.invalidPattern], "metal": s.view.isUsingMetalRenderer,
@@ -275,12 +348,21 @@ enum DebugHooks {
                           "deep": app.files.deepResults.count, "deepRunning": app.files.deepRunning,
                           "selected": app.files.selectionID ?? "", "selectedCount": app.files.selectedIDs.count,
                           "renaming": app.files.renamingID ?? "", "busy": app.fileOps.busy ?? "",
-                          "undo": app.fileOps.undoLabel ?? ""],
+                          "undo": app.fileOps.undoLabel ?? "", "expanded": app.files.expandedVisibleCount,
+                          "rows": app.files.rows.map { r -> String in
+                              let name: String
+                              switch r.kind { case .entry(let e): name = e.name; case .loading: name = "(loading…)"; case .error(let m): name = "(error: \(m))" }
+                              return String(repeating: "  ", count: r.depth) + (r.isExpanded ? "▾ " : "") + name
+                          }],
                 "apps": app.apps.records.count, "confirmation": app.confirmation?.code ?? "",
-                "tabs": app.terminals.tabs.map { t in ["panes": t.panes.map(\.number), "layout": DebugHooks.describe(t.layout, t),
+                "tabs": app.terminals.tabs.map { t in ["id": t.id.uuidString, "panes": t.panes.map(\.number), "layout": DebugHooks.describe(t.layout, t),
                                                          "focused": t.focused?.number ?? 0, "title": t.title] },
-                "widgets": app.widgets.widgets.map { ["kind": $0.kind.rawValue, "expanded": $0.expanded, "collapsed": $0.collapsed] },
+                "widgets": app.widgets.widgets.map { ["id": $0.id.uuidString, "kind": $0.kind.rawValue, "expanded": $0.expanded, "collapsed": $0.collapsed] },
                 "deck": app.deckVisible,
+                "workspace": app.workspace.tree.map { DebugHooks.describePanels($0) } ?? "(empty)",
+                "workspaceViewport": [app.workspace.viewport.width, app.workspace.viewport.height],
+                "drag": DockDrag.shared.payload?.string ?? "",
+                "dockTargets": DockDrag.shared.debugFrames,
                 "notice": app.notice?.text ?? "", "recents": app.apps.recents,
             ]
             if let data = try? JSONSerialization.data(withJSONObject: st, options: [.prettyPrinted, .sortedKeys]) {
