@@ -134,6 +134,8 @@ final class MapContainerView: NSView {
     // MARK: Frames and the local camera
 
     func setFrame(_ f: MapFrame) {
+        // SwiftUI re-renders the panel for unrelated state; identical frames cost nothing.
+        if let old = frame_, old == f { return }
         let paletteChanged = frame_?.palette != f.palette
         frame_ = f
         camera = f.camera

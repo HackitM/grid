@@ -18,7 +18,7 @@ enum MapDebugGeometry {
         var f = MapFrame(camera: camera, tileGeneration: 0, tiles: tiles, palette: palette, glow: glow, buildings: buildings)
         guard overlays else { return f }
         let c = camera.center
-        let span = 0.35 / pow(2, camera.zoom)   // about a third of the viewport width in world units
+        let span = viewport.x * 0.3 / (256 * pow(2, camera.zoom))   // about a third of the viewport width in world units
         var cams: [CameraMarker] = []
         for i in 0..<14 {
             let a = Double(i) / 14 * 2 * .pi

@@ -57,7 +57,8 @@ struct MapOverlayInstance {
     var color: SIMD4<Float>
     var p: SIMD4<Float>
     var kind: UInt32
-    var pad: SIMD3<UInt32> = .zero
+    // Three scalar pads (a SIMD3 would align to 16 and break the 64-byte stride).
+    var pad0: UInt32 = 0, pad1: UInt32 = 0, pad2: UInt32 = 0
 }
 
 enum MapOverlayKind: UInt32 {
@@ -71,6 +72,13 @@ enum MapOverlayKind: UInt32 {
 
 /// Byte layout of the frame uniform blob.
 enum MapUniformLayout {
+    /// The Swift structs must match the MSL structs byte for byte (checked once in DEBUG).
+    static func checkLayouts() {
+        assert(MemoryLayout<MapFrameScalars>.size == 256 && MemoryLayout<MapFrameScalars>.stride == 256, "FrameU scalars")
+        assert(MemoryLayout<MapTileUniforms>.stride == 80, "TileU")
+        assert(MemoryLayout<MapOverlayInstance>.stride == 64, "OverlayInst")
+        assert(MemoryLayout<LineVertex>.stride == 32 && MemoryLayout<ExtrusionVertex>.stride == 16, "vertex structs")
+    }
     static let tableBytes = mapClassTableCount * MemoryLayout<SIMD4<Float>>.stride
     static let fillColorOffset = 0
     static let lineStyleOffset = tableBytes
@@ -144,8 +152,8 @@ fragment float4 floor_fragment(FloorOut in [[stage_in]], constant FrameU& u [[bu
                                       gridLine(gp.y + u.phaseMinor.y, u.gridMinorPx, u.scale * 0.5));
                     float major = max(gridLine(gp.x + u.phaseMajor.x, u.gridMajorPx, u.scale * 0.5),
                                       gridLine(gp.y + u.phaseMajor.y, u.gridMajorPx, u.scale * 0.5));
-                    col = over(col, premul(u.line, 0.55 * minor * fade));
-                    col = over(col, premul(u.line, 1.0 * major * fade));
+                    col = over(col, premul(u.line, 0.35 * minor * fade));
+                    col = over(col, premul(u.line, 0.8 * major * fade));
                 }
             }
         }
@@ -304,19 +312,19 @@ fragment float4 overlay_fragment(OverlayOut in [[stage_in]], constant FrameU& u 
     switch (in.kind) {
     case 0: {   // reticle: open square (corner brackets), corner ticks, centre dot
         float tick = in.p.x;
-        float half = in.size.x * 0.5 - tick - 1.0 * s;
-        float edge = max(aq.x, aq.y) - half;
+        float hs = in.size.x * 0.5 - tick - 1.0 * s;
+        float edge = max(aq.x, aq.y) - hs;
         float other = min(aq.x, aq.y);
-        float outline = stroke(edge, 1.0 * s) * step(half * 0.42, other);
+        float outline = stroke(edge, 1.0 * s) * step(hs * 0.42, other);
         float ticks = 0.0;
         for (int k = 0; k < 4; k++) {
-            float2 c = float2(k & 1 ? half : -half, k & 2 ? half : -half);
+            float2 c = float2(k & 1 ? hs : -hs, k & 2 ? hs : -hs);
             ticks = max(ticks, stroke(segDist(q, c, c + sign(c) * tick), 1.0 * s));
         }
         float dot = 1.0 - smoothstep(0.8 * s, 1.6 * s, length(q));
         a = max(max(outline, ticks), dot);
         if (in.p.y > 0.5) {   // selected: a second, dimmer square outside
-            float e2 = max(aq.x, aq.y) - (half + tick + 2.0 * s);
+            float e2 = max(aq.x, aq.y) - (hs + tick + 2.0 * s);
             a = max(a, stroke(e2, 1.0 * s) * 0.6);
         }
         break; }
@@ -332,13 +340,13 @@ fragment float4 overlay_fragment(OverlayOut in [[stage_in]], constant FrameU& u 
         a = inside * radial + arc * 0.5;
         break; }
     case 2: {   // cluster block ▣
-        float half = in.size.x * 0.5 - 1.0 * s;
-        float outline = stroke(max(aq.x, aq.y) - half, 1.0 * s);
-        float inner = 1.0 - smoothstep(half * 0.48, half * 0.48 + 0.8, max(aq.x, aq.y));
+        float hs = in.size.x * 0.5 - 1.0 * s;
+        float outline = stroke(max(aq.x, aq.y) - hs, 1.0 * s);
+        float inner = 1.0 - smoothstep(hs * 0.48, hs * 0.48 + 0.8, max(aq.x, aq.y));
         a = max(outline, inner * 0.85);
         break; }
-    case 3: {   // you: filled dot with a dark rim and short ticks
-        float R = in.size.x * 0.5 - 2.0 * s;
+    case 3: {   // you: filled dot with a dark rim and short ticks (quad = dot radius + 6 px of ticks)
+        float R = in.size.x * 0.5 - 6.0 * s;
         float r = length(q);
         float dotA = 1.0 - smoothstep(R - 0.8, R + 0.4, r);
         float rim = stroke(r - (R + 1.0 * s), 1.2 * s);

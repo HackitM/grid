@@ -22,6 +22,9 @@ private struct MapPipelines {
 
     init?(device: MTLDevice) {
         self.device = device
+        #if DEBUG
+        MapUniformLayout.checkLayouts()
+        #endif
         let lib: MTLLibrary
         do { lib = try device.makeLibrary(source: mapShaderSource, options: nil) } catch {
             #if DEBUG
@@ -30,7 +33,7 @@ private struct MapPipelines {
             #endif
             return nil
         }
-        func pso(_ v: String, _ f: String, blend: Bool, colorWrite: Bool = true) -> MTLRenderPipelineState? {
+        func pso(_ v: String, _ f: String, blend: Bool, maxBlend: Bool = false, colorWrite: Bool = true) -> MTLRenderPipelineState? {
             guard let vf = lib.makeFunction(name: v), let ff = lib.makeFunction(name: f) else { return nil }
             let d = MTLRenderPipelineDescriptor()
             d.vertexFunction = vf
@@ -41,9 +44,12 @@ private struct MapPipelines {
             if blend {
                 let c = d.colorAttachments[0]!
                 c.isBlendingEnabled = true
-                c.rgbBlendOperation = .add; c.alphaBlendOperation = .add
+                // Premultiplied source-over; the line pass uses max so the tessellator's overlapping
+                // bevel quads (and glow halos of neighbouring segments) never double up.
+                c.rgbBlendOperation = maxBlend ? .max : .add; c.alphaBlendOperation = maxBlend ? .max : .add
                 c.sourceRGBBlendFactor = .one; c.sourceAlphaBlendFactor = .one
-                c.destinationRGBBlendFactor = .oneMinusSourceAlpha; c.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+                c.destinationRGBBlendFactor = maxBlend ? .one : .oneMinusSourceAlpha
+                c.destinationAlphaBlendFactor = maxBlend ? .one : .oneMinusSourceAlpha
             }
             if !colorWrite { d.colorAttachments[0].writeMask = [] }
             return try? device.makeRenderPipelineState(descriptor: d)
@@ -51,7 +57,7 @@ private struct MapPipelines {
         guard let floor = pso("floor_vertex", "floor_fragment", blend: false),
               let fill = pso("fill_vertex", "fill_fragment", blend: true),
               let stencil = pso("fill_vertex", "stencil_fragment", blend: false, colorWrite: false),
-              let line = pso("line_vertex", "line_fragment", blend: true),
+              let line = pso("line_vertex", "line_fragment", blend: true, maxBlend: true),
               let extrusion = pso("ext_vertex", "ext_fragment", blend: false),
               let overlay = pso("overlay_vertex", "overlay_fragment", blend: true) else { return nil }
         self.floor = floor; self.fill = fill; self.stencil = stencil; self.line = line; self.extrusion = extrusion; self.overlay = overlay
@@ -187,6 +193,10 @@ final class MapRenderer: NSObject, MTKViewDelegate {
     var gpuTileCount: Int { gpuTiles.count }
     var lastFrameGPUms: Double { stats.gpuMs }
     private(set) var frameCount = 0
+    #if DEBUG
+    /// Main-thread time spent encoding the last frame (uniforms, tile matrices, overlays, commands).
+    private(set) var debugLastEncodeCPUms: Double = 0
+    #endif
 
     #if DEBUG
     /// QA: draw even though the test window is never key.
@@ -291,6 +301,10 @@ final class MapRenderer: NSObject, MTKViewDelegate {
 
     /// Encodes one frame into `pass`. Returns the command buffer (not committed).
     private func encode(frame: MapFrame, camera: MapCamera, pass: MTLRenderPassDescriptor, drawableSize: CGSize, scale: Double) -> MTLCommandBuffer? {
+        #if DEBUG
+        let t0 = CACurrentMediaTime()
+        defer { debugLastEncodeCPUms = (CACurrentMediaTime() - t0) * 1000 }
+        #endif
         let viewportPt = SIMD2<Double>(drawableSize.width / scale, drawableSize.height / scale)
         let proj = MapProjection(camera: camera, viewport: viewportPt)
         let px = SIMD2<Float>(Float(drawableSize.width), Float(drawableSize.height))
@@ -559,7 +573,7 @@ final class MapRenderer: NSObject, MTKViewDelegate {
             let r = Float(max(6, l.accuracyMeters / max(0.01, metersPerPoint))) * s
             var ring = p.accent; ring.w = 0.5
             add(.ring, at: px(q), size: SIMD2(repeating: r * 2 + 4 * s), color: ring, p: SIMD4(1 * s, 0, 0, 0))
-            add(.locationDot, at: px(q), size: SIMD2(repeating: 20 * s), color: p.accent)
+            add(.locationDot, at: px(q), size: SIMD2(repeating: 22 * s), color: p.accent)
         }
     }
 
@@ -615,11 +629,11 @@ struct MapStyle {
         var style = [SIMD4<Float>](repeating: .zero, count: mapClassTableCount)
         var color = [SIMD4<Float>](repeating: .zero, count: mapClassTableCount)
         // Width factor: roads grow with zoom, slower than the map itself.
-        let wf = Float(min(4, max(0.4, pow(2, (zoom - 14) * 0.55))))
+        let wf = Float(min(3, max(0.45, pow(2, (zoom - 14) * 0.45))))
         func setFill(_ c: RenderClass, _ col: SIMD4<Float>, _ a: Float) { var v = col; v.w = a; fill[Int(c.rawValue)] = v }
         func setLine(_ c: RenderClass, hw: Float, _ col: SIMD4<Float>, alpha: Float, glow g: Float, dash: Float = 0) {
             let half = max(0.5, hw * wf) * scale
-            let glowPx: Float = glow && g > 0 ? (2.5 + hw * wf * 1.2) * scale : 0
+            let glowPx: Float = glow && g > 0 ? (2.0 + hw * wf * 1.1) * scale : 0
             style[Int(c.rawValue)] = SIMD4(half, glowPx, g, dash * scale)
             var v = col; v.w = alpha; color[Int(c.rawValue)] = v
         }
@@ -635,13 +649,13 @@ struct MapStyle {
         setLine(.waterway, hw: 0.8, mapMix(p.accent, p.bg3, 0.45), alpha: 0.7, glow: 0.15)
         setLine(.path, hw: 0.35, p.textMute, alpha: 0.45, glow: 0, dash: 3)
         setLine(.rail, hw: 0.5, p.textMute, alpha: 0.6, glow: 0, dash: 6)
-        setLine(.service, hw: 0.45, p.textMute, alpha: 0.55, glow: 0.12)
-        setLine(.minor, hw: 0.6, mapMix(p.textDim, p.accent, 0.3), alpha: 0.7, glow: 0.2)
-        setLine(.tertiary, hw: 0.85, mapMix(p.textDim, p.accent, 0.5), alpha: 0.85, glow: 0.3)
-        setLine(.secondary, hw: 1.1, mapMix(p.text, p.accent, 0.6), alpha: 0.9, glow: 0.45)
-        setLine(.primary, hw: 1.4, p.accent, alpha: 0.95, glow: 0.6)
-        setLine(.trunk, hw: 1.7, p.accent, alpha: 1, glow: 0.75)
-        setLine(.motorway, hw: 2.0, mapMix(p.accent, p.text, 0.25), alpha: 1, glow: 0.95)
+        setLine(.service, hw: 0.4, p.textMute, alpha: 0.5, glow: 0.1)
+        setLine(.minor, hw: 0.5, mapMix(p.textDim, p.accent, 0.3), alpha: 0.6, glow: 0.18)
+        setLine(.tertiary, hw: 0.65, mapMix(p.textDim, p.accent, 0.5), alpha: 0.8, glow: 0.28)
+        setLine(.secondary, hw: 0.85, mapMix(p.text, p.accent, 0.6), alpha: 0.85, glow: 0.4)
+        setLine(.primary, hw: 1.05, p.accent, alpha: 0.95, glow: 0.55)
+        setLine(.trunk, hw: 1.3, p.accent, alpha: 1, glow: 0.7)
+        setLine(.motorway, hw: 1.5, mapMix(p.accent, p.text, 0.25), alpha: 1, glow: 0.9)
         setLine(.boundary, hw: 0.6, p.accent, alpha: 0.5, glow: 0, dash: 5)
         setLine(.aeroway, hw: 1.0, p.textDim, alpha: 0.7, glow: 0.1)
         self.fill = fill; lineStyle = style; lineColor = color

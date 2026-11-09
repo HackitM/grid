@@ -4,58 +4,8 @@ import GridCore
 import QuartzCore
 
 // Map labels: placed on the CPU each frame (anchors projected with the contract projection,
-// measured with cached CTLine widths, collision-placed) and drawn as pooled CATextLayers with
+// measured with cached CTLine widths, collision-placed by GridCore's LabelPlacer) and drawn as pooled CATextLayers with
 // implicit animations disabled. SF Mono 9.5 medium; places uppercase.
-
-// MARK: - Stand-in for GridCore's LabelPlacer (workstream A)
-//
-// Worker A ships `LabelCandidate` and `LabelPlacer.place(_:viewport:keep:max:padding:)` in
-// GridCore (IMPLEMENTATION.md §3.3 A). Until that merges, these two aliases point at a private
-// stand-in with the same shape. To swap: set the aliases to `LabelCandidate` / `LabelPlacer` and
-// delete `_StandInLabelCandidate` and `_StandInLabelPlacer` below.
-fileprivate typealias PlacerCandidate = _StandInLabelCandidate
-fileprivate typealias Placer = _StandInLabelPlacer
-
-fileprivate struct _StandInLabelCandidate: Sendable {
-    var text: String
-    var kind: LabelKind
-    var priority: Int
-    var center: SIMD2<Double>
-    var size: SIMD2<Double>
-    init(text: String, kind: LabelKind, priority: Int, center: SIMD2<Double>, size: SIMD2<Double>) {
-        self.text = text; self.kind = kind; self.priority = priority; self.center = center; self.size = size
-    }
-}
-
-fileprivate enum _StandInLabelPlacer {
-    /// Greedy collision in screen space; candidates in `keep` (last frame's texts) are placed first.
-    static func place(_ c: [PlacerCandidate], viewport: SIMD2<Double>, keep: Set<String>, max: Int = 40, padding: Double = 4) -> [PlacerCandidate] {
-        guard max > 0, !c.isEmpty else { return [] }
-        let ordered = c.enumerated().sorted { a, b in
-            let ka = keep.contains(a.element.text), kb = keep.contains(b.element.text)
-            if ka != kb { return ka }
-            if a.element.priority != b.element.priority { return a.element.priority < b.element.priority }
-            return a.offset < b.offset
-        }.map(\.element)
-        var out: [PlacerCandidate] = []
-        var boxes: [(SIMD2<Double>, SIMD2<Double>)] = []   // min, max with padding
-        out.reserveCapacity(min(max, ordered.count))
-        for cand in ordered {
-            let half = cand.size / 2
-            let lo = cand.center - half, hi = cand.center + half
-            // Entirely inside the viewport.
-            guard lo.x >= 0, lo.y >= 0, hi.x <= viewport.x, hi.y <= viewport.y else { continue }
-            let plo = lo - SIMD2(repeating: padding), phi = hi + SIMD2(repeating: padding)
-            var collides = false
-            for (blo, bhi) in boxes where !(phi.x <= blo.x || plo.x >= bhi.x || phi.y <= blo.y || plo.y >= bhi.y) { collides = true; break }
-            if collides { continue }
-            boxes.append((plo, phi))
-            out.append(cand)
-            if out.count >= max { break }
-        }
-        return out
-    }
-}
 
 // MARK: - Planner
 
@@ -95,7 +45,7 @@ final class MapLabelPlanner {
     /// Places labels for the tiles on screen. Deepest tiles win duplicates (same text and kind).
     func place(tiles: [TileGeometry], projection proj: MapProjection) -> [PlacedMapLabel] {
         let zoom = Float(proj.camera.zoom)
-        var candidates: [PlacerCandidate] = []
+        var candidates: [LabelCandidate] = []
         var seen: Set<String> = []
         for t in tiles.sorted(by: { $0.id.z > $1.id.z }) {
             guard !t.labels.isEmpty else { continue }
@@ -111,12 +61,12 @@ final class MapLabelPlanner {
                 guard s.x > -200, s.y > -50, s.x < proj.viewport.x + 200, s.y < proj.viewport.y + 50 else { continue }
                 seen.insert(key)
                 let tw = width(of: text)
-                candidates.append(PlacerCandidate(text: text, kind: a.kind, priority: a.priority, center: s + SIMD2(0, 10),
+                candidates.append(LabelCandidate(text: text, kind: a.kind, priority: a.priority, center: s + SIMD2(0, 10),
                                                   size: SIMD2(tw + 8, Self.labelHeight)))
                 if candidates.count >= 2000 { break }
             }
         }
-        let placed = Placer.place(candidates, viewport: proj.viewport, keep: lastTexts, max: Self.maxLabels, padding: 4)
+        let placed = LabelPlacer.place(candidates, viewport: proj.viewport, keep: lastTexts, max: Self.maxLabels, padding: 4)
         lastTexts = Set(placed.map(\.text))
         return placed.map { PlacedMapLabel(text: $0.text, kind: $0.kind, center: CGPoint(x: $0.center.x, y: $0.center.y)) }
     }
