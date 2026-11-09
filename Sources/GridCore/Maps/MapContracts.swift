@@ -187,13 +187,20 @@ public struct LineBatch: Sendable, Equatable {
     }
 }
 
-/// Building geometry: roofs and walls (stride 16: float2 pos, float height, float shade).
+/// Building geometry: roofs and walls (stride 16: float2 pos, float height, ushort shade,
+/// ushort flags). Wall-top vertices carry `wallTop`, so the fragment shader can draw the accent
+/// roof edge where the interpolated flag approaches 1.
 public struct ExtrusionVertex: Sendable, Equatable {
     public var pos: SIMD2<Float>   // tile-local 0…1
     public var height: Float       // metres above ground
-    /// 1 = roof, 0…0.9 = wall (darker the more it faces away from the light; also flags walls).
-    public var shade: Float
-    public init(pos: SIMD2<Float>, height: Float, shade: Float) { self.pos = pos; self.height = height; self.shade = shade }
+    /// Lighting 0…65535 → 0…1 (roofs 65535; walls darker the more they face away from the light).
+    public var shade: UInt16
+    /// Bit 0: roof. Bit 1: wall top (wall vertices at roof height).
+    public var flags: UInt16
+    public init(pos: SIMD2<Float>, height: Float, shade: UInt16, flags: UInt16) {
+        self.pos = pos; self.height = height; self.shade = shade; self.flags = flags
+    }
+    public static let roof: UInt16 = 1, wallTop: UInt16 = 2
 }
 
 public struct ExtrusionBatch: Sendable, Equatable {

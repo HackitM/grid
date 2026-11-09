@@ -59,7 +59,11 @@ struct RegionOutline: Equatable {
 /// uploads `tiles` it hasn't seen; tiles absent from the list may be evicted (LRU, ≤ 60).
 struct MapFrame: Equatable {
     var camera: MapCamera
-    /// Source tiles to draw, ancestors (fallbacks while children load) before descendants.
+    /// Changes whenever the tile source changes (new planet build, custom tile URL, cleared
+    /// cache): the renderer then drops every GPU tile, since the same TileID means new geometry.
+    var tileGeneration: Int
+    /// Source tiles to draw: the wanted tiles plus loaded ancestors standing in for missing ones.
+    /// Order is informational; the renderer draws descendants first and masks ancestors (stencil).
     var tiles: [TileGeometry]
     var cameras: [CameraMarker] = []
     var clusters: [ClusterMarker] = []
@@ -76,7 +80,7 @@ struct MapFrame: Equatable {
     var gridFloor: Bool = true
 
     static func == (a: MapFrame, b: MapFrame) -> Bool {
-        a.camera == b.camera && a.tiles.map(\.id) == b.tiles.map(\.id) && a.cameras == b.cameras
+        a.camera == b.camera && a.tileGeneration == b.tileGeneration && a.tiles.map(\.id) == b.tiles.map(\.id) && a.cameras == b.cameras
             && a.clusters == b.clusters && a.location == b.location && a.regions == b.regions && a.palette == b.palette
             && a.glow == b.glow && a.buildings == b.buildings && a.reveal == b.reveal && a.gridFloor == b.gridFloor
     }

@@ -76,8 +76,10 @@ GridCore/Maps (pure Swift, tested)                     Grid/Maps (app)
 don't change them. Notable invariants:
 - `TileGeometry` positions are **tile-local 0…1**. World placement comes only from `TileID` via
   `MapProjection.tileMatrix`.
-- `LineVertex` stride is 32 and `ExtrusionVertex` stride is 16; they match the MSL structs byte for
-  byte (tested in `MapsMathTests`).
+- `LineVertex` stride is 32 and `ExtrusionVertex` stride is 16 (`shade`/`flags` as UInt16 at
+  offsets 12 and 14); they match the MSL structs byte for byte (tested in `MapsMathTests`).
+- `MapFrame.tileGeneration` changes when the tile source changes; the renderer drops all GPU
+  tiles then.
 - `RenderClass.rawValue` indexes the per-frame colour and width tables (`RenderClass.allCases.count
   ≤ 24`).
 - MVT geometry is in layer integer space, y down. Polygons are `[exterior, holes…]` and unclosed,
@@ -244,13 +246,16 @@ cache) and draws them in `MapLabelLayer` (pooled `CATextLayer`s).
   - Redirects are followed only within the same host.
   - Inspector links are built from numeric OSM ids only.
 - **Paths:**
-  - Only `storageKey` and integer tile coordinates become path components.
+  - Only `storageKey`, integer tile coordinates and the tile cache's **source key** (a SHA-256
+    prefix of the tile host + template, never a remote string) become path components.
   - Before writing, the Maps folder must not be a symlink and must resolve inside Application
     Support.
   - Writes are atomic.
   - `EACCES` / `ENOSPC` produce a `StateBlock` error, never a crash.
   - Clear Map Data never follows symlinks.
 - **Network only after consent:**
+  - A **user-chosen Overpass endpoint or tile URL** is validated (https, no userinfo or port) and
+    needs re-consent when it changes.
   - Nothing is requested before **ENABLE MAP DATA** (tiles and catalogue).
   - Each region download is confirmed with its host, request count and estimated size.
   - User-Agent: `GRID/<version> (+https://github.com/HackitM/grid)`.
@@ -275,7 +280,8 @@ cache) and draws them in `MapLabelLayer` (pooled `CATextLayer`s).
 - **Live fixtures (optional, never committed):** `scripts/qa/maps-fixtures.sh` downloads into the
   gitignored `Tests/Fixtures/live/`, and tests skip when it's absent.
 - **C:** builds; draws synthetic geometry in the QA app; paused when hidden; theme switch recolours
-  without a rebuild.
+  without a rebuild; no per-frame GPU buffer allocation in steady state; ≤ 2 ms main-thread per
+  frame while panning (40 labels).
 - **Integration (lead, QA app with `--qa` hooks):**
   - consent gating;
   - tiles load and render at z3 / z10 / z14 / z17 and at pitch 45;
@@ -284,7 +290,9 @@ cache) and draws them in `MapLabelLayer` (pooled `CATextLayer`s).
   - freshness rows;
   - Clear Map Data;
   - rail and shortcut renumbering;
-  - CPU idle 0% with the page visible; GPU and memory measured.
+  - CPU idle ≈ 0% (< 1%) with the page visible; GPU and memory measured.
+  - The MTKView is `accessibilityHidden`, and LAYERS ▸ LIST gives an accessible table of the
+    cameras.
 - **Regression:** the full `swift test` suite; QA app smoke tests of Terminal, Files, Web,
   Settings, the startup build-on, menus and the deck.
 
@@ -325,6 +333,12 @@ cache) and draws them in `MapLabelLayer` (pooled `CATextLayer`s).
 - **No FOLLOW mode in v1.** It keeps location to explicit clicks only.
 - **Fable implements the renderer (C),** the most specialised piece. The lead reviews it and
   verifies it visually; Fable's review of its own code doesn't count as independent.
+
+- **Fable's review of this plan (round 2):** all three blocking items were accepted and applied:
+  `ExtrusionVertex` flags, `MapFrame.tileGeneration`, and the hashed tile-cache source key. Its
+  non-blocking items were folded into the briefs. One is deferred: `TileMath.cover` picks
+  pitched-view tiles by bbox and distance to the centre, which can drop far-edge tiles at 45°. It's
+  acceptable for v1 with a 48-tile cap, and revisited if holes show in QA.
 
 ---
 
@@ -371,14 +385,22 @@ cache) and draws them in `MapLabelLayer` (pooled `CATextLayer`s).
      the end to the start. Output is in tile-local 0…1 (divide by extent). Tunnel flag from
      `brunnel=tunnel`.
    - Builder: positions normalised by extent; drop features > `maxVerticesPerFeature`. Roads draw
-     only at classes the schema maps. Buildings produce an extrusion: earcut roof at the height,
-     walls as 2 triangles per exterior edge, shade from edge orientation. Labels: `place` points,
+     only at classes the schema maps. Buildings produce an extrusion: earcut roof at the height
+     (flags `roof`), walls as 2 triangles per exterior edge with the top two vertices flagged
+     `wallTop`, shade (UInt16) from edge orientation. Labels: `place` points,
      `water_name` points, and road names at the midpoint of the longest segment (minZoom 15).
      `byteCount` = the sum of the array byte sizes.
    - TileSource: TileJSON 2/3; `tiles[0]` https, no userinfo or port, and the host equal to the
      TileJSON host. The template must contain `{z}`, `{x}`, `{y}` (`{s}` is not supported → throw).
-     minzoom/maxzoom clamped to 0…22. Attribution is stripped of HTML tags. `version` comes from
-     `version`, or the path segment that changes between planet builds.
+     minzoom/maxzoom clamped to 0…22. Attribution is stripped of HTML tags. `version` = the path
+     segment immediately before `{z}` (OpenFreeMap: `20261101_080013_pt`).
+   - Schema decisions (settled):
+     - `place` label minZoom by class: country 2, state 5, city 4, town 8, village 11,
+       suburb/neighbourhood 13; others skipped.
+     - `transportation` **polygons are dropped** (lines only).
+     - `boundary`: lines with `admin_level` ≤ 4 → `.boundary`, and `maritime=1` is skipped.
+     - `aeroway`: runway/taxiway lines → `.aeroway` lines; runway polygons → `.aeroway` fills.
+     - `transit`/`ferry` → skipped in v1.
 7. **Acceptance:**
    - Every test passes, including a fuzz test of ≥ 5,000 mutations that never traps.
    - Earcut triangle area matches the polygon area within 0.1% (square with a hole, concave
@@ -436,6 +458,10 @@ cache) and draws them in `MapLabelLayer` (pooled `CATextLayer`s).
        Rekor, Axon and Neology.
      - Otherwise `other(trimmed ≤ 60 chars)` or `.unknown`.
    - **Strings:** operator, mount and zone trimmed and ≤ 120 chars.
+   - **Settled:** a `directions` string wins over the numeric `direction` when both exist.
+     `osmTimestamp` → `lastEdited`. `nonEmptyTiles` counts only cameras where
+     `polygon.contains(point)` (not just the bbox). Geofabrik geometry may be `Polygon` or
+     `MultiPolygon`.
    - **Coordinates:** reject NaN or out-of-range values.
    - **Polygons:** even-odd containment with holes; tolerate unclosed and closed rings and drop
      degenerate rings. `tileCover` uses a bbox prefilter, then tile-bounds/polygon intersection
@@ -524,12 +550,26 @@ cache) and draws them in `MapLabelLayer` (pooled `CATextLayer`s).
    - No idle animation: draw only when the frame changes or an animation is running.
    - Clamp pitch to `MapCamera.maxPitch`.
    - Labels must not crash on empty strings or huge counts.
+   - **Settled:**
+     - **Latency:** apply pan, zoom and rotate to a view-local camera immediately and report
+       through `onGesture`. Treat `frame.camera` as authoritative when it arrives (the model
+       echoes it), so a model update never fights an in-progress gesture.
+     - **Overdraw:** draw descendants first, write the stencil, then draw ancestors
+       stencil-tested.
+     - **Overlays:** project cameras, outlines and location on the CPU in double precision.
+       Per-tile `worldUnitsPerMeter` comes from the tile centre.
+     - **QA:** expose a DEBUG `debugForceActive` switch so unkeyed QA windows draw.
+     - **Accessibility:** the MTKView is `accessibilityHidden`.
+     - **Stale tiles:** drop all GPU tiles when `tileGeneration` changes.
+     - **Roof edges:** wall-top vertices carry the `wallTop` flag; draw the accent roof edge
+       from it.
 7. **Acceptance:**
    - `swift build` is green.
    - A synthetic frame draws in the QA app (the lead wires the page). Pausing and resuming works.
    - A theme switch recolours without re-uploading tiles.
    - With 48 synthetic tiles the frame GPU time is reported via `lastFrameGPUms`.
-   - Panning feels direct; there's no allocation per frame in the steady state beyond uniforms.
+   - Panning feels direct: no per-frame GPU buffer allocation in steady state, and ≤ 2 ms
+     main-thread time per frame while panning with 40 labels.
 8. **Dependencies:** §3. Visual tuning with real tiles after A merges (the lead will ping you).
 9. **You decide:** shader internals, uniform layout, buffer strategy, gesture mapping details, and
    the exact look within the design language.

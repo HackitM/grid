@@ -104,6 +104,8 @@ final class MapsMathTests: XCTestCase {
         XCTAssertEqual(MemoryLayout<LineVertex>.offset(of: \.along), 20)
         XCTAssertEqual(MemoryLayout<LineVertex>.offset(of: \.cls), 24)
         XCTAssertEqual(MemoryLayout<ExtrusionVertex>.stride, 16)
+        XCTAssertEqual(MemoryLayout<ExtrusionVertex>.offset(of: \.shade), 12)
+        XCTAssertEqual(MemoryLayout<ExtrusionVertex>.offset(of: \.flags), 14)
         XCTAssertEqual(RegionDescriptor(id: "us/colorado", name: "Colorado", parent: nil, iso3166_1: [], iso3166_2: []).storageKey, "us--colorado")
         XCTAssertEqual(RegionDescriptor(id: "../../etc", name: "x", parent: nil, iso3166_1: [], iso3166_2: []).storageKey, "etc")
         XCTAssertEqual(RegionDescriptor(id: "///", name: "x", parent: nil, iso3166_1: [], iso3166_2: []).storageKey, "region")
