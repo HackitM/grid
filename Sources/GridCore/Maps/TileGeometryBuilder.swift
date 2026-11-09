@@ -7,6 +7,31 @@ public enum TileGeometryBuilder {
     /// Light direction in tile space (y down) used to shade building walls: from the upper left.
     private static let light = simd_normalize(SIMD2<Float>(-0.5, -0.8))
 
+    /// The water's edge as `.water` lines, skipping segments that run along or outside the tile
+    /// border (those are tile seams or buffer, not shoreline).
+    static func appendShoreline(_ rings: [[SIMD2<Float>]], vertices: inout [LineVertex], indices: inout [UInt32]) {
+        let lo: Float = 0.0005, hi: Float = 0.9995
+        func onEdge(_ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Bool {
+            (a.x <= lo && b.x <= lo) || (a.x >= hi && b.x >= hi) || (a.y <= lo && b.y <= lo) || (a.y >= hi && b.y >= hi)
+        }
+        for ring in rings where ring.count >= 3 {
+            var run: [SIMD2<Float>] = []
+            let n = ring.count
+            for i in 0...n {
+                let a = ring[i % n], b = ring[(i + 1) % n]
+                if i < n && !onEdge(a, b) {
+                    if run.isEmpty { run.append(a) }
+                    run.append(b)
+                } else if run.count >= 2 {
+                    LineTessellator.append(run, closed: false, cls: .water, flags: 0, vertices: &vertices, indices: &indices)
+                    run = []
+                } else {
+                    run = []
+                }
+            }
+        }
+    }
+
     public static func build(_ tile: MVTTile, id: TileID) -> TileGeometry {
         let maxVerts = MVTLimits().maxVerticesPerFeature
         var fillPos = [[SIMD2<Float>]](repeating: [], count: RenderClass.allCases.count)
@@ -43,6 +68,7 @@ public enum TileGeometryBuilder {
                             for r in rings { fillPos[c].append(contentsOf: r) }
                             fillIdx[c].reserveCapacity(fillIdx[c].count + tris.count)
                             for t in tris { fillIdx[c].append(base + t) }
+                            if cls == .water { appendShoreline(rings, vertices: &lineVerts[c], indices: &lineIdx[c]) }
                         }
                     }
                 case .lines(let lines):

@@ -28,7 +28,9 @@ final class MapsGeometryTests: XCTestCase {
         XCTAssertTrue(f.positions.contains(SIMD2<Float>(0.25, 0.25)))
         // Full tile minus a hole that spans a quarter of the width and height.
         XCTAssertEqual(MapsEarcutTests.triangleArea([f.positions], f.indices), 1 - 0.25 * 0.25, accuracy: 1e-4)
-        XCTAssertTrue(g.lines.isEmpty)
+        // Only the island (hole) gets a shoreline; the outer ring runs along the tile border.
+        XCTAssertEqual(g.lines.map(\.cls), [.water])
+        XCTAssertTrue(g.lines[0].vertices.allSatisfy { $0.pos.x >= 0.24 && $0.pos.x <= 0.51 && $0.pos.y >= 0.24 && $0.pos.y <= 0.51 })
         XCTAssertNil(g.extrusion)
     }
 
@@ -319,5 +321,23 @@ final class MapsGeometryTests: XCTestCase {
         }
         let ms = Date().timeIntervalSince(t0) / 5 * 1000
         print("dense tile (\(data.count / 1024) KB, \(g.byteCount / 1024) KB geometry): decode+build \(String(format: "%.1f", ms)) ms avg")
+    }
+}
+
+final class MapsShorelineTests: XCTestCase {
+    func testShorelineSkipsTileEdges() {
+        // A lake touching the tile's left edge: the edge segment is a seam, the rest is shore.
+        let ring: [SIMD2<Float>] = [SIMD2(0, 0.2), SIMD2(0.5, 0.2), SIMD2(0.5, 0.6), SIMD2(0, 0.6)]
+        var v: [LineVertex] = [], i: [UInt32] = []
+        TileGeometryBuilder.appendShoreline([ring], vertices: &v, indices: &i)
+        XCTAssertFalse(v.isEmpty)
+        XCTAssertTrue(v.allSatisfy { $0.cls == RenderClass.water.rawValue })
+        // No vertex sits on the seam's interior (x == 0 between y 0.2 and 0.6) except the run ends.
+        let onSeam = v.filter { $0.pos.x == 0 && $0.pos.y > 0.21 && $0.pos.y < 0.59 }
+        XCTAssertTrue(onSeam.isEmpty)
+        // A polygon entirely along the border yields nothing.
+        var v2: [LineVertex] = [], i2: [UInt32] = []
+        TileGeometryBuilder.appendShoreline([[SIMD2(0, 0), SIMD2(1, 0), SIMD2(1, 1), SIMD2(0, 1)]], vertices: &v2, indices: &i2)
+        XCTAssertTrue(v2.isEmpty)
     }
 }

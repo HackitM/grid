@@ -8,18 +8,18 @@ struct SettingsPanel: View {
 
     var body: some View {
         @Bindable var s = app.settings
-        Panel(index: "05", title: "Settings", suffix: "sys") {
+        Panel(index: "06", title: "Settings", suffix: "sys") {
             Text("stored locally · UserDefaults").font(GridFont.small).foregroundStyle(theme.textMute)
         } content: {
             ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    group("05.1", "Appearance") {
+                    group("06.1", "Appearance") {
                         HStack(spacing: 10) {
                             ForEach(ThemeID.allCases) { t in ThemeCard(id: t, selected: s.theme == t) { app.setTheme(t) } }
                         }
                     }
-                    group("05.2", "Effects") {
+                    group("06.2", "Effects") {
                         toggle("Edge glow on focused panels", $s.glow)
                         toggle("Motion (transitions)", $s.motion,
                                note: s.reduceMotion ? "Off: macOS Reduce Motion is enabled." : nil)
@@ -31,7 +31,7 @@ struct SettingsPanel: View {
                         Text("No scanlines, flicker, or idle animation. Everything works with all effects off.")
                             .font(GridFont.small).foregroundStyle(theme.textMute)
                     }
-                    group("05.3", "Terminal") {
+                    group("06.3", "Terminal") {
                         row("Font") {
                             Picker("", selection: $s.terminalFontName) {
                                 Text("System Monospaced (SF Mono)").tag("")
@@ -59,16 +59,16 @@ struct SettingsPanel: View {
                     .onChange(of: s.terminalFontSize) { _, _ in app.terminals.applyAppearance() }
                     .onChange(of: s.optionAsMeta) { _, _ in app.terminals.applyAppearance() }
 
-                    group("05.4", "Keyboard") {
+                    group("06.4", "Keyboard") {
                         ShortcutEditor()
                     }
-                    group("05.5", "Browser") {
+                    group("06.5", "Browser") {
                         BrowserSettingsSection()
                     }
-                    group("05.6", "Widgets") {
+                    group("06.6", "Widgets") {
                         WidgetsSettingsSection()
                     }
-                    group("05.7", "Privacy & permissions") {
+                    group("06.7", "Privacy & permissions") {
                         VStack(alignment: .leading, spacing: 6) {
                             bullet("No telemetry, accounts, cloud services, or AI features. Nothing leaves this Mac.")
                             bullet("Terminal contents and paths are not logged or stored by GRID (scrollback lives in memory only).")
@@ -81,11 +81,15 @@ struct SettingsPanel: View {
                             }
                         }.buttonStyle(GridButtonStyle(compact: true))
                     }
-                    group("05.8", "Updates") {
+                    group("06.8", "Map") {
+                        MapSettingsSection()
+                    }
+                    .id("map")
+                    group("06.9", "Updates") {
                         UpdateSettingsSection()
                     }
                     .id("updates")
-                    group("05.9", "About") {
+                    group("06.10", "About") {
                         Text("GRID \(GridInfo.version) · terminal: SwiftTerm (MIT) · see LICENSES.md")
                             .font(GridFont.small).foregroundStyle(theme.textDim)
                     }

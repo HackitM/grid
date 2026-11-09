@@ -35,6 +35,7 @@ struct RootView: View {
                             case .files: FilesPanel()
                             case .apps: AppsPanel()
                             case .web: BrowserPanel()
+                            case .map: MapPanel()
                             case .settings: SettingsPanel()
                             }
                         } else {
@@ -142,7 +143,7 @@ private struct NavRail: View {
 
     var body: some View {
         VStack(spacing: 2) {
-            ForEach([PanelID.terminal, .files, .apps, .web]) { p in RailItem(panel: p, selector: selector) }
+            ForEach([PanelID.terminal, .files, .apps, .web, .map]) { p in RailItem(panel: p, selector: selector) }
             Spacer()
             RailItem(panel: .settings, selector: selector)
         }
@@ -161,7 +162,7 @@ private struct RailItem: View {
     @State private var hover = false
 
     private var railCommand: GridCommand {
-        switch panel { case .terminal: .showTerminal; case .files: .showFiles; case .apps: .showApps; case .web: .showWeb; case .settings: .settings }
+        switch panel { case .terminal: .showTerminal; case .files: .showFiles; case .apps: .showApps; case .web: .showWeb; case .map: .showMap; case .settings: .settings }
     }
 
     var body: some View {
