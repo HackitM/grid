@@ -59,7 +59,8 @@ A real terminal, a file browser, an app launcher, a widget deck and a web browse
 </table>
 
 - A full WebKit browser (Safari's engine) drawn in GRID's style: tabs, address bar with search, find, zoom and history.
-- **Site themes** give GitHub, Hacker News, MDN, Wikipedia and Stack Overflow GRID's colours and type. You can toggle them per site, and they follow your GRID theme.
+- **New tab page** with a slowly turning dot-matrix globe (drawn on the GPU, paused whenever it isn't in view), your recent pages and a status readout.
+- **Site themes** give GitHub, Hacker News, MDN, Wikipedia, Stack Overflow and Google Search GRID's colours and type. You can toggle them per site, and they follow your GRID theme.
 - **Reader view** re-sets articles in GRID's monospaced layout.
 - **Ad blocking** uses uBlock Origin's default filter lists through Safari's built-in content blocker, with a one-click "off for this site".
 - **Extensions** in Chrome / Safari WebExtension format (macOS 15.4+) install after a permission review. Their buttons only appear once one is installed.

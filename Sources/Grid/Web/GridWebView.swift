@@ -12,9 +12,15 @@ final class GridWebView: WKWebView {
         let items = GridMenu.items(from: menu)
         guard !items.isEmpty else { return }
         // WebKit's items only work while its menu is open, so the GRID menu runs modally here
-        // (tracking events like a system menu) and the chosen item is performed before WebKit
-        // shows its menu. That menu is then empty, and an empty menu isn't shown.
+        // (AppKit has already started tracking WebKit's menu when this is called) and the chosen
+        // item is performed before returning. Then WebKit's menu is emptied and its tracking
+        // cancelled: left open, AppKit would show it with only the system Services items and it
+        // would swallow the next click.
+        menu.allowsContextMenuPlugIns = false
         GridMenu.shared.showModal(items, title: "page", anchor: .point(GridMenu.screenLocation(of: event)), window: window)
         menu.removeAllItems()
+        menu.cancelTrackingWithoutAnimation()
+        // Tracking may not have fully started yet; cancel again once it has.
+        DispatchQueue.main.async { menu.cancelTrackingWithoutAnimation() }
     }
 }

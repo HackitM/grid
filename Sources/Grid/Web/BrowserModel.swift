@@ -284,6 +284,11 @@ final class BrowserTab: Identifiable {
         return w
     }
 
+    /// A new tab that hasn't been pointed anywhere yet: shows the new tab page instead of a web view.
+    var isBlank: Bool {
+        url == nil && pendingURL == nil && !isLoading && loadError == nil && reader == nil && (_webView?.url == nil)
+    }
+
     func activate() {
         if let u = pendingURL {
             pendingURL = nil

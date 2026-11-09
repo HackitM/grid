@@ -163,8 +163,9 @@ struct GridCommands: Commands {
             // The close command never quits GRID by accident: it closes the focused pane (or the tab
             // when it has one pane) in the Terminal panel; on other panels it returns to the terminal.
             // Only with no sessions left does it close the window (which quits the single-window app).
-            Button(web && app.browser.active != nil ? "Close Browser Tab" : app.panel != .terminal && !app.terminals.sessions.isEmpty ? "Back to Terminal"
-                   : ((app.terminals.activeTab?.panes.count ?? 0) > 1 ? "Close Pane" : "Close Tab")) {
+            // A fixed title: SwiftUI rebuilds a command whose title changes, and the rebuilt item
+            // can miss its key equivalent until the menu is next shown, letting ⌘W fall through.
+            Button("Close") {
                 if app.confirmation != nil { NSSound.beep(); return }
                 if web, let t = app.browser.active { app.browser.close(t.id); return }
                 if app.panel != .terminal && !app.terminals.sessions.isEmpty {
@@ -183,6 +184,9 @@ struct GridCommands: Commands {
             .keyboardShortcut(key(.closeTab))
             .disabled(app.terminals.activeTabID == nil)
         }
+        // SwiftUI's own File › Close (⌘W) closes the window, which quits this single-window app.
+        // GRID's Close command above owns ⌘W instead; the window's close button still works.
+        CommandGroup(replacing: .saveItem) { }
         CommandGroup(after: .textEditing) {
             Button("Find") {
                 if web { if app.browser.active != nil { app.browser.findVisible = true }; return }

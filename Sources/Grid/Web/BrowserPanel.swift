@@ -24,7 +24,7 @@ struct BrowserPanel: View {
                 if browser.findVisible, let tab { BrowserFindBar(tab: tab) }
                 ZStack {
                     theme.bg1
-                    if let tab {
+                    if let tab, !tab.isBlank {
                         if let article = tab.reader {
                             ReaderView(article: article, theme: theme, fontSize: 13) { url in
                                 tab.reader = nil
@@ -392,58 +392,6 @@ private struct BrowserFindBar: View {
 }
 
 // MARK: - New tab page
-
-private struct NewTabPage: View {
-    @Environment(AppState.self) private var app
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        let browser = app.browser
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                StateBlock(code: "WEB.READY", title: "Type an address or a search",
-                           message: "Pages run in WebKit, isolated from your terminal and files. ⌘T new tab · ⌘L address · ⇧⌘R reader view. Ad blocking: \(browser.adBlocker.enabled ? "on" : "off").")
-                if !browser.history.isEmpty {
-                    VStack(alignment: .leading, spacing: 0) {
-                        HStack {
-                            SectionLabel("Recent", color: theme.accent)
-                            Rectangle().fill(theme.line).frame(height: Metrics.hairline)
-                        }
-                        .padding(.bottom, 4)
-                        ForEach(browser.history.prefix(14)) { h in
-                            HistoryRow(item: h) { if let u = URL(string: h.url) { browser.open(u, newTab: browser.active == nil) } }
-                        }
-                    }
-                }
-            }
-            .padding(16)
-            .frame(maxWidth: 760, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-private struct HistoryRow: View {
-    @Environment(\.theme) private var theme
-    let item: BrowserModel.HistoryItem
-    let action: () -> Void
-    @State private var hover = false
-    var body: some View {
-        HStack(spacing: 8) {
-            Text("↗").foregroundStyle(theme.accent)
-            Text(item.title.isEmpty ? item.url : item.title).foregroundStyle(theme.text).lineLimit(1)
-            Spacer(minLength: 8)
-            Text(URL(string: item.url)?.host ?? "").foregroundStyle(theme.textMute).lineLimit(1)
-        }
-        .font(GridFont.small)
-        .padding(.horizontal, 8).frame(height: Metrics.rowHeight)
-        .gridRowBackground(selected: false, hovered: hover, theme: theme)
-        .contentShape(Rectangle())
-        .onHover { hover = $0 }
-        .onTapGesture(perform: action)
-        .accessibilityAddTraits(.isButton)
-    }
-}
 
 // MARK: - Page view
 

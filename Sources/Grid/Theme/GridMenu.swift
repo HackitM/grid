@@ -167,8 +167,10 @@ final class GridMenu {
         modalAction = nil
         defer { modal = false }
         show(items, title: title, anchor: anchor, window: window)
+        // Sleeps until an event arrives (dismiss() posts one), so an open menu costs no CPU.
         while isOpen {
-            if let e = NSApp.nextEvent(matching: .any, until: Date(timeIntervalSinceNow: 0.05), inMode: .eventTracking, dequeue: true) {
+            if let e = NSApp.nextEvent(matching: .any, until: .distantFuture, inMode: .eventTracking, dequeue: true) {
+                if e.type == .applicationDefined && e.subtype.rawValue == Self.wakeSubtype { continue }
                 NSApp.sendEvent(e)
             }
         }
@@ -188,7 +190,15 @@ final class GridMenu {
         activating = false
         closing.forEach { $0.close(fade: app?.settings.effects.motion ?? false) }
         if let cb = onClose { onClose = nil; cb() }
+        // Wake showModal's event loop, which may be waiting for the next event.
+        if modal, let e = NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 0,
+                                             windowNumber: 0, context: nil, subtype: Self.wakeSubtype, data1: 0, data2: 0) {
+            NSApp.postEvent(e, atStart: true)
+        }
     }
+
+    private static let wakeSubtype: Int16 = 0x6D6E   // "mn"
+
 
     private func present(_ level: GridMenuLevel, contentFrame: NSRect) {
         guard let app else { return }
@@ -576,8 +586,11 @@ final class GridMenuLevel {
                 if !item.shortcut.isEmpty { trailW = max(trailW, w(item.shortcut, key) + 10) }
             }
         }
-        // leading pad (+ check slot and gap) + title + gap + trailing + trailing pad
-        var width = 12 + (hasChecks ? 20 : 0) + titleW + 28 + trailW + 12
+        // Matches GridMenuRow: 12 leading pad, optional 14pt check column + 6 spacing, the title,
+        // 6 spacing + a spacer of at least 20 (always present), then 6 spacing + the shortcut or ▸
+        // when there is one, 12 trailing pad. A few points of slack keep text rendering
+        // differences from truncating a label.
+        var width = 12 + (hasChecks ? 20 : 0) + titleW + 26 + (trailW > 0 ? 6 + trailW : 0) + 12 + 6
         if let title { width = max(width, w(title.uppercased(), label, kern: 1.4) + 60) }
         width = min(max(width, 190), 440)
         let rows = items.reduce(0) { $0 + height(of: $1) }

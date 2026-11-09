@@ -28,7 +28,21 @@ enum DebugHooks {
                   let cmd = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
             DispatchQueue.main.async { MainActor.assumeIsolated { handle(cmd, app) } }
         }
+        // Records every system menu that starts tracking (to catch native menus slipping through).
+        NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { n in
+            guard let m = n.object as? NSMenu, m.supermenu == nil, m !== NSApp.mainMenu else { return }
+            let titles = m.items.map { $0.isSeparatorItem ? "—" : $0.title }
+            MainActor.assumeIsolated { nativeMenusShown.append("begin: " + titles.joined(separator: " | ")) }
+        }
+        NotificationCenter.default.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: nil) { n in
+            guard let m = n.object as? NSMenu, m.supermenu == nil, m !== NSApp.mainMenu else { return }
+            let titles = m.items.map { $0.isSeparatorItem ? "—" : $0.title }
+            MainActor.assumeIsolated { nativeMenusShown.append("end: [\(titles.count) items] " + titles.joined(separator: " | ")) }
+        }
     }
+
+    /// System menus that began tracking since launch (titles of their items).
+    static var nativeMenusShown: [String] = []
 
     /// Compact text form of a split tree, e.g. "H[1 0.50 | V[2 0.50 / 3 0.50] 0.50]".
     static func describe(_ t: SplitTree, _ tab: TerminalTab) -> String {
@@ -163,6 +177,8 @@ enum DebugHooks {
             case "glow": app.settings.glow = on
             case "motion": app.settings.motion = on
             case "systemMenus": app.settings.systemMenus = on
+            case "globeActive": GlobeView.debugForceActive = on
+            case "globeNoLabels": GlobeRenderer.debugNoLabels = on
             default: break
             }
         case "click":
@@ -201,6 +217,37 @@ enum DebugHooks {
             let mods = Set(((c["mods"] as? [String]) ?? []).compactMap(KeyBinding.Modifier.init(rawValue:)))
             let err = app.shortcuts.assign(KeyBinding(c["key"] as? String ?? "", mods), to: cmd)
             app.flash(err == nil ? .info : .error, err ?? "assigned")
+        case "pressKeyEquiv":
+            // A key equivalent the way a real keypress travels: the window's views first (a focused
+            // web page sees it there), then the menu bar. {"chars":"w","mods":["command"],"focusWeb":true,"path":..}
+            guard let w = window, let chars = c["chars"] as? String else { break }
+            var flags: NSEvent.ModifierFlags = []
+            for m in (c["mods"] as? [String]) ?? [] {
+                switch m { case "command": flags.insert(.command); case "option": flags.insert(.option)
+                case "shift": flags.insert(.shift); case "control": flags.insert(.control); default: break }
+            }
+            if (c["focusWeb"] as? Bool) == true, let wv = app.browser.active?.webViewIfLoaded { w.makeFirstResponder(wv) }
+            var owners: [String] = []
+            func walk(_ m: NSMenu) {
+                m.update()
+                for item in m.items {
+                    if item.keyEquivalent == chars && item.keyEquivalentModifierMask == flags { owners.append("\(item.title) enabled=\(item.isEnabled)") }
+                    if let sub = item.submenu { walk(sub) }
+                }
+            }
+            if let main = NSApp.mainMenu { walk(main) }
+            let responder = w.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
+            let fileMenu = NSApp.mainMenu?.items.first { $0.submenu?.title == "File" }?.submenu
+            let fileItems = fileMenu?.items.map { "\($0.title) [\($0.keyEquivalent)|\($0.keyEquivalentModifierMask.rawValue)] enabled=\($0.isEnabled)" } ?? []
+            if let path {
+                let info: [String: Any] = ["owners": owners, "firstResponder": responder, "file": fileItems]
+                if let data = try? JSONSerialization.data(withJSONObject: info) { try? data.write(to: URL(fileURLWithPath: path)) }
+            }
+            if let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                                        windowNumber: w.windowNumber, context: nil, characters: chars, charactersIgnoringModifiers: chars,
+                                        isARepeat: false, keyCode: 13) {
+                if !w.performKeyEquivalent(with: e) { _ = NSApp.mainMenu?.performKeyEquivalent(with: e) }
+            }
         case "menuKeys":
             // Writes the live menu bar's key equivalents for the given item titles.
             guard let path, let titles = c["titles"] as? [String] else { break }
@@ -368,6 +415,8 @@ enum DebugHooks {
                 }
                 let st: [String: Any] = [
                     "open": menu.isOpen,
+                    "native": DebugHooks.nativeMenusShown,
+                    "globeFrames": GlobeRenderer.debugFrames,
                     "window": window.map { [$0.frame.minX, $0.frame.minY, $0.frame.width, $0.frame.height] } ?? [],
                     "levels": menu.debugLevels.map { l in [
                         "title": l.title ?? "", "highlighted": l.highlighted ?? -1,
