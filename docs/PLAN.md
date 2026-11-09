@@ -52,18 +52,18 @@
 - [x] Close buttons on Files / Terminal / Deck title bars and on each pane; closing Terminal keeps sessions
 - [x] Drag panel title bars onto another panel's edge (tree-based layout, persisted, resizable, reset)
 - [x] Drag panes onto pane edges, onto tabs (move into tab), onto the tab bar (new tab); drag tabs to reorder
-- [x] SplitTree `inserting` / `moving` / `balanced` / Codable (GridCore, 27 new tests, written with Fable)
+- [x] SplitTree `inserting` / `moving` / `balanced` / Codable (GridCore, 27 new tests)
 
 ## Docking rewrite and folder tree ✅
 - [x] GRID's own drag tracking replaces system drag-and-drop for panels, panes, tabs, widget cards
       (one target and one highlight at a time, pointer label, Esc cancels, testable end to end)
-- [x] Expandable folder tree in Files (Fable): disclosure triangles, indented levels with guides,
+- [x] Expandable folder tree in Files: disclosure triangles, indented levels with guides,
       async children with loading/error rows, keyboard → ← ⌥→, ancestor-preserving filter, nested
       selection and file operations
 - [ ] Persist folder expansion across launches
 
 ## Layout fixes and motion ✅
-- [x] Dynamic layout fixes (Fable): drag sessions always end, drops apply reliably, point-based
+- [x] Dynamic layout fixes: drag sessions always end, drops apply reliably, point-based
       panel minimums, terminal-dominant docking, repaired v1 layouts, collapsing title bars
 - [x] Motion from the reference films: panel build-on + accent flash, row cascades, Ares text bands,
       sliding selectors, scan-band drop targets, popping tags, rolling numbers
