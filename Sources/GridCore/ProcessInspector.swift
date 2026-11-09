@@ -50,6 +50,40 @@ public enum ProcessInspector {
         return Array(buf.prefix(Int(n))).filter { $0 > 0 }
     }
 
+    /// A PID plus its start time: survives PID reuse, so a later signal can't hit a stranger.
+    public struct Identity: Hashable, Sendable {
+        public let pid: pid_t
+        public let startSec: UInt64
+        public let startUsec: UInt64
+    }
+
+    public static func identity(of pid: pid_t) -> Identity? {
+        guard pid > 0 else { return nil }
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return Identity(pid: pid, startSec: info.pbi_start_tvsec, startUsec: info.pbi_start_tvusec)
+    }
+
+    /// PIDs currently in process group `pgid` (works even if the group leader already exited).
+    public static func members(ofGroup pgid: pid_t) -> [pid_t] {
+        guard pgid > 1 else { return [] }
+        // proc_listpids returns a byte count (unlike proc_listchildpids, which returns entries).
+        let needed = proc_listpids(UInt32(PROC_PGRP_ONLY), UInt32(pgid), nil, 0)
+        guard needed > 0 else { return [] }
+        var buf = [pid_t](repeating: 0, count: Int(needed) / MemoryLayout<pid_t>.size + 16)
+        let bytes = proc_listpids(UInt32(PROC_PGRP_ONLY), UInt32(pgid), &buf, Int32(buf.count * MemoryLayout<pid_t>.size))
+        guard bytes > 0 else { return [] }
+        return Array(buf.prefix(Int(bytes) / MemoryLayout<pid_t>.size)).filter { $0 > 0 }
+    }
+
+    /// Sends `signal` only if `id` still names the same process (same PID *and* start time).
+    @discardableResult
+    public static func signalIfSame(_ id: Identity, _ signal: Int32) -> Bool {
+        guard let now = identity(of: id.pid), now == id else { return false }
+        return kill(id.pid, signal) == 0
+    }
+
     /// All descendants (depth-first), useful for diagnostics and cleanup verification.
     public static func descendants(of pid: pid_t) -> [pid_t] {
         var out: [pid_t] = []

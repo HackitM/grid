@@ -2,16 +2,20 @@
 
 ## Automated
 ```bash
-swift test          # 33 unit tests (GridCore): quoting (incl. real zsh round-trip), ranking,
+swift test          # 36 unit tests (GridCore): quoting (incl. real zsh round-trip), ranking,
                     # paths, URL validation, palette grammar, env, listing, perms, symlinks,
                     # app discovery, libproc cwd tracking
 ```
 
 ## Workflow QA (DEBUG build)
-`scripts/bundle.sh debug` builds a DEBUG app with `DebugHooks` (compiled out of release builds).
-`source scripts/qa/run.sh` then gives `g`, `gtype`, `gstate`, `gscreen`, `gsnap` helpers that drive
-the running app via distributed notifications and read back real state (kernel cwd, foreground
-process, PTY size, terminal screen buffer, process tree). `gsnap` captures the composited window.
+`scripts/bundle.sh debug` builds a DEBUG app with QA hooks (compiled out of release builds), and
+`open build/GRID.app --args --qa` enables them for that launch only (status bar: “△ QA HOOKS”).
+Build the controller with `swiftc -O -o build/gridctl scripts/qa/gridctl.swift`, then
+`source scripts/qa/run.sh` for `g`, `gtype`, `gstate`, `gscreen`, `gsnap` helpers. They talk to the
+app over a private Unix socket (`$DARWIN_USER_TEMP_DIR/grid-qa.sock`, 0600, same-user only) and read
+back real state (kernel cwd, foreground process, PTY size, terminal screen buffer, process tree).
+`gsnap` captures the composited window. For automated quit tests, temporarily set
+`defaults write local.grid.workspace term.confirmBusy -bool false` (and delete the key after).
 
 Note: SwiftTerm cannot be rendered offscreen, and macOS stops redrawing while the screen is locked,
 so QA verifies terminal content through the screen buffer and uses real window captures when the
@@ -38,6 +42,7 @@ display is awake.
 | Quit without orphans | ✅ | fg job, vim, bg job, bg subshell, `yes \| cat` pipeline all gone after quit; `nohup` job intentionally survives (as in Terminal.app) |
 | Quit confirmation (busy) | ✅ | in-app QUIT.ACTIVE confirmation; cleanup ran after confirm |
 | TCC behaviour | ✅ (expected) | first access to `~/Desktop` from a shell or Files prompts “GRID would like to access…”; work waits off the main thread, UI stays responsive |
+| Review fixes (2026-11-08, Fable review) | ✅ | QA socket absent without `--qa`, 0600 + same-user with it, removed on quit; confirmations can't overwrite each other; 13 FIFO selections then `/usr/bin` still lists; `.command` and Mach-O ask before running (script did not run); pipeline with dead group leader + HUP-ignoring member killed on close; quit leaves no orphans; release binary has 0 QA symbols/strings |
 | Remote web content → privileged functions | n/a | no embedded web content in M1 (external browser only); non-http(s) schemes refused (unit tested) |
 
 ## Manual checklist (needs a person at the keyboard)

@@ -82,19 +82,17 @@ final class TerminalManager {
 
     /// Quit path: hang up everything, wait briefly for shells to exit, then SIGKILL leftovers.
     func shutdownAll(timeout: TimeInterval = 1.5) {
-        let targets: [(pid_t, pid_t?)] = sessions.compactMap { s in
-            guard !s.exited, let p = s.view.process, p.shellPid > 0 else { return nil }
-            return (p.shellPid, ProcessInspector.foregroundProcessGroup(ptyMaster: p.childfd))
-        }
-        for (pid, fg) in targets {
-            if let fg, fg != pid { killpg(fg, SIGHUP) }
-            kill(pid, SIGHUP)
+        var targets: [ProcessInspector.Identity] = []
+        for s in sessions where !s.exited {
+            guard let p = s.view.process, p.shellPid > 0 else { continue }
+            targets += TerminalSession.sendHangup(shell: p.shellPid, ptyMaster: p.childfd)
         }
         let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline, targets.contains(where: { ProcessInspector.isAlive($0.0) }) {
+        while Date() < deadline,
+              targets.contains(where: { ProcessInspector.identity(of: $0.pid) == $0 }) {
             usleep(20_000)
         }
-        for (pid, fg) in targets { TerminalSession.forceKill(shell: pid, foreground: fg) }
+        TerminalSession.forceKill(targets)
     }
 
     private func tick() {

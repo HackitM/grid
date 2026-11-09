@@ -43,13 +43,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let names = busy.map { "• session \(String(format: "%02d", $0.number)): \($0.foregroundName ?? "job")" }.joined(separator: "\n")
         let message = "These programs are still running and will be sent a hangup signal (SIGHUP):\n\(names)"
         if NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) {
-            state.confirmation = Confirmation(
+            state.present(Confirmation(
                 code: "QUIT.ACTIVE", title: "Quit GRID?", message: message, confirmLabel: "Quit", destructive: true,
                 onConfirm: { [weak self] in
                     self?.shutdown()
                     NSApp.reply(toApplicationShouldTerminate: true)
                 },
-                onCancel: { NSApp.reply(toApplicationShouldTerminate: false) })
+                onCancel: { NSApp.reply(toApplicationShouldTerminate: false) }), replacing: true)
             return .terminateLater
         }
         // No visible window (closed via the title bar): fall back to a native alert.
@@ -71,6 +71,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !didShutdown else { return }
         didShutdown = true
         state.terminals.shutdownAll()
+        #if DEBUG
+        DebugHooks.uninstall()
+        #endif
     }
 }
 
@@ -88,9 +91,19 @@ struct GridCommands: Commands {
             Button("New Session") { app.newTerminal() }.keyboardShortcut("t", modifiers: .command)
             Button("New Session in Files Folder") { app.openTerminalHere() }.keyboardShortcut("t", modifiers: [.command, .option])
             Divider()
-            Button("Close Session") {
-                if let id = app.terminals.activeID, app.panel == .terminal { app.requestCloseTerminal(id) }
-                else { NSApp.keyWindow?.performClose(nil) }
+            // ⌘W never quits GRID by accident: it closes the active terminal session in the
+            // Terminal panel; on other panels it returns to the terminal. Only with no sessions
+            // left does it close the window (which quits the single-window app).
+            Button(app.panel == .terminal || app.terminals.sessions.isEmpty ? "Close Session" : "Back to Terminal") {
+                if app.confirmation != nil { NSSound.beep(); return }
+                if app.panel != .terminal && !app.terminals.sessions.isEmpty {
+                    app.show(.terminal)
+                    app.focusTerminal()
+                } else if let id = app.terminals.activeID {
+                    app.requestCloseTerminal(id)
+                } else {
+                    NSApp.keyWindow?.performClose(nil)
+                }
             }
             .keyboardShortcut("w", modifiers: .command)
         }

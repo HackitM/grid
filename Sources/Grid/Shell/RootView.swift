@@ -174,6 +174,12 @@ private struct StatusBar: View {
                 .transition(.opacity)
                 .accessibilityLabel((n.tone == .error ? "Error: " : "") + n.text)
             }
+            #if DEBUG
+            if DebugHooks.enabled {
+                Text("△ QA HOOKS").font(GridFont.label).foregroundStyle(theme.warn)
+                    .padding(.horizontal, 10).help("Debug build launched with --qa: local automation socket is open")
+            }
+            #endif
             cell("\(app.terminals.sessions.count) SESSION\(app.terminals.sessions.count == 1 ? "" : "S")")
             cell(app.settings.theme.label)
         }

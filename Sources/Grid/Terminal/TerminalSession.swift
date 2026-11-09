@@ -95,19 +95,32 @@ final class TerminalSession: Identifiable {
     /// Processes the user deliberately detached (nohup, setsid, disown) are left alone.
     func hangUp(escalateAfter seconds: Double = 2.0) {
         guard !exited, let process = view.process else { return }
-        let pid = process.shellPid
-        guard pid > 0 else { return }
-        let fg = ProcessInspector.foregroundProcessGroup(ptyMaster: process.childfd)
-        if let fg, fg != pid { killpg(fg, SIGHUP) }
-        kill(pid, SIGHUP)
+        let targets = Self.sendHangup(shell: process.shellPid, ptyMaster: process.childfd)
+        guard !targets.isEmpty else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
-            Self.forceKill(shell: pid, foreground: fg)
+            Self.forceKill(targets)
         }
     }
 
-    nonisolated static func forceKill(shell pid: pid_t, foreground fg: pid_t?) {
-        if let fg, fg != pid, ProcessInspector.isAlive(fg) { killpg(fg, SIGKILL) }
-        if ProcessInspector.isAlive(pid) { kill(pid, SIGKILL) }
+    /// Records exact identities (PID + start time) of the shell and every member of the
+    /// foreground job's process group, then sends SIGHUP. Returns the identities so a later
+    /// SIGKILL can be aimed precisely: members are tracked individually (so a pipeline whose
+    /// group leader already exited is still covered), and a reused PID never matches.
+    nonisolated static func sendHangup(shell pid: pid_t, ptyMaster fd: Int32) -> [ProcessInspector.Identity] {
+        guard pid > 0 else { return [] }
+        var targets: [ProcessInspector.Identity] = []
+        if let shellID = ProcessInspector.identity(of: pid) { targets.append(shellID) }
+        if let fg = ProcessInspector.foregroundProcessGroup(ptyMaster: fd), fg != pid {
+            targets += ProcessInspector.members(ofGroup: fg).compactMap(ProcessInspector.identity(of:))
+            killpg(fg, SIGHUP)   // fg comes from tcgetpgrp on our own PTY just now, so it is current
+        }
+        kill(pid, SIGHUP)
+        return targets
+    }
+
+    /// SIGKILL for whatever is still running *and* is still the same process.
+    nonisolated static func forceKill(_ targets: [ProcessInspector.Identity]) {
+        for id in targets { ProcessInspector.signalIfSame(id, SIGKILL) }
     }
 
     fileprivate func handleExit(_ code: Int32?) {

@@ -2,19 +2,36 @@
 import AppKit
 import GridCore
 
-/// DEBUG-ONLY automation hooks used by scripts/qa. Compiled out of release builds, so a shipped
-/// GRID has no externally reachable control channel.
+/// DEBUG-ONLY automation hooks used by scripts/qa.
 ///
-/// Commands arrive as a JSON string in the `object` of the distributed notification
-/// "local.grid.debug", e.g. {"cmd":"snapshot","path":"/tmp/a.png"}.
+/// Defense in depth, because these commands can type into a shell:
+/// - Compiled out of release builds (`#if DEBUG`).
+/// - Even in debug builds, only enabled when GRID is launched with `--qa`
+///   (`open build/GRID.app --args --qa`); the status bar then shows "QA HOOKS".
+/// - Transport is a Unix-domain socket inside the per-user temp directory
+///   (`$DARWIN_USER_TEMP_DIR`, mode 0700, unreachable from other users and from sandboxed
+///   apps), the socket itself is 0600, and every connection's peer UID is checked.
+///   (A distributed notification was used before; any app in the session can post those.)
+///
+/// Protocol: connect, write one JSON object, close. E.g. {"cmd":"snapshot","path":"/tmp/a.png"}.
 @MainActor
 enum DebugHooks {
+    static var enabled: Bool { CommandLine.arguments.contains("--qa") }
+    static var socketPath: String { (NSTemporaryDirectory() as NSString).appendingPathComponent("grid-qa.sock") }
+    private static var server: QASocketServer?
+
     static func install(_ app: AppState) {
-        DistributedNotificationCenter.default().addObserver(forName: Notification.Name("local.grid.debug"), object: nil, queue: .main) { n in
-            guard let s = n.object as? String, let data = s.data(using: .utf8),
+        guard enabled else { return }
+        server = QASocketServer(path: socketPath) { text in
+            guard let data = text.data(using: .utf8),
                   let cmd = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-            MainActor.assumeIsolated { handle(cmd, app) }
+            DispatchQueue.main.async { MainActor.assumeIsolated { handle(cmd, app) } }
         }
+    }
+
+    static func uninstall() {
+        server?.stop()
+        server = nil
     }
 
     private static var window: NSWindow? {
@@ -90,6 +107,10 @@ enum DebugHooks {
             if let id = app.terminals.activeID { app.requestCloseTerminal(id) }
         case "confirm":
             if let conf = app.confirmation { app.confirmation = nil; conf.onConfirm() }
+        case "cancel":
+            if let conf = app.confirmation { app.confirmation = nil; conf.onCancel() }
+        case "present":
+            app.present(Confirmation(code: "QA.TEST", title: "QA", message: "test", confirmLabel: "OK", destructive: false, onConfirm: {}))
         case "files":
             if let d = c["dir"] as? String { app.files.navigate(to: URL(fileURLWithPath: d)) }
             if let q = c["query"] as? String { app.files.query = q }

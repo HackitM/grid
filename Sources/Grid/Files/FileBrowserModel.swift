@@ -2,6 +2,7 @@ import AppKit
 import Darwin
 import GridCore
 import Observation
+import UniformTypeIdentifiers
 
 enum FileSearchMode: String, CaseIterable {
     case here, deep
@@ -37,6 +38,9 @@ final class FileBrowserModel {
     @ObservationIgnored private var deepTask: Task<Void, Never>?
     @ObservationIgnored private var watcher: DispatchSourceFileSystemObject?
     @ObservationIgnored var onError: ((String) -> Void)?
+    /// Asked before opening something that would *run* rather than display. Call the closure
+    /// to proceed. If unset, such files are refused.
+    @ObservationIgnored var confirmRun: ((URL, _ reason: String, _ proceed: @escaping () -> Void) -> Void)?
 
     init(settings: Settings) {
         self.settings = settings
@@ -251,6 +255,33 @@ final class FileBrowserModel {
             reload()
             return
         }
+        if let reason = runReason(url) {
+            if let confirmRun { confirmRun(url, reason) { [weak self] in self?.launch(url) } }
+            else { onError?("Refused to run “\(url.lastPathComponent)”.") }
+            return
+        }
+        launch(url)
+    }
+
+    /// Terminal-like apps that execute the file they are asked to open.
+    static let executingApps: Set<String> = ["com.apple.Terminal", "com.googlecode.iterm2", "com.mitchellh.ghostty",
+                                             "net.kovidgoyal.kitty", "com.github.wez.wezterm", "io.alacritty",
+                                             "dev.warp.Warp-Stable", "co.zeit.hyper"]
+
+    /// Non-nil when "opening" this file would execute it (Finder semantics), with a short reason.
+    func runReason(_ url: URL) -> String? {
+        // Apps and other bundles are launched deliberately; that is what opening them means.
+        if NSWorkspace.shared.isFilePackage(atPath: url.path) { return nil }
+        if let app = defaultApp(for: url), let bid = Bundle(url: app)?.bundleIdentifier, Self.executingApps.contains(bid) {
+            return "Its default app is \(app.deletingPathExtension().lastPathComponent), which runs it as a program."
+        }
+        if let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType, type.conforms(to: .unixExecutable) {
+            return "It is an executable program."
+        }
+        return nil
+    }
+
+    private func launch(_ url: URL) {
         // Standard LaunchServices open: the user's default app for this file type.
         NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, err in
             if let err {

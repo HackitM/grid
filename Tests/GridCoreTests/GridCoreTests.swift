@@ -189,6 +189,15 @@ final class FileListingTests: XCTestCase {
         XCTAssertTrue(all.contains { $0.name == ".hidden" })
     }
 
+    func testRegularFileFlag() throws {
+        let fifo = dir.appendingPathComponent("pipe")
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        let items = try FileListing.list(dir, showHidden: false)
+        XCTAssertEqual(items.first { $0.name == "pipe" }?.isRegularFile, false)
+        XCTAssertEqual(items.first { $0.name == "b.txt" }?.isRegularFile, true)
+        XCTAssertEqual(items.first { $0.name == "zfolder" }?.isRegularFile, false)
+    }
+
     func testSymlinks() throws {
         let items = try FileListing.list(dir, showHidden: false)
         let link = try XCTUnwrap(items.first { $0.name == "link-to-folder" })
@@ -278,6 +287,28 @@ final class ProcessInspectorTests: XCTestCase {
         XCTAssertEqual(ProcessInspector.currentDirectory(pid: pid), FileManager.default.currentDirectoryPath)
         XCTAssertNotNil(ProcessInspector.name(pid: pid))
         XCTAssertTrue(ProcessInspector.isAlive(pid))
+    }
+
+    func testIdentityDistinguishesReusedPIDs() throws {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        p.arguments = ["5"]
+        try p.run()
+        let id = try XCTUnwrap(ProcessInspector.identity(of: p.processIdentifier))
+        XCTAssertEqual(ProcessInspector.identity(of: p.processIdentifier), id)
+        // A forged identity with the same PID but a different start time must not be signalled.
+        let forged = ProcessInspector.Identity(pid: id.pid, startSec: id.startSec &+ 1, startUsec: id.startUsec)
+        XCTAssertFalse(ProcessInspector.signalIfSame(forged, SIGTERM))
+        XCTAssertTrue(ProcessInspector.isAlive(p.processIdentifier))
+        XCTAssertTrue(ProcessInspector.signalIfSame(id, SIGTERM))
+        p.waitUntilExit()
+        XCTAssertFalse(ProcessInspector.signalIfSame(id, SIGTERM), "exited process must not match")
+    }
+
+    func testGroupMembers() {
+        XCTAssertTrue(ProcessInspector.members(ofGroup: getpgrp()).contains(getpid()))
+        XCTAssertEqual(ProcessInspector.members(ofGroup: 0), [])
+        XCTAssertEqual(ProcessInspector.members(ofGroup: 1), [])
     }
 
     func testChildCwdIsTracked() throws {

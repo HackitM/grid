@@ -21,7 +21,9 @@
 - [x] Command palette with namespaced grammar
 - [x] Settings: theme (3), effects, terminal font/size/meta/scrollback/shell, palette shortcut
 - [x] Web: external open only, scheme-validated
-- [x] 33 unit tests + workflow QA (docs/TESTING.md)
+- [x] 36 unit tests + workflow QA (docs/TESTING.md)
+- [x] Code review fixes: locked-down QA hook, ⌘W never quits, single-confirmation guard,
+      regular-file-only previews, identity-checked kill escalation, run confirmation for executables
 
 ## Milestone 2 — Daily-use polish (next)
 - [ ] Split panes (⌘D / ⇧⌘D) inside a terminal tab

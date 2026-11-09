@@ -14,13 +14,16 @@ public struct FileEntry: Identifiable, Hashable, Sendable {
     public let modified: Date?
     public let kind: String            // localized type description, e.g. "PNG image"
     public let typeIdentifier: String?
+    /// True only for plain files (not FIFOs, sockets, or devices), following symlinks.
+    public let isRegularFile: Bool
 
     public init(url: URL, name: String, isDirectory: Bool, isPackage: Bool, isSymlink: Bool,
                 isBrokenSymlink: Bool, isHidden: Bool, size: Int64?, modified: Date?, kind: String,
-                typeIdentifier: String?) {
+                typeIdentifier: String?, isRegularFile: Bool = false) {
         self.url = url; self.name = name; self.isDirectory = isDirectory; self.isPackage = isPackage
         self.isSymlink = isSymlink; self.isBrokenSymlink = isBrokenSymlink; self.isHidden = isHidden
         self.size = size; self.modified = modified; self.kind = kind; self.typeIdentifier = typeIdentifier
+        self.isRegularFile = isRegularFile
     }
 
     /// Navigable as a folder in the browser (packages open with their app instead).
@@ -70,7 +73,7 @@ public enum ListingError: Error, Equatable, Sendable {
 public enum FileListing {
     static let keys: [URLResourceKey] = [
         .isDirectoryKey, .isPackageKey, .isSymbolicLinkKey, .isHiddenKey, .fileSizeKey,
-        .totalFileAllocatedSizeKey, .contentModificationDateKey, .contentTypeKey, .localizedTypeDescriptionKey,
+        .totalFileAllocatedSizeKey, .contentModificationDateKey, .contentTypeKey, .localizedTypeDescriptionKey, .fileResourceTypeKey,
     ]
 
     /// Lists one directory level. Throws `ListingError`.
@@ -99,6 +102,7 @@ public enum FileListing {
         var broken = false
         var type = v?.contentType
         var kind = v?.localizedTypeDescription ?? ""
+        var resourceType = v?.fileResourceType
         if isLink {
             // resourceValues describe the link itself; follow it to describe the target.
             // fileExists follows the link; resolvingSymlinksInPath returns the link itself when the
@@ -110,6 +114,7 @@ public enum FileListing {
                 isPackage = tv.isPackage ?? false
                 type = tv.contentType ?? type
                 kind = tv.localizedTypeDescription ?? kind
+                resourceType = tv.fileResourceType
             } else {
                 broken = true
             }
@@ -120,7 +125,8 @@ public enum FileListing {
                          isBrokenSymlink: broken, isHidden: (v?.isHidden ?? false) || name.hasPrefix("."),
                          size: size, modified: v?.contentModificationDate,
                          kind: broken ? "Broken link" : (kind.isEmpty ? (isDir ? "Folder" : "Document") : kind),
-                         typeIdentifier: type?.identifier)
+                         typeIdentifier: type?.identifier,
+                         isRegularFile: !broken && resourceType == .regular)
     }
 
     /// Folders first, then by key. Name comparison matches Finder (numeric-aware, localized).

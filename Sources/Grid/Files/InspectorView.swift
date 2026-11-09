@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import GridCore
 import QuickLookThumbnailing
 import SwiftUI
@@ -120,6 +121,10 @@ private struct InspectorContent: View {
     static func makePreview(_ e: FileEntry) async -> Preview {
         if e.isBrokenSymlink { return .none("Broken link — nothing to preview.") }
         if e.isNavigableFolder { return .none("Folder") }
+        if e.isPackage { return .none("Package") }
+        // Never read pipes, sockets, or devices: opening a FIFO with no writer, or reading
+        // /dev/zero or a tty, can block forever.
+        guard e.isRegularFile else { return .none("Special file (pipe, socket, or device): not previewed.") }
         let type = e.typeIdentifier.flatMap(UTType.init)
         let url = e.url
         if let type, type.conforms(to: .text) || type.conforms(to: .sourceCode) || type.conforms(to: .json) || type.conforms(to: .xml) {
@@ -141,8 +146,12 @@ private struct InspectorContent: View {
 
     /// First `limit` bytes as UTF-8, rejecting binary (NUL bytes) content.
     nonisolated static func readText(_ url: URL, limit: Int) -> (String, Bool)? {
-        guard let h = try? FileHandle(forReadingFrom: url) else { return nil }
-        defer { try? h.close() }
+        // O_NONBLOCK: belt and braces in case the file was swapped for a FIFO after listing.
+        let fd = Darwin.open(url.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { return nil }
+        var st = stat()
+        guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG else { Darwin.close(fd); return nil }
+        let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         guard let data = try? h.read(upToCount: limit + 1), !data.isEmpty else { return nil }
         let truncated = data.count > limit
         let slice = data.prefix(limit)

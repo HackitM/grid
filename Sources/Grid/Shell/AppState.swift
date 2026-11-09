@@ -69,6 +69,13 @@ final class AppState {
         files = FileBrowserModel(settings: s)
         apps = AppCatalog()
         terminals.isTerminalVisible = { [weak self] in self?.panel == .terminal && NSApp.isActive }
+        files.confirmRun = { [weak self] url, reason, proceed in
+            self?.present(Confirmation(
+                code: "EXEC.CONFIRM",
+                title: "Run “\(url.lastPathComponent)”?",
+                message: "\(reason) Opening it will execute it with your permissions. Use “Insert Path in Terminal” instead if you only want its path.",
+                confirmLabel: "Run", destructive: true, onConfirm: proceed))
+        }
         terminals.newSession()
         // A job that finished while GRID was in the background is "seen" once the user returns
         // and that session is the one on screen.
@@ -94,14 +101,30 @@ final class AppState {
         show(.terminal)
     }
 
+    /// Shows a confirmation. Only one can be on screen: a normal request made while another is
+    /// showing is refused (returns false). `replacing: true` (used by Quit) cancels the visible one
+    /// first, so its `onCancel` always runs and no pending reply (e.g. to AppKit) is lost.
+    @discardableResult
+    func present(_ c: Confirmation, replacing: Bool = false) -> Bool {
+        if let existing = confirmation {
+            guard replacing else { NSSound.beep(); return false }
+            confirmation = nil
+            existing.onCancel()
+        }
+        confirmation = c
+        return true
+    }
+
     func requestCloseTerminal(_ id: UUID) {
+        // Don't act behind an open confirmation (e.g. a pending Quit prompt).
+        guard confirmation == nil else { NSSound.beep(); return }
         if terminals.needsConfirmation(id), let s = terminals.sessions.first(where: { $0.id == id }) {
-            confirmation = Confirmation(
+            present(Confirmation(
                 code: "PROCESS.ACTIVE",
                 title: "Close session \(s.number)?",
                 message: "“\(s.foregroundName ?? "A job")” is still running in this session. Closing sends it a hangup signal (SIGHUP), which normally ends it.",
                 confirmLabel: "Close Session", destructive: true,
-                onConfirm: { [weak self] in self?.terminals.close(id) })
+                onConfirm: { [weak self] in self?.terminals.close(id) }))
         } else {
             terminals.close(id)
         }

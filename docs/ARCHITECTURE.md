@@ -136,8 +136,17 @@ authentication design (e.g. a per-user socket with peer-credential checks) first
 - Remote web content cannot reach terminal/filesystem/app-launch code (no bridge exists).
 - Structured APIs everywhere (NSWorkspace, FileManager, libproc); the only strings that ever reach a
   shell are those the user types or explicitly inserts (quoted paths).
-- The DEBUG-only QA hook (`DebugHooks.swift`) listens for distributed notifications; it is compiled
-  out of release builds (`#if DEBUG`) so shipped builds expose no control channel.
+- The QA automation hook (`DebugHooks.swift`, `QASocketServer.swift`) can type into a shell, so it
+  is layered: compiled out of release builds (`#if DEBUG`); in debug builds only enabled when
+  launched with `--qa` (status bar shows “△ QA HOOKS”); transport is a 0600 Unix socket inside the
+  per-user 0700 temp directory with a peer-UID check. (An earlier version used distributed
+  notifications, which any app in the login session can post; replaced after review.)
+- Opening a file that would *execute* (a native executable, or anything whose default app is a
+  terminal, e.g. `.command`) requires confirmation; apps are launched normally.
+- Previews only read regular files, with `O_NONBLOCK`, so pipes and devices cannot hang the app.
+- Close/quit escalation records exact process identities (PID + start time) at hang-up and only
+  SIGKILLs processes that still match, covering every member of the foreground process group
+  (even if the group leader already exited) and never a reused PID.
 - **Sandboxing**: GRID is not App-Sandboxed — a terminal whose shell can’t reach your files isn’t a
   terminal (Terminal.app, iTerm2 and Ghostty are unsandboxed too). That rules out the Mac App Store.
   macOS privacy (TCC) still applies: the first time something in GRID touches Desktop, Documents,

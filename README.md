@@ -25,7 +25,7 @@ Development:
 ```bash
 swift build                # compile
 swift test                 # unit tests
-scripts/bundle.sh debug    # debug .app with QA hooks (see docs/TESTING.md)
+scripts/bundle.sh debug    # debug .app; QA hooks only with `--args --qa` (see docs/TESTING.md)
 open Package.swift         # work in Xcode (run the "Grid" scheme)
 ```
 Running the bare executable from `swift run` works for quick checks, but use the `.app` bundle for
@@ -52,7 +52,7 @@ Include SwiftTerm's MIT license notice with binaries (see LICENSES.md).
 | Keys | Action |
 |---|---|
 | ⇧⌘P | Command palette (configurable: ⌘K, ⇧⌘Space) |
-| ⌘T / ⌘W | New / close terminal session |
+| ⌘T / ⌘W | New / close terminal session (⌘W on other panels returns to the terminal) |
 | ⌘1…⌘9, ⇧⌘[ ⇧⌘] | Select / cycle sessions |
 | ⌥⌘1…⌥⌘4, ⌘, | Terminal · Files · Apps · Web · Settings |
 | ⌘B / ⌘I | Files sidebar / inspector |
@@ -80,7 +80,8 @@ browser.
 - App discovery scans standard folders (≤3 levels); apps elsewhere don't appear (Spotlight-based
   discovery is a possible addition).
 - Closing the window via the red button quits GRID; busy sessions then get a native alert instead of
-  the in-app confirmation.
+  the in-app confirmation. (⌘W never closes the window while sessions exist: it closes the
+  active session, or returns to the terminal from other panels.)
 - Web pages aren't rendered in-app yet (Milestone 3: reader mode first).
 - No app icon yet.
 
