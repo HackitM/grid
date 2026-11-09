@@ -159,7 +159,7 @@ struct ReaderView: NSViewRepresentable {
         c.websiteDataStore = .nonPersistent()
         c.defaultWebpagePreferences.allowsContentJavaScript = false
         c.preferences.javaScriptCanOpenWindowsAutomatically = false
-        let w = WKWebView(frame: .zero, configuration: c)
+        let w = GridWebView(frame: .zero, configuration: c)
         w.navigationDelegate = context.coordinator
         w.underPageBackgroundColor = NSColor(theme.bg1)
         w.appearance = NSAppearance(named: .darkAqua)

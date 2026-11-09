@@ -116,8 +116,20 @@ public struct SiteThemeEntry: Equatable, Sendable {
     public let name: String
     /// Hosts this theme covers; "*.example.org" covers subdomains (and the bare domain).
     public let hosts: [String]
+    /// When set, only these exact paths are themed (e.g. a search engine's home and results pages,
+    /// not the maps or mail apps on the same host).
+    public let paths: [String]?
 
-    public init(id: String, name: String, hosts: [String]) { self.id = id; self.name = name; self.hosts = hosts }
+    public init(id: String, name: String, hosts: [String], paths: [String]? = nil) {
+        self.id = id; self.name = name; self.hosts = hosts; self.paths = paths
+    }
+
+    public func matches(_ url: URL) -> Bool {
+        guard let host = url.host, matches(host) else { return false }
+        guard let paths else { return true }
+        let path = url.path.isEmpty ? "/" : url.path
+        return paths.contains(path)
+    }
 
     public func matches(_ host: String) -> Bool {
         let h = host.lowercased()
@@ -138,11 +150,17 @@ public enum SiteThemeCatalog {
         SiteThemeEntry(id: "mdn", name: "MDN Web Docs", hosts: ["developer.mozilla.org"]),
         SiteThemeEntry(id: "wikipedia", name: "Wikipedia", hosts: ["*.wikipedia.org"]),
         SiteThemeEntry(id: "stackoverflow", name: "Stack Overflow", hosts: ["stackoverflow.com", "*.stackexchange.com", "superuser.com", "serverfault.com", "askubuntu.com"]),
+        // Search only: Maps, Gmail, Docs and the rest live on the same or sibling hosts.
+        SiteThemeEntry(id: "google", name: "Google Search",
+                       hosts: ["google.com", "google.co.uk", "google.ca", "google.com.au", "google.de", "google.fr", "google.es",
+                               "google.it", "google.nl", "google.co.in", "google.co.jp", "google.com.br", "google.com.mx", "google.ie",
+                               "google.co.nz", "google.ch", "google.at", "google.be", "google.se", "google.no", "google.dk", "google.pl"],
+                       paths: ["/", "/search", "/webhp"]),
     ]
 
     public static func entry(for url: URL?) -> SiteThemeEntry? {
-        guard let host = url?.host else { return nil }
-        return entries.first { $0.matches(host) }
+        guard let url else { return nil }
+        return entries.first { $0.matches(url) }
     }
 }
 

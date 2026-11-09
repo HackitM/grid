@@ -23,6 +23,8 @@ struct SettingsPanel: View {
                         toggle("Motion (transitions)", $s.motion,
                                note: s.reduceMotion ? "Off: macOS Reduce Motion is enabled." : nil)
                         toggle("Grid backdrop (static, very faint)", $s.gridBackdrop)
+                        toggle("Use standard macOS menus for right-click and ⋯ menus", $s.systemMenus,
+                               note: NSWorkspace.shared.isVoiceOverEnabled ? "Standard menus are used while VoiceOver is running." : nil)
                         Text("No scanlines, flicker, or boot sequences. Everything works with all effects off.")
                             .font(GridFont.small).foregroundStyle(theme.textMute)
                     }

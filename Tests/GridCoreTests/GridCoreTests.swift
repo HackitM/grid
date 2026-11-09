@@ -1604,12 +1604,43 @@ final class BrowserCoreTests: XCTestCase {
         if case .refuse = d("weird-app://x") {} else { XCTFail() }
     }
 
+    func testWorldMaskCitiesAndSeas() {
+        let land: [(String, Double, Double)] = [
+            ("Paris", 2.35, 48.85), ("Madrid", -3.7, 40.4), ("Moscow", 37.6, 55.75), ("Beijing", 116.4, 39.9), ("Delhi", 77.2, 28.6),
+            ("Cairo", 31.2, 30.0), ("Lagos", 3.4, 6.5), ("Nairobi", 36.8, -1.3), ("Johannesburg", 28, -26.2), ("Sydney", 151.2, -33.9),
+            ("Alice Springs", 133.9, -23.7), ("Chicago", -87.6, 41.9), ("Denver", -105, 39.7), ("Mexico City", -99.1, 19.4),
+            ("São Paulo", -46.6, -23.5), ("Córdoba", -64.2, -31.4), ("Central Japan", 138, 36), ("London", -0.13, 51.5),
+            ("Reykjavík", -21.9, 64.1), ("Greenland", -42, 72), ("Antarctica", 0, -80), ("Borneo", 114, 0), ("Madagascar", 46.9, -18.9),
+            ("Riyadh", 46.7, 24.7), ("Tehran", 51.4, 35.7), ("Fairbanks", -147.7, 64.8), ("Siberia", 100, 62), ("Manaus", -60, -3.1),
+        ]
+        for (name, lon, lat) in land { XCTAssertTrue(WorldMask.isLand(lon: lon, lat: lat), name) }
+        let water: [(String, Double, Double)] = [
+            ("Atlantic", -30, 30), ("Pacific", -150, 0), ("Indian Ocean", 80, -20), ("Mediterranean", 18, 35), ("Black Sea", 34, 43.5),
+            ("Caspian", 51, 42), ("Gulf of Mexico", -90, 25), ("Hudson Bay", -85, 60), ("Baltic", 19.5, 57), ("Red Sea", 38, 20),
+            ("Persian Gulf", 51, 27), ("Arabian Sea", 64, 15), ("Bay of Bengal", 88, 15), ("South China Sea", 113, 15),
+            ("Sea of Japan", 134, 40), ("Tasman Sea", 160, -40), ("North Sea", 3, 56), ("Kattegat", 11.5, 57),
+        ]
+        for (name, lon, lat) in water { XCTAssertFalse(WorldMask.isLand(lon: lon, lat: lat), name) }
+        let dots = WorldMask.dots()
+        let landShare = Double(dots.filter(\.land).count) / Double(dots.count)
+        XCTAssertGreaterThan(landShare, 0.24)   // Earth: about 29% land
+        XCTAssertLessThan(landShare, 0.36)
+    }
+
     func testSiteKeysAndThemes() {
         XCTAssertEqual(SiteKey.of(URL(string: "https://www.GitHub.com/x")), "github.com")
         XCTAssertEqual(SiteThemeCatalog.entry(for: URL(string: "https://github.com/apple/swift"))?.id, "github")
         XCTAssertEqual(SiteThemeCatalog.entry(for: URL(string: "https://en.wikipedia.org/wiki/Tron"))?.id, "wikipedia")
         XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://notgithub.com/")))
         XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://evilwikipedia.org/")))
+        // Google: search pages only, never Maps, Gmail or Docs.
+        XCTAssertEqual(SiteThemeCatalog.entry(for: URL(string: "https://www.google.com/"))?.id, "google")
+        XCTAssertEqual(SiteThemeCatalog.entry(for: URL(string: "https://www.google.com/search?q=tron"))?.id, "google")
+        XCTAssertEqual(SiteThemeCatalog.entry(for: URL(string: "https://www.google.co.uk/search?q=tron"))?.id, "google")
+        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://www.google.com/maps/@0,0,3z")))
+        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://mail.google.com/mail/u/0/")))
+        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://docs.google.com/")))
+        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://notgoogle.com/search")))
     }
 }
 

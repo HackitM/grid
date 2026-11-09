@@ -39,7 +39,7 @@ final class SiteThemes {
     /// and exposes `__gridTheme.set(on)` (in its own world) for live toggling.
     func userScript(theme: Theme) -> WKUserScript {
         let packs = SiteThemeCatalog.entries.reduce(into: [String: String]()) { $0[$1.id] = SiteThemePacks.css[$1.id] ?? "" }
-        let match = SiteThemeCatalog.entries.map { [$0.id, $0.hosts] as [Any] }
+        let match = SiteThemeCatalog.entries.map { [$0.id, $0.hosts, $0.paths as Any? ?? NSNull()] as [Any] }
         let flags = SiteThemeCatalog.entries.reduce(into: [String: Bool]()) { $0[$1.id] = isEnabled($1.id) }
         func json(_ o: Any) -> String {
             String(data: (try? JSONSerialization.data(withJSONObject: o, options: [.fragmentsAllowed])) ?? Data("null".utf8), encoding: .utf8) ?? "null"
@@ -53,9 +53,10 @@ final class SiteThemes {
           const ENABLED = \(json(flags));
           const VARS = \(json(Self.tokens(theme)));
           const host = location.hostname.toLowerCase();
-          const hit = MATCH.find(([id, hosts]) => hosts.some(p => p.startsWith("*.")
+          const path = location.pathname || "/";
+          const hit = MATCH.find(([id, hosts, paths]) => hosts.some(p => p.startsWith("*.")
               ? (host === p.slice(2) || host.endsWith(p.slice(1)))
-              : (host === p || host === "www." + p)));
+              : (host === p || host === "www." + p)) && (!paths || paths.includes(path)));
           if (!hit) { window.__gridTheme = { set() {} }; return; }
           const id = hit[0];
           const css = VARS + "\\n" + PACKS[id];

@@ -100,7 +100,7 @@ struct AppsPanel: View {
                                     .cascadeIn(i)
                                     .onTapGesture(count: 2) { app.apps.launch(r) }
                                     .simultaneousGesture(TapGesture().onEnded { selection = key })
-                                    .contextMenu { menu(r) }
+                                    .gridContextMenu(title: "app") { menu(r) }
                             }
                         } header: {
                             HStack {
@@ -126,16 +126,16 @@ struct AppsPanel: View {
         }
     }
 
-    @ViewBuilder private func menu(_ r: AppRecord) -> some View {
-        Button("Open") { app.apps.launch(r) }
-        Button(app.apps.isFavorite(r) ? "Unpin" : "Pin") { app.apps.toggleFavorite(r) }
-        Divider()
-        Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([r.url]) }
-        Button("Show in Files") { app.files.navigate(to: r.url.deletingLastPathComponent()); app.files.selectionID = r.path; app.show(.files) }
-        Button("Copy Path") { app.files.copyPaths([r.url]) }
+    @GridMenuBuilder private func menu(_ r: AppRecord) -> [GridMenuItem] {
+        GridMenuItem.action("Open") { app.apps.launch(r) }
+        GridMenuItem.action(app.apps.isFavorite(r) ? "Unpin" : "Pin") { app.apps.toggleFavorite(r) }
+        GridMenuItem.divider
+        GridMenuItem.action("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([r.url]) }
+        GridMenuItem.action("Show in Files") { app.files.navigate(to: r.url.deletingLastPathComponent()); app.files.selectionID = r.path; app.show(.files) }
+        GridMenuItem.action("Copy Path") { app.files.copyPaths([r.url]) }
         if app.apps.isMissing(r.path) && app.apps.isFavorite(r) {
-            Divider()
-            Button("Remove Missing Pin") { app.apps.removeFavorite(path: r.path) }
+            GridMenuItem.divider
+            GridMenuItem.action("Remove Missing Pin", destructive: true) { app.apps.removeFavorite(path: r.path) }
         }
     }
 

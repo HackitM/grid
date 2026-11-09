@@ -16,17 +16,13 @@ struct WidgetDeck: View {
                 IconButton(symbol: showGallery ? "xmark" : "plus", label: showGallery ? "Close gallery" : "Add widget", active: showGallery) {
                     showGallery.toggle()
                 }
-                Menu {
-                    Button("Place All Side by Side") { store.arrangeSideBySide() }
-                    Button("Stack All Vertically") { store.arrangeStacked() }
-                    Divider()
-                    Button("Reset to Default Widgets") { store.resetToDefaults(); editing = [] }
-                    Button("Hide Deck  ⌘J") { app.deckVisible = false }
-                } label: {
-                    Image(systemName: "ellipsis").font(.system(size: 11)).foregroundStyle(theme.textDim).frame(width: 22, height: 20)
+                GridMenuButton(help: "Deck options") {
+                    GridMenuItem.action("Place All Side by Side") { store.arrangeSideBySide() }
+                    GridMenuItem.action("Stack All Vertically") { store.arrangeStacked() }
+                    GridMenuItem.divider
+                    GridMenuItem.action("Reset to Default Widgets") { store.resetToDefaults(); editing = [] }
+                    GridMenuItem.action("Hide Deck", shortcut: app.shortcuts.display(.toggleDeck)) { app.deckVisible = false }
                 }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .help("Deck options")
             }
         } content: {
             ScrollView {
@@ -212,25 +208,22 @@ private struct WidgetCard: View {
                     store.update(widget.id) { $0.collapsed.toggle() }
                 }
             }
-            Menu {
+            GridMenuButton(help: compact ? "Widget actions" : "Move or remove", size: 9, frame: CGSize(width: 16, height: 16)) {
                 if compact {
-                    Button(widget.collapsed ? "Show" : "Collapse") { store.update(widget.id) { $0.collapsed.toggle() } }
-                    Button(widget.expanded ? "Compact" : "Expand") { store.update(widget.id) { $0.expanded.toggle() } }
-                        .disabled(widget.collapsed || editing)
-                    Button(editing ? "Done Configuring" : "Configure…") { toggleEditing() }
-                    Divider()
+                    GridMenuItem.action(widget.collapsed ? "Show" : "Collapse") { store.update(widget.id) { $0.collapsed.toggle() } }
+                    GridMenuItem.action(widget.expanded ? "Compact" : "Expand", enabled: !(widget.collapsed || editing)) {
+                        store.update(widget.id) { $0.expanded.toggle() }
+                    }
+                    GridMenuItem.action(editing ? "Done Configuring" : "Configure…") { toggleEditing() }
+                    GridMenuItem.divider
                 }
-                Button("Move Up") { store.nudge(widget.id, .top) }.disabled(!store.canNudge(widget.id, .top))
-                Button("Move Down") { store.nudge(widget.id, .bottom) }.disabled(!store.canNudge(widget.id, .bottom))
-                Button("Move Left") { store.nudge(widget.id, .left) }.disabled(!store.canNudge(widget.id, .left))
-                Button("Move Right") { store.nudge(widget.id, .right) }.disabled(!store.canNudge(widget.id, .right))
-                Divider()
-                Button("Remove Widget") { store.remove(widget.id) }
-            } label: {
-                Image(systemName: "ellipsis").font(.system(size: 9)).foregroundStyle(theme.textDim).frame(width: 16, height: 16)
+                GridMenuItem.action("Move Up", enabled: store.canNudge(widget.id, .top)) { store.nudge(widget.id, .top) }
+                GridMenuItem.action("Move Down", enabled: store.canNudge(widget.id, .bottom)) { store.nudge(widget.id, .bottom) }
+                GridMenuItem.action("Move Left", enabled: store.canNudge(widget.id, .left)) { store.nudge(widget.id, .left) }
+                GridMenuItem.action("Move Right", enabled: store.canNudge(widget.id, .right)) { store.nudge(widget.id, .right) }
+                GridMenuItem.divider
+                GridMenuItem.action("Remove Widget", destructive: true) { store.remove(widget.id) }
             }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            .help(compact ? "Widget actions" : "Move or remove")
             smallButton("xmark", "Remove widget") { withAnimation(effects.motion ? .easeOut(duration: 0.15) : nil) { store.remove(widget.id) } }
         }
     }

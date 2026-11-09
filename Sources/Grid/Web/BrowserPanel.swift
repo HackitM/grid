@@ -24,7 +24,7 @@ struct BrowserPanel: View {
                 if browser.findVisible, let tab { BrowserFindBar(tab: tab) }
                 ZStack {
                     theme.bg1
-                    if let tab {
+                    if let tab, !tab.isBlank {
                         if let article = tab.reader {
                             ReaderView(article: article, theme: theme, fontSize: 13) { url in
                                 tab.reader = nil
@@ -82,28 +82,24 @@ private struct BrowserToolbar: View {
                     }
                 }
             }
-            Menu {
-                Button("New Tab  ⌘T") { browser.newTab(); browser.focusAddressToken += 1 }
+            GridMenuButton(help: "Browser options") {
+                GridMenuItem.action("New Tab", shortcut: "⌘T") { browser.newTab(); browser.focusAddressToken += 1 }
                 if let tab {
-                    Button("Reload  ⌘R") { tab.reload() }
-                    Button("Find…  ⌘F") { browser.findVisible = true }
-                    Divider()
-                    Button("Zoom In  ⌘+") { tab.zoom(0.1) }
-                    Button("Zoom Out  ⌘−") { tab.zoom(-0.1) }
-                    Button("Actual Size  ⌘0") { tab.zoom(nil) }
-                    Divider()
+                    GridMenuItem.action("Reload", shortcut: "⌘R") { tab.reload() }
+                    GridMenuItem.action("Find…", shortcut: "⌘F") { browser.findVisible = true }
+                    GridMenuItem.divider
+                    GridMenuItem.action("Zoom In", shortcut: "⌘+") { tab.zoom(0.1) }
+                    GridMenuItem.action("Zoom Out", shortcut: "⌘−") { tab.zoom(-0.1) }
+                    GridMenuItem.action("Actual Size", shortcut: "⌘0") { tab.zoom(nil) }
+                    GridMenuItem.divider
                     if let u = tab.url {
-                        Button("Open in Default Browser") { NSWorkspace.shared.open(u) }
-                        Button("Copy Address") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(u.absoluteString, forType: .string) }
+                        GridMenuItem.action("Open in Default Browser") { NSWorkspace.shared.open(u) }
+                        GridMenuItem.action("Copy Address") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(u.absoluteString, forType: .string) }
                     }
                 }
-                Divider()
-                Button("Browser Settings…") { app.show(.settings) }
-            } label: {
-                Image(systemName: "ellipsis").font(.system(size: 11)).foregroundStyle(theme.textDim).frame(width: 22, height: 20)
+                GridMenuItem.divider
+                GridMenuItem.action("Browser Settings…") { app.show(.settings) }
             }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            .help("Browser options")
         }
     }
 }
@@ -120,17 +116,16 @@ private struct ExtensionStrip: View {
         if let ext = app.browser.extensions {
             let actions = ext.actions(for: tab)
             if actions.count > 3 {
-                Menu {
-                    ForEach(actions, id: \.item.id) { a in
-                        Button(a.action.label.isEmpty ? a.item.name : a.action.label) { ext.perform(a.item, tab: tab) }
-                            .disabled(!a.action.isEnabled)
+                GridMenuButton(help: "Extensions", title: "extensions") {
+                    for a in actions {
+                        GridMenuItem.action(a.action.label.isEmpty ? a.item.name : a.action.label, enabled: a.action.isEnabled) {
+                            ext.perform(a.item, tab: tab)
+                        }
                     }
                 } label: {
                     Text("EXT \(actions.count)").font(GridFont.label).tracking(1.2).foregroundStyle(theme.textDim)
                         .frame(height: 20).padding(.horizontal, 4)
                 }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .help("Extensions")
                 .background(PopoverAnchor { v in actions.forEach { ext.popoverAnchors[$0.item.id] = v } })
             } else {
                 ForEach(actions, id: \.item.id) { a in
@@ -258,11 +253,14 @@ private struct BrowserTabItem: View {
         .contentShape(Rectangle())
         .onTapGesture { app.browser.select(tab.id) }
         .onHover { hover = $0 }
-        .contextMenu {
-            Button("Reload") { tab.reload() }
-            if let u = tab.url { Button("Open in Default Browser") { NSWorkspace.shared.open(u) } }
-            Divider()
-            Button("Close Tab") { app.browser.close(tab.id) }
+        .gridContextMenu(title: "tab") {
+            GridMenuItem.action("Reload", shortcut: "⌘R") { tab.reload() }
+            if let u = tab.url {
+                GridMenuItem.action("Open in Default Browser") { NSWorkspace.shared.open(u) }
+                GridMenuItem.action("Copy Address") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(u.absoluteString, forType: .string) }
+            }
+            GridMenuItem.divider
+            GridMenuItem.action("Close Tab", shortcut: "⌘W") { app.browser.close(tab.id) }
         }
         .help(tab.url?.absoluteString ?? "")
     }
@@ -394,58 +392,6 @@ private struct BrowserFindBar: View {
 }
 
 // MARK: - New tab page
-
-private struct NewTabPage: View {
-    @Environment(AppState.self) private var app
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        let browser = app.browser
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                StateBlock(code: "WEB.READY", title: "Type an address or a search",
-                           message: "Pages run in WebKit, isolated from your terminal and files. ⌘T new tab · ⌘L address · ⇧⌘R reader view. Ad blocking: \(browser.adBlocker.enabled ? "on" : "off").")
-                if !browser.history.isEmpty {
-                    VStack(alignment: .leading, spacing: 0) {
-                        HStack {
-                            SectionLabel("Recent", color: theme.accent)
-                            Rectangle().fill(theme.line).frame(height: Metrics.hairline)
-                        }
-                        .padding(.bottom, 4)
-                        ForEach(browser.history.prefix(14)) { h in
-                            HistoryRow(item: h) { if let u = URL(string: h.url) { browser.open(u, newTab: browser.active == nil) } }
-                        }
-                    }
-                }
-            }
-            .padding(16)
-            .frame(maxWidth: 760, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-private struct HistoryRow: View {
-    @Environment(\.theme) private var theme
-    let item: BrowserModel.HistoryItem
-    let action: () -> Void
-    @State private var hover = false
-    var body: some View {
-        HStack(spacing: 8) {
-            Text("↗").foregroundStyle(theme.accent)
-            Text(item.title.isEmpty ? item.url : item.title).foregroundStyle(theme.text).lineLimit(1)
-            Spacer(minLength: 8)
-            Text(URL(string: item.url)?.host ?? "").foregroundStyle(theme.textMute).lineLimit(1)
-        }
-        .font(GridFont.small)
-        .padding(.horizontal, 8).frame(height: Metrics.rowHeight)
-        .gridRowBackground(selected: false, hovered: hover, theme: theme)
-        .contentShape(Rectangle())
-        .onHover { hover = $0 }
-        .onTapGesture(perform: action)
-        .accessibilityAddTraits(.isButton)
-    }
-}
 
 // MARK: - Page view
 

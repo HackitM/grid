@@ -8,7 +8,7 @@ A real terminal, a file browser, an app launcher, a widget deck and a web browse
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-0b0f12?logo=apple&logoColor=white)](#requirements)
 [![Swift 6](https://img.shields.io/badge/Swift-6-f05138?logo=swift&logoColor=white)](Package.swift)
 [![Apple silicon](https://img.shields.io/badge/Apple%20silicon-native-6be3ff)](#requirements)
-[![Release](https://img.shields.io/badge/release-v0.3.1-6be3ff)](https://github.com/HackitM/grid/releases/latest)
+[![Release](https://img.shields.io/badge/release-v0.4.0-6be3ff)](https://github.com/HackitM/grid/releases/latest)
 
 [**Download**](https://github.com/HackitM/grid/releases/latest) · [Features](#features) · [Install](#install) · [Build from source](#build-from-source) · [Shortcuts](#keyboard-shortcuts) · [Docs](#documentation)
 
@@ -59,7 +59,8 @@ A real terminal, a file browser, an app launcher, a widget deck and a web browse
 </table>
 
 - A full WebKit browser (Safari's engine) drawn in GRID's style: tabs, address bar with search, find, zoom and history.
-- **Site themes** give GitHub, Hacker News, MDN, Wikipedia and Stack Overflow GRID's colours and type. You can toggle them per site, and they follow your GRID theme.
+- **New tab page** with a slowly turning dot-matrix globe (drawn on the GPU, paused whenever it isn't in view), your recent pages and a status readout.
+- **Site themes** give GitHub, Hacker News, MDN, Wikipedia, Stack Overflow and Google Search GRID's colours and type. You can toggle them per site, and they follow your GRID theme.
 - **Reader view** re-sets articles in GRID's monospaced layout.
 - **Ad blocking** uses uBlock Origin's default filter lists through Safari's built-in content blocker, with a one-click "off for this site".
 - **Extensions** in Chrome / Safari WebExtension format (macOS 15.4+) install after a permission review. Their buttons only appear once one is installed.
@@ -83,6 +84,8 @@ Palette commands are GRID commands. They are never sent to your shell.
 
 Three themes: **Legacy** (cyan), **Ares** (red) and **ENCOM** (amber). Glow, motion and the grid backdrop can each be turned off, and GRID respects Reduce Motion.
 
+Right-click and "⋯" menus are drawn in the same style, including web page menus and a terminal menu (Copy, Paste, Split…). You can switch back to standard macOS menus in **Settings › Effects**, and VoiceOver always gets standard menus.
+
 <br clear="right">
 
 ## Install
@@ -91,7 +94,7 @@ Three themes: **Legacy** (cyan), **Ares** (red) and **ENCOM** (amber). Glow, mot
 2. GRID isn't notarized by Apple yet, so macOS blocks the first launch. Open it once, then go to **System Settings › Privacy & Security** and click **Open Anyway**. You only need to do this once.
 3. Optional: verify the download against the `.sha256` file from the same release:
    ```bash
-   shasum -a 256 GRID-0.3.1-macOS.zip
+   shasum -a 256 GRID-0.4.0-macOS.zip
    ```
 
 ### Requirements

@@ -134,7 +134,7 @@ extension EnvironmentValues {
 ///
 /// Sizing: header controls are 22-24 pt each, so a six-button toolbar plus × needs ≈ 190 pt
 /// before the title gets any room; the cascade keeps "01 TERMINAL" readable down to ≈ 150 pt.
-struct Panel<Content: View, Trailing: View, Overflow: View>: View {
+struct Panel<Content: View, Trailing: View>: View {
     @Environment(\.theme) private var theme
     @Environment(\.effects) private var effects
     @Environment(\.panelChrome) private var chrome
@@ -144,20 +144,24 @@ struct Panel<Content: View, Trailing: View, Overflow: View>: View {
     let suffix: String
     var focused: Bool
     var clipped: Bool
-    /// Whether `overflow` has menu items for the collapsed header.
-    let hasOverflow: Bool
     @ViewBuilder var trailing: () -> Trailing
     /// Menu items standing in for `trailing` when the header is too narrow to show the buttons.
-    @ViewBuilder var overflow: () -> Overflow
+    var overflow: (() -> [GridMenuItem])?
     @ViewBuilder var content: () -> Content
 
     init(index: String, title: String, suffix: String = "", focused: Bool = false, clipped: Bool = true,
          @ViewBuilder trailing: @escaping () -> Trailing,
-         @ViewBuilder overflow: @escaping () -> Overflow,
+         @GridMenuBuilder overflow: @escaping () -> [GridMenuItem],
          @ViewBuilder content: @escaping () -> Content) {
+        self.init(index: index, title: title, suffix: suffix, focused: focused, clipped: clipped,
+                  trailing: trailing, overflowItems: overflow, content: content)
+    }
+
+    private init(index: String, title: String, suffix: String, focused: Bool, clipped: Bool,
+                 trailing: @escaping () -> Trailing, overflowItems: (() -> [GridMenuItem])?,
+                 content: @escaping () -> Content) {
         self.index = index; self.title = title; self.suffix = suffix; self.focused = focused
-        self.clipped = clipped; self.trailing = trailing; self.overflow = overflow; self.content = content
-        self.hasOverflow = Overflow.self != EmptyView.self
+        self.clipped = clipped; self.trailing = trailing; self.overflow = overflowItems; self.content = content
     }
 
     var body: some View {
@@ -235,13 +239,8 @@ struct Panel<Content: View, Trailing: View, Overflow: View>: View {
             .contentShape(Rectangle())
             .modifier(PanelDragSource(payload: chrome.drag, title: title, hover: $gripHover))
             if compact {
-                if hasOverflow {
-                    Menu { overflow() } label: {
-                        Image(systemName: "ellipsis").font(.system(size: 11)).foregroundStyle(theme.textDim).frame(width: 22, height: 20)
-                    }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .help("More actions")
-                    .accessibilityLabel("More actions")
+                if let overflow {
+                    GridMenuButton(help: "More actions", items: overflow)
                 }
             } else {
                 trailing()
@@ -478,20 +477,20 @@ extension StateBlock where Actions == EmptyView {
     }
 }
 
-extension Panel where Trailing == EmptyView, Overflow == EmptyView {
+extension Panel where Trailing == EmptyView {
     init(index: String, title: String, suffix: String = "", focused: Bool = false, clipped: Bool = true,
          @ViewBuilder content: @escaping () -> Content) {
         self.init(index: index, title: title, suffix: suffix, focused: focused, clipped: clipped,
-                  trailing: { EmptyView() }, overflow: { EmptyView() }, content: content)
+                  trailing: { EmptyView() }, overflowItems: nil, content: content)
     }
 }
 
-extension Panel where Overflow == EmptyView {
+extension Panel {
     /// A panel whose trailing controls simply hide when the header gets too narrow for them.
     init(index: String, title: String, suffix: String = "", focused: Bool = false, clipped: Bool = true,
          @ViewBuilder trailing: @escaping () -> Trailing,
          @ViewBuilder content: @escaping () -> Content) {
         self.init(index: index, title: title, suffix: suffix, focused: focused, clipped: clipped,
-                  trailing: trailing, overflow: { EmptyView() }, content: content)
+                  trailing: trailing, overflowItems: nil, content: content)
     }
 }

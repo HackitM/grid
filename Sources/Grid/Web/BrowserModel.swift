@@ -269,7 +269,7 @@ final class BrowserTab: Identifiable {
         let model = model!
         let config = model.makeConfiguration(base: configuration)
         configuration = nil
-        let w = WKWebView(frame: .zero, configuration: config)
+        let w = GridWebView(frame: .zero, configuration: config)
         w.allowsBackForwardNavigationGestures = true
         w.allowsMagnification = true
         w.isInspectable = model.settings.developerTools
@@ -282,6 +282,11 @@ final class BrowserTab: Identifiable {
         refreshThemeScripts()
         observe(w)
         return w
+    }
+
+    /// A new tab that hasn't been pointed anywhere yet: shows the new tab page instead of a web view.
+    var isBlank: Bool {
+        url == nil && pendingURL == nil && !isLoading && loadError == nil && reader == nil && (_webView?.url == nil)
     }
 
     func activate() {
