@@ -1,5 +1,6 @@
 #!/bin/zsh
-# QA helpers for a DEBUG build launched with `open build/GRID.app --args --qa`.
+# QA helpers for a DEBUG build launched with `open -g build/GRID-QA.app --args --qa`
+# (build it with `scripts/bundle.sh qa`; it runs beside your everyday GRID with separate prefs).
 # Build the controller first: swiftc -O -o build/gridctl scripts/qa/gridctl.swift
 # Source this file: `source scripts/qa/run.sh`
 GRIDCTL="$(dirname ${(%):-%x})/../../build/gridctl"

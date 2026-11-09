@@ -56,14 +56,31 @@ struct Notice: Identifiable, Equatable {
 @MainActor
 final class AppState {
     var panel: PanelID = .terminal
-    var filesSidebar = UserDefaults.standard.object(forKey: "layout.filesSidebar") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(filesSidebar, forKey: "layout.filesSidebar") }
+    /// Dockable Terminal-workspace panels (Files / Terminal / Deck), persisted.
+    let workspace = WorkspaceLayout()
+    /// Files panel in the Terminal workspace (kept as a Bool for existing call sites).
+    var filesSidebar: Bool {
+        get { workspace.contains(.files) }
+        set { if newValue { workspace.show(.files) } else { workspace.hide(.files) } }
     }
     var inspectorVisible = UserDefaults.standard.object(forKey: "layout.inspector") as? Bool ?? true {
         didSet { UserDefaults.standard.set(inspectorVisible, forKey: "layout.inspector") }
     }
-    var deckVisible = UserDefaults.standard.object(forKey: "layout.deck") as? Bool ?? false {
-        didSet { UserDefaults.standard.set(deckVisible, forKey: "layout.deck") }
+    var deckVisible: Bool {
+        get { workspace.contains(.deck) }
+        set { if newValue { workspace.show(.deck) } else { workspace.hide(.deck) } }
+    }
+    var terminalPanelVisible: Bool {
+        get { workspace.contains(.terminal) }
+        set { if newValue { workspace.show(.terminal) } else { workspace.hide(.terminal) } }
+    }
+
+    /// Closing the terminal panel only hides it: sessions keep running.
+    func closePanel(_ p: WorkspacePanel) {
+        workspace.hide(p)
+        if p == .terminal, !terminals.sessions.isEmpty {
+            flash(.info, "Terminal panel closed; \(terminals.sessions.count) session\(terminals.sessions.count == 1 ? "" : "s") still running" + shortcuts.hint(.toggleTerminalPanel))
+        }
     }
     let layout = LayoutState()
     let shortcuts = ShortcutStore()
@@ -87,8 +104,12 @@ final class AppState {
         files = FileBrowserModel(settings: s)
         apps = AppCatalog()
         fileOps = FileOperations(files: files)
-        terminals.isTerminalVisible = { [weak self] in self?.panel == .terminal && NSApp.isActive }
+        terminals.isTerminalVisible = { [weak self] in
+            guard let self else { return false }
+            return self.panel == .terminal && self.workspace.contains(.terminal) && NSApp.isActive
+        }
         fileOps.app = self
+        configureDocking()
         // Restore the last Files folder if it still exists; remember it as the user navigates.
         if let last = UserDefaults.standard.string(forKey: "files.lastFolder"),
            FileManager.default.fileExists(atPath: last), last != files.currentURL.path {
@@ -113,6 +134,51 @@ final class AppState {
         }
     }
 
+    // MARK: Docking (GRID drag tracking)
+
+    private func configureDocking() {
+        let drag = DockDrag.shared
+        drag.isAllowed = { [weak self] payload, target in
+            guard let self else { return false }
+            let tm = self.terminals
+            switch (payload, target) {
+            case (.panel(let p), .panel(let t)): return p != t
+            case (.pane(let id), .pane(let other)):
+                return id != other && tm.tab(containing: id)?.id == tm.tab(containing: other)?.id
+            case (.pane(let id), .tab(let tabID)):
+                return tm.tab(containing: id)?.id != tabID
+                    && (tm.tabs.first { $0.id == tabID }?.panes.count ?? 0) < TerminalManager.maxPanesPerTab
+            case (.pane(let id), .tabBar): return (tm.tab(containing: id)?.panes.count ?? 0) > 1
+            case (.tab(let id), .tab(let other)): return id != other
+            case (.tab, .tabBar): return true
+            case (.widget(let id), .widget(let other)): return id != other
+            case (.widget, .widgetEnd): return true
+            default: return false
+            }
+        }
+        drag.perform = { [weak self] payload, target, edge in
+            guard let self else { return }
+            let tm = self.terminals
+            let anim: Animation? = self.settings.effects.motion ? GridMotion.snap : nil
+            withAnimation(anim) {
+                switch (payload, target) {
+                case (.panel(let p), .panel(let t)):
+                    if let edge { self.workspace.move(p, to: t, edge: edge) }
+                case (.pane(let id), .pane(let other)):
+                    if let edge, let tab = tm.tab(containing: other) { tab.movePane(id, to: other, edge: edge) }
+                case (.pane(let id), .tab(let tabID)): tm.movePane(id, toTab: tabID)
+                case (.pane(let id), .tabBar): tm.detachPane(id)
+                case (.tab(let id), .tab(let other)): tm.moveTab(id, before: other)
+                case (.tab(let id), .tabBar): tm.moveTab(id, before: nil)
+                case (.widget(let id), .widget(let other)): self.widgets.move(id, before: other)
+                case (.widget(let id), .widgetEnd): self.widgets.move(id, before: nil)
+                default: break
+                }
+            }
+            if case .pane = payload { self.focusTerminal() }
+        }
+    }
+
     // MARK: Cross-feature actions
 
     func show(_ p: PanelID) {
@@ -124,6 +190,7 @@ final class AppState {
 
     func newTerminal(at directory: String? = nil) {
         terminals.newSession(at: directory)
+        workspace.show(.terminal)
         show(.terminal)
     }
 
@@ -143,6 +210,7 @@ final class AppState {
 
     func split(_ axis: SplitAxis) {
         if panel != .terminal { show(.terminal) }
+        workspace.show(.terminal)
         if terminals.split(axis) == nil {
             flash(.error, "A tab holds at most \(TerminalManager.maxPanesPerTab) panes.")
         }
@@ -198,6 +266,7 @@ final class AppState {
     }
 
     func focusTerminal() {
+        guard workspace.contains(.terminal) || panel != .terminal else { return }
         guard let v = terminals.active?.view else { return }
         DispatchQueue.main.async { v.window?.makeFirstResponder(v) }
     }

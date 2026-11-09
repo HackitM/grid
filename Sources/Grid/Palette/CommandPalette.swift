@@ -150,6 +150,7 @@ struct CommandPalette: View {
     @FocusState private var focused: Bool
 
     private func rebuild() {
+        if items.isEmpty { CascadeClock.shared.start() }   // cascade the first result list only
         items = PaletteBuilder.build(app, query: query)
         selected = 0
     }
@@ -203,6 +204,7 @@ struct CommandPalette: View {
                                         .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 3)
                                 }
                                 PaletteRow(item: item, selected: i == selected)
+                                    .cascadeIn(i)
                                     .id(i)
                                     .onTapGesture { selected = i; run() }
                             }
@@ -227,6 +229,7 @@ struct CommandPalette: View {
             .stroke(theme.lineStrong, lineWidth: Metrics.hairline)
             .shadow(color: effects.glow ? theme.glow.opacity(0.5) : .clear, radius: 8)
             .allowsHitTesting(false))
+        .buildOn(cut: 12, topRight: true, bottomLeft: true, headerRule: nil)
         .opacity(appeared || !effects.motion ? 1 : 0)
         .onAppear {
             rebuild()

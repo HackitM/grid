@@ -266,26 +266,47 @@ private struct FileList: View {
     let compact: Bool
     var listFocused: FocusState<Bool>.Binding
     @State private var dropTargeted = false
+    /// When the disclosure triangle was last clicked. The row's own tap gesture fires at the same
+    /// time (it is simultaneous by design, so single clicks never wait for a double); it checks
+    /// this to leave the selection alone, and a quick double click on the triangle must not
+    /// navigate into the folder.
+    @State private var triangleClickAt = Date.distantPast
 
     var body: some View {
         let m = app.files
-        let rows = m.visible
+        let rows = m.rows
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(rows) { e in
-                        FileRow(entry: e, compact: compact, selected: m.selectedIDs.contains(e.id),
-                                isCursor: e.id == m.selectionID, renaming: m.renamingID == e.id,
-                                showParent: m.mode == .deep && !m.query.isEmpty, root: m.currentURL)
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { i, row in
+                        if let e = row.entry {
+                            FileRow(entry: e, depth: row.depth, expandable: FileTree.isExpandable(e), expanded: row.isExpanded,
+                                    compact: compact, selected: m.selectedIDs.contains(e.id),
+                                    isCursor: e.id == m.selectionID, renaming: m.renamingID == e.id,
+                                    showParent: m.mode == .deep && !m.query.isEmpty, root: m.currentURL) { recursive in
+                                triangleClickAt = Date()
+                                m.toggleExpanded(e.id, recursive: recursive)
+                            }
                             .id(e.id)
-                            .onTapGesture(count: 2) { m.activate(e) }
+                            .cascadeIn(i)
+                            .onTapGesture(count: 2) {
+                                guard Date().timeIntervalSince(triangleClickAt) > 0.4 else { return }
+                                m.activate(e)
+                            }
                             .simultaneousGesture(TapGesture().onEnded {
                                 let mods = NSEvent.modifierFlags
-                                m.click(e.id, command: mods.contains(.command), shift: mods.contains(.shift))
-                                listFocused.wrappedValue = true
+                                // Deferred so the triangle's button action (if that is what was hit) has run.
+                                DispatchQueue.main.async {
+                                    guard Date().timeIntervalSince(triangleClickAt) > 0.2 else { return }
+                                    m.click(e.id, command: mods.contains(.command), shift: mods.contains(.shift))
+                                    listFocused.wrappedValue = true
+                                }
                             })
                             .onDrag { dragProvider(for: e, m) }
                             .contextMenu { FileContextMenu(entry: e) }
+                        } else {
+                            TreePlaceholderRow(row: row).id(row.id)
+                        }
                     }
                 }
             }
@@ -342,10 +363,9 @@ private struct FileList: View {
             QuickLook.shared.toggle(m.selectedEntries.map(\.url))
             return .handled
         case .leftArrow where !cmd:
-            m.goUp(); return .handled
+            m.collapseOrAscend(); return .handled
         case .rightArrow where !cmd:
-            if let e = m.selectedEntry, e.isNavigableFolder { m.navigate(to: e.url) }
-            return .handled
+            m.expandOrDescend(option: opt); return .handled
         case .home: if let f = m.visible.first { m.selectionID = f.id }; return .handled
         case .end: if let l = m.visible.last { m.selectionID = l.id }; return .handled
         case .pageDown: m.moveSelection(15); return .handled
@@ -369,25 +389,76 @@ private struct FileList: View {
     }
 }
 
+/// Indent step per outline level.
+private let treeIndent: CGFloat = 14
+
+/// Faint vertical guides, one per ancestor level, aligned under the parent's disclosure triangle.
+private struct TreeGuides: View {
+    @Environment(\.theme) private var theme
+    let depth: Int
+
+    var body: some View {
+        if depth > 0 {
+            HStack(spacing: 0) {
+                ForEach(0..<depth, id: \.self) { _ in
+                    Rectangle().fill(theme.line).frame(width: 1)
+                        .padding(.leading, 6)
+                        .frame(width: treeIndent, alignment: .leading)
+                }
+            }
+            .frame(height: Metrics.rowHeight)
+            .accessibilityHidden(true)
+        }
+    }
+}
+
+/// Inline "loading…" / error row under an expanded folder (never a modal).
+private struct TreePlaceholderRow: View {
+    @Environment(\.theme) private var theme
+    let row: FileTreeRow
+
+    var body: some View {
+        HStack(spacing: 7) {
+            TreeGuides(depth: row.depth)
+            switch row.kind {
+            case .error(let msg):
+                Text("!").font(.system(size: 10, weight: .bold, design: .monospaced)).foregroundStyle(theme.warn).frame(width: 14)
+                Text(msg).font(GridFont.small).foregroundStyle(theme.warn).lineLimit(1).truncationMode(.middle)
+            default:
+                ProgressView().controlSize(.mini).tint(theme.accent).frame(width: 14)
+                Text("loading…").font(GridFont.small).foregroundStyle(theme.textMute)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: Metrics.rowHeight)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 private struct FileRow: View {
     @Environment(AppState.self) private var app
     @Environment(\.theme) private var theme
+    @Environment(\.effects) private var effects
     let entry: FileEntry
+    let depth: Int
+    let expandable: Bool
+    let expanded: Bool
     let compact: Bool
     let selected: Bool
     let isCursor: Bool
     let renaming: Bool
     let showParent: Bool
     let root: URL
+    /// Disclosure triangle clicked (`recursive` when ⌥ is held).
+    let onToggle: (_ recursive: Bool) -> Void
     @State private var hover = false
 
     var body: some View {
         HStack(spacing: 0) {
+            TreeGuides(depth: depth)
             HStack(spacing: 7) {
-                Text(glyph)
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(entry.isNavigableFolder ? theme.accent : theme.textMute)
-                    .frame(width: 14)
+                glyphView.frame(width: 14)
                 if renaming {
                     RenameField(entry: entry)
                 } else {
@@ -424,8 +495,33 @@ private struct FileRow: View {
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(entry.isNavigableFolder ? "Folder" : entry.kind), \(entry.name)")
+        .accessibilityLabel("\(entry.isNavigableFolder ? "Folder" : entry.kind), \(entry.name)\(depth > 0 ? ", level \(depth + 1)" : "")")
+        .accessibilityValue(expandable ? (expanded ? "expanded" : "collapsed") : "")
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    /// Disclosure triangle for folders (rotates open); a static glyph for everything else.
+    @ViewBuilder private var glyphView: some View {
+        if expandable {
+            Button {
+                onToggle(NSEvent.modifierFlags.contains(.option))
+            } label: {
+                Text("▸")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(theme.accent)
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+                    .animation(effects.motion ? GridMotion.quick : nil, value: expanded)
+                    .frame(width: 14, height: Metrics.rowHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(expanded ? "Collapse (←)" : "Expand (→, ⌥ for all levels)")
+            .accessibilityLabel("\(expanded ? "Collapse" : "Expand") \(entry.name)")
+        } else {
+            Text(glyph)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(entry.isNavigableFolder ? theme.accent : theme.textMute)
+        }
     }
 
     private var glyph: String {
@@ -498,6 +594,11 @@ struct FileContextMenu: View {
         let multi = urls.count > 1
         Button(entry.isNavigableFolder ? "Open Folder" : "Open") { app.files.activate(entry) }
         if !entry.isNavigableFolder && !multi { OpenWithMenu(url: entry.url) }
+        if FileTree.isExpandable(entry) && !multi {
+            let open = app.files.isExpanded(entry.id)
+            Button(open ? "Collapse" : "Expand") { app.files.toggleExpanded(entry.id) }
+            if !open { Button("Expand All Levels") { app.files.expand(entry.id, recursive: true) } }
+        }
         Button("Quick Look") { QuickLook.shared.show(urls) }
         Divider()
         if entry.isNavigableFolder {
@@ -561,11 +662,12 @@ private struct StatusLine: View {
                 if m.deepRunning { Button("Stop") { m.cancelDeepSearch() }.buttonStyle(GridButtonStyle(compact: true)) }
             } else {
                 Text("\(m.visible.count) item\(m.visible.count == 1 ? "" : "s")")
+                if m.expandedVisibleCount > 0 { Text("· \(m.expandedVisibleCount) expanded").foregroundStyle(theme.textDim) }
                 if m.selectedIDs.count > 1 {
                     let bytes = m.selectedEntries.compactMap(\.size).reduce(0, +)
                     Text("· \(m.selectedIDs.count) selected\(bytes > 0 ? " · " + Formatters.size(bytes) : "")").foregroundStyle(theme.textDim)
                 }
-                if !m.query.isEmpty { Text("· filtered from \(m.entries.count)") }
+                if !m.query.isEmpty { Text("· filtered from \(m.loadedCount)") }
                 if m.showHidden && !compact { Text("· hidden shown") }
                 Spacer()
                 if m.loading { ProgressView().controlSize(.mini).tint(theme.accent) }

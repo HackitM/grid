@@ -25,11 +25,16 @@ struct RootView: View {
                         }
                     }
                     .padding(Metrics.gutter)
-                    .transition(.opacity)
+                    // No cross-fade (two pages double-exposed looked muddy): the old page leaves
+                    // at once and the new page's panels build on (BuildOn in Panel).
+                    .transition(.identity)
                 }
                 StatusBar()
             }
             .ignoresSafeArea(edges: .top)
+
+            // GRID drag tracking: the single drop highlight and the label that follows the pointer.
+            DockDragOverlay().ignoresSafeArea()
 
             if app.paletteOpen {
                 Color.black.opacity(0.35).ignoresSafeArea()
@@ -85,12 +90,14 @@ private struct TopBar: View {
 private struct NavRail: View {
     @Environment(AppState.self) private var app
     @Environment(\.theme) private var theme
+    /// The active-item bar slides between rail items (an Ares-style selector).
+    @Namespace private var selector
 
     var body: some View {
         VStack(spacing: 2) {
-            ForEach([PanelID.terminal, .files, .apps, .web]) { p in RailItem(panel: p) }
+            ForEach([PanelID.terminal, .files, .apps, .web]) { p in RailItem(panel: p, selector: selector) }
             Spacer()
-            RailItem(panel: .settings)
+            RailItem(panel: .settings, selector: selector)
         }
         .padding(.vertical, 8)
         .frame(width: Metrics.railWidth)
@@ -103,6 +110,7 @@ private struct RailItem: View {
     @Environment(AppState.self) private var app
     @Environment(\.theme) private var theme
     let panel: PanelID
+    let selector: Namespace.ID
     @State private var hover = false
 
     private var railCommand: GridCommand {
@@ -123,7 +131,12 @@ private struct RailItem: View {
             }
             .frame(width: Metrics.railWidth - 8, height: 54)
             .background(active ? theme.accentSoft : (hover ? theme.bg2 : .clear))
-            .overlay(alignment: .leading) { if active { Rectangle().fill(theme.accent).frame(width: 2) } }
+            .overlay(alignment: .leading) {
+                if active {
+                    Rectangle().fill(theme.accent).frame(width: 2)
+                        .matchedGeometryEffect(id: "rail.active", in: selector)
+                }
+            }
             .overlay(alignment: .topTrailing) {
                 if badge { Rectangle().fill(theme.accent).frame(width: 5, height: 5).padding(5).accessibilityLabel("job finished") }
             }
@@ -168,7 +181,9 @@ private struct StatusBar: View {
             if let n = app.notice {
                 HStack(spacing: 6) {
                     Text(n.tone == .error ? "✕" : "✓")
-                    Text(n.text).lineLimit(1)
+                    // Ares text band: the notice types on behind a sweeping highlight.
+                    TypeOnText(text: n.text, font: GridFont.small, color: n.tone == .error ? theme.danger : theme.ok, duration: 0.24)
+                        .lineLimit(1)
                     if let label = n.actionLabel, let action = n.action {
                         Button(label) { app.notice = nil; action() }
                             .buttonStyle(GridButtonStyle(compact: true))

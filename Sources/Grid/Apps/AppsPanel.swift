@@ -78,7 +78,10 @@ struct AppsPanel: View {
             c.onError = { m in app.flash(.error, m) }
             DispatchQueue.main.async { searchFocused = true }
         }
-        .onChange(of: query) { _, _ in selection = flat.first?.key }
+        .onChange(of: query) { _, _ in
+            CascadeClock.shared.start()
+            selection = flat.first?.key
+        }
         .onReceive(NotificationCenter.default.publisher(for: .gridFocusAppSearch)) { _ in searchFocused = true }
     }
 
@@ -88,12 +91,13 @@ struct AppsPanel: View {
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                     ForEach(sections) { s in
                         SwiftUI.Section {
-                            ForEach(s.rows) { r in
+                            ForEach(Array(s.rows.enumerated()), id: \.element.id) { i, r in
                                 let key = "\(s.id)/\(r.path)"
                                 AppRow(record: r, selected: selection == key,
                                        hint: app.apps.disambiguators[r.path],
                                        missing: app.apps.isMissing(r.path))
                                     .id(key)
+                                    .cascadeIn(i)
                                     .onTapGesture(count: 2) { app.apps.launch(r) }
                                     .simultaneousGesture(TapGesture().onEnded { selection = key })
                                     .contextMenu { menu(r) }
