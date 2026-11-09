@@ -8,7 +8,7 @@ A real terminal, a file browser, an app launcher, a widget deck and a web browse
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-0b0f12?logo=apple&logoColor=white)](#requirements)
 [![Swift 6](https://img.shields.io/badge/Swift-6-f05138?logo=swift&logoColor=white)](Package.swift)
 [![Apple silicon](https://img.shields.io/badge/Apple%20silicon-native-6be3ff)](#requirements)
-[![Release](https://img.shields.io/badge/release-v0.4.0-6be3ff)](https://github.com/HackitM/grid/releases/latest)
+[![Release](https://img.shields.io/badge/release-v0.5.0-6be3ff)](https://github.com/HackitM/grid/releases/latest)
 
 [**Download**](https://github.com/HackitM/grid/releases/latest) · [Features](#features) · [Install](#install) · [Build from source](#build-from-source) · [Shortcuts](#keyboard-shortcuts) · [Docs](#documentation)
 
@@ -36,6 +36,8 @@ A real terminal, a file browser, an app launcher, a widget deck and a web browse
 - Folders **expand in place** as a tree (▸, or → / ←; ⌥ expands three levels).
 - Or view a folder as an **icon grid** (▦ in the panel header): GRID-drawn folders and pages, with badges on well-known folders and the file extension on each page. The icons trace themselves in one after another when a folder opens.
 - Everyday file operations: new folder, rename, duplicate, copy / paste / move, Move to Trash, multi-step undo, Quick Look and Open With.
+![Files as an icon grid, with the Now Playing widget floating above it](docs/screenshots/files-grid.png)
+
 - The **File Inspector** shows exactly what a file will insert into the terminal before you drag it, and warns about executables and downloaded files.
 
 ### A workspace you arrange
@@ -96,7 +98,7 @@ The window opens with a short build-on (its frame traces itself in, then the pan
 2. GRID isn't notarized by Apple yet, so macOS blocks the first launch. Open it once, then go to **System Settings › Privacy & Security** and click **Open Anyway**. You only need to do this once.
 3. Optional: verify the download against the `.sha256` file from the same release:
    ```bash
-   shasum -a 256 GRID-0.4.0-macOS.zip
+   shasum -a 256 GRID-0.5.0-macOS.zip
    ```
 
 ### Requirements
