@@ -5,7 +5,8 @@ not confirmed by documentation and must be tested in Phase 0 before anything dep
 
 Goal: a **Map** page in GRID's design language. It shows your location, live traffic, points of
 interest, and automated licence plate reader (ALPR) cameras as mapped by OpenStreetMap volunteers
-through [DeFlock](https://deflock.org). It keeps GRID's constraints:
+through [DeFlock](https://deflock.org). It can also plan **driving routes that avoid mapped cameras**
+and print them as a **cue sheet** so the laptop can stay home. It keeps GRID's constraints:
 - no cloud backend, accounts, telemetry or AI;
 - your data stays local by default;
 - every network request is explained before it happens;
@@ -21,11 +22,13 @@ through [DeFlock](https://deflock.org). It keeps GRID's constraints:
 |---|---|---|
 | Renderer | **A custom Metal vector-tile renderer ("GridMap")**, built the same way as the new-tab globe and scoped to the Tron look. MapLibre Native is the fallback if the Phase 0 spike fails. MapKit is rejected for the base map. | More work up front (about 6–10 weeks), but no C++ dependency, memory-safe parsing of network data, and full control of the look. |
 | Base data | **OpenMapTiles-schema vector tiles from [OpenFreeMap](https://openfreemap.org)** (no key, free). The tile URL can be changed, and self-hosted **Protomaps PMTiles** come later. | OpenFreeMap is donation-run and "may be discontinued", so the source must be swappable. |
-| Traffic | **Off by default. Bring your own TomTom key** (stored in the Keychain). Vector flow tiles are drawn in GRID's semantic colours. An **"Open in Apple Maps"** button covers Apple's live traffic. | Needs the user's own account. Apple's traffic layer can't be drawn on a non-Apple map. |
-| POIs | **POIs come from the base tiles we already download**, so they cost no extra request. Wider search goes to **Apple `MKLocalSearch` only when you press Enter**, with Nominatim as an option. | Tile POIs are only as complete as OSM. A wider search sends the query and region out. |
+| Traffic | **Off by default. Bring your own TomTom key** (stored in the Keychain). Vector flow tiles are drawn in GRID's semantic colours. Taking Apple's traffic off a hidden Apple map and redrawing it is **not possible within Apple's licence** (§2.1). An **"Open in Apple Maps"** button hands off to the Maps app. | Needs the user's own account. |
+| POIs | **POIs come from the base tiles we already download**, so they cost no extra request. Wider search goes to **Nominatim only when you press Enter**. Apple search results can't be shown on a non-Apple map (§2.1). | Tile POIs are only as complete as OSM. A wider search sends the query out. |
 | ALPR | **A daily nationwide snapshot (US/Canada) of DeFlock's OSM-derived data**, cached locally, so it doesn't reveal which area you look at. **Overpass** is used on demand for other regions and for "refresh this area", with requests snapped to cells and cached. | It depends on a community-run host. Ask DeFlock's maintainers before shipping. |
 | Location | **CoreLocation "when in use"**, requested only when you click **⌖ LOCATE**. Never "Always". The position is never stored or sent. | The tiles you load around you still show roughly where you are (see §5). |
 | Placement | **A new rail page `05 MAP`** (Settings moves to `06`). A small **Perimeter** deck widget comes later. | One more rail item. |
+| Routing | **Routes that avoid mapped ALPR cameras** through a **FlockHopper-compatible engine**: self-hosted (recommended) or the public FlockHopper API if its maintainers agree. A Valhalla engine comes second and an on-device router is researched later. **GRID re-scores every route against its own camera data** (§7). | Start and end points go to the engine you choose. "Out of view" can only mean "away from *mapped* cameras". |
+| Export | **A printable PDF cue sheet** (vector overview map, large-type turn list, cameras you can't avoid, attribution and a safety line) plus **GPX 1.1** for a GPS unit or an offline phone navigator (§8). | Printed directions can't re-route around closures. |
 
 ---
 
@@ -56,7 +59,7 @@ it. The reasons:
   extruded buildings, a few labels and our own markers. GRID already has the Metal, on-demand
   rendering and label-overlay patterns in `Sources/Grid/Web/GlobeRenderer.swift`.
 
-**Fallback.** If the spike misses its criteria (§7, Phase 0), use **MapLibre Native**: a pinned,
+**Fallback.** If the spike misses its criteria (§9, Phase 0), use **MapLibre Native**: a pinned,
 self-built xcframework attached to a GRID GitHub release as a SwiftPM `binaryTarget` with a
 checksum, wrapped in an `NSViewRepresentable`, with the style JSON generated from theme tokens.
 Everything above the renderer (data clients, cache, UI, privacy) is the same either way.
@@ -131,13 +134,53 @@ URLSession (tile cache) ──▶ MVTDecoder (GridCore) ──▶ TileGeometry (
 
 | Source | How | What leaves the Mac | Restylable | Verdict |
 |---|---|---|---|---|
-| **Apple (MapKit)** | `showsTraffic` on an Apple base map | Visible map bounds, time, device model and OS, tied to identifiers that rotate several times an hour, not your Apple Account (Apple Maps privacy page) | **No.** Apple's colours, and only on Apple's base map | Not usable on our map. Offer **"Open in Apple Maps"** (`maps://?ll=…&z=…`) for live traffic and directions. |
+| **Apple (MapKit)** | `showsTraffic` on an Apple base map | Visible map bounds, time, device model and OS, tied to identifiers that rotate several times an hour, not your Apple Account (Apple Maps privacy page) | **No.** Apple's colours, and only on Apple's base map | Not usable on our map, and it can't be extracted (§2.1). Offer **"Open in Apple Maps"** (`maps://?ll=…&z=…`) for live traffic and directions. |
 | **TomTom** Vector Flow Tiles | `api.tomtom.com/traffic/map/4/tile/flow/relative/{z}/{x}/{y}.pbf?key=…` → layer "Traffic flow" with `traffic_level` (0–1), `road_type`, `road_closure` | z/x/y of the viewed area, **your API key** (links requests to your TomTom account), IP | **Yes.** We draw it from MVT ourselves (whether the terms allow restyling is not stated; **verify**). | **Recommended optional provider.** Free tier is 200k tile requests a month without a card. |
 | **HERE** Traffic API v7 | `data.traffic.hereapi.com/v7/flow?in=bbox:…&locationReferencing=shape&apiKey=…` → JSON `speed`, `freeFlow`, `jamFactor`, shape polylines | bbox, key, IP | Yes. We draw the polylines. | Second provider. Free tier about 5k transactions a month after the April 2026 pricing change (**verify**). One bbox request per refresh, not per tile. |
 | Mapbox `mapbox-traffic-v1` | Vector tiles, needs a token | z/x/y, token | Technically yes | **Rejected.** The product terms forbid caching beyond 30 days and proxying, and limit "Traffic Data" without an order. |
 | Google Map Tiles `layerTraffic` | Raster tiles | — | — | **Rejected.** Google's terms (§3.2.3(e)) ban use with a non-Google map. |
 
-**Rules for traffic in GRID:**
+### 2.1 Can GRID read Apple's traffic and draw it on its own map?
+
+**No.** It's technically possible and fragile, but Apple's licence forbids it outright.
+
+**Technically:**
+- MapKit has **no API that returns traffic data**: no per-road speeds or congestion.
+- The only route would be to render a hidden map or an `MKMapSnapshotter` image with
+  `MKStandardMapConfiguration.showsTraffic` and read its pixels. A test on macOS 27.3 confirmed
+  that snapshots do draw traffic.
+- But that pixel approach falls apart:
+  - only yellow and red congestion lines are drawn (free flow is not), so it can't be recovered;
+  - labels and shields cover the lines;
+  - colours change between light and dark;
+  - Apple's road geometry doesn't line up with OSM, so the pixels would have to be matched back
+    to roads;
+  - snapshots are throttled (`loadingThrottled`);
+  - any change to Apple's style silently breaks it.
+
+**Legally,** the Apple Developer Program License Agreement, Attachment 6 (Apple Maps Service),
+rules it out:
+- "Map Data" explicitly includes **traffic data**, as well as POIs and coordinates.
+- §2.4 requires Map Data to be shown "only on an Apple map", and says you "may not surface Map Data
+  … without displaying the corresponding Apple map".
+- §2.2 forbids attempts to "extract, scrape or reutilize" Map Data.
+- §2.3 forbids derivative works.
+- §2.5 allows caching only "on a temporary and limited basis".
+- Apple can review an app's use and revoke access (§4).
+
+The same rules mean **`MKDirections` routes and ETAs, and `MKLocalSearch` results, can't be drawn
+or printed on GRID's map either.** That's why §3 and §7 don't use them.
+
+**What is allowed:**
+1. A **licensed traffic feed** drawn in GRID's colours, which is the TomTom/HERE plan above.
+2. **"Open in Apple Maps"** (`maps://?ll=…&z=…` or `?saddr=…&daddr=…`), which hands off to Apple's
+   app.
+3. A MapKit map with GRID's own data (ALPR, routes) on top, which Apple's terms anticipate. That
+   *shows* Apple's map, which the owner doesn't want, so it isn't planned. It is kept here only as
+   a permitted fallback.
+
+### 2.2 Rules for traffic in GRID
+
 - Traffic is off until you turn it on in **Settings › Map › Traffic** and paste a key.
   - The key goes in the Keychain, the same as widget secrets.
   - The setting says plainly: *"Traffic tiles for the area you're viewing are requested from
@@ -165,7 +208,7 @@ URLSession (tile cache) ──▶ MVTDecoder (GridCore) ──▶ TileGeometry (
 | Source | Network | Privacy | Quality |
 |---|---|---|---|
 | **OpenMapTiles `poi` layer** (already in the base tiles, z14+) | **None extra** | Nothing beyond the tile request | As complete as OSM locally; names, `class`, `subclass` |
-| **Apple `MKLocalSearch` / `MKLocalPointsOfInterestRequest`** (macOS 11+, about 90 `MKPointOfInterestCategory` values) | A request to Apple per search | Query text + region go to Apple under its Maps privacy terms (rotating identifiers). Throttled by `loadingThrottled`. | Good. Business names, addresses. |
+| ~~Apple `MKLocalSearch` / `MKLocalPointsOfInterestRequest`~~ | A request to Apple per search | Query text + region go to Apple | Good, but **not usable**: Apple's licence forbids showing results on a non-Apple map (§2.1) |
 | **Nominatim** (OSMF) | One request per search | Query + IP to OSMF. Policy: **1 request/s at most, no autocomplete, an identifying User-Agent required, results cached, and apps must be able to switch it off without an update**. | OK for addresses and places |
 | Overpass | One request per category per area | bbox + IP | Raw tags; heavy for broad categories. Use it only for ALPR. |
 
@@ -174,11 +217,12 @@ URLSession (tile cache) ──▶ MVTDecoder (GridCore) ──▶ TileGeometry (
    Lodging) read the `poi` layer of tiles already loaded. The search box first matches POI and place
    names in loaded tiles, which needs **no network**.
 2. **Search wider** happens only when you press ⏎ on a query with no local match, or on a visible
-   `SEARCH APPLE ⏎` row. It uses `MKLocalSearch`. **No `MKLocalSearchCompleter`**, since autocomplete
-   would send every keystroke.
-3. Settings can switch the wider search to **Nominatim** (rate-limited in code to 1/s, no
-   autocomplete, cached for 24 h) or **Off**.
-4. Category mapping from OpenMapTiles `class` to GRID glyphs lives in GridCore (tested). Apple
+   `SEARCH OSM ⏎` row. It uses **Nominatim**: rate-limited in code to 1/s, no autocomplete (so
+   keystrokes are never sent), cached for 24 h, with a custom endpoint allowed and an **Off**
+   switch, as Nominatim's policy requires.
+3. A result's `⋯` menu offers **Open in Apple Maps** as a hand-off, so Apple's richer business data
+   is still one click away, in Apple's app.
+4. Category mapping from OpenMapTiles `class` to GRID glyphs lives in GridCore (tested). Nominatim
    results are converted to the same `MapPOI` model so they look identical.
 
 ---
@@ -218,6 +262,11 @@ URLSession (tile cache) ──▶ MVTDecoder (GridCore) ──▶ TileGeometry (
 - **deflock.org's terms** forbid "scraping, harvesting, or systematically collecting data from
   DeFlock … in violation of their terms", and ask for proper attribution and OSM licence compliance
   in commercial use. GRID isn't commercial, but courtesy applies.
+- **FlockHopper's router** (`api.dontgetflocked.com`, MIT source at `flockhopperdev/FlockHopper`)
+  does camera-avoiding routing. Its health endpoint reports 146,410 cameras. §7 builds on it.
+- **Contact for permission:** contact@deflock.org, the DeFlock Discord, or issues on
+  `FoggedLens/deflock` and `flockhopperdev/FlockHopper`. Issues are disabled on
+  `deflockhopper_maps`.
 - **Scale:** about 145.8k ALPRs mapped in the USA (`cdn.deflock.me/alpr-counts.json`). About 158k
   OSM objects are tagged `surveillance:type=ALPR` worldwide (taginfo), and over 99.9% of them are
   nodes.
@@ -231,9 +280,12 @@ URLSession (tile cache) ──▶ MVTDecoder (GridCore) ──▶ TileGeometry (
    - Index it into a GridCore spatial grid for instant viewport queries.
    - **Privacy win:** the request shows only that GRID fetched the national file, not where you are
      or what you look at.
-   - Before relying on it, confirm the file is still refreshed. The README says "daily" but also
-     that daily tiles are "frozen" (**verify**). If it's stale, use the hourly MVT tiles instead
-     (§4.2 option b), which leak only the tile area.
+   - The file is about **39 MB gzipped**. A Cloudflare Worker rebuilds it **daily at 09:00 UTC**
+     from Overpass (`deflockhopper_maps/worker/wrangler.toml`). Fetches are conditional
+     (`If-None-Match`). The default refresh is **when it's more than 7 days old, or before
+     computing a route**, and never more than once a day. The UI shows its age.
+   - If the file stops updating, use the hourly MVT tiles instead (option 3 below), which reveal only
+     the tile area.
 2. **Elsewhere, or "⟳ refresh this area":** Overpass, on demand, sent to the endpoint chosen in
    Settings. The default is `overpass-api.de`; alternatives are `overpass.private.coffee` and a
    custom URL.
@@ -246,7 +298,7 @@ URLSession (tile cache) ──▶ MVTDecoder (GridCore) ──▶ TileGeometry (
 
 **Before shipping**, ask DeFlock's maintainers whether GRID may use the FlockHopper files or tiles.
 Open an issue on `FoggedLens/deflock` and agree on a User-Agent. GRID stays well under any sensible
-limit: one file a day per user.
+limit: at most one 39 MB file a day per user, usually one a week.
 
 ### 4.3 Overpass query (cell or bbox)
 
@@ -359,8 +411,9 @@ Every request below happens only on the Map page, after the one-time **ENABLE MA
 | `data.dontgetflocked.com` | ALPR layer on, at most once a day | That you downloaded the national file. **No area.** | ALPR layer off |
 | Overpass endpoint (your choice) | "⟳ refresh area", or a region outside the US/CA snapshot | A **0.25° cell**, IP | ALPR source: Snapshot only |
 | `api.tomtom.com` / HERE | Traffic on, every 3 min while visible | Viewed tiles or bbox **plus your API key**, so the vendor can tie it to your account | Traffic off (default) |
-| Apple (`MKLocalSearch`) | You press ⏎ on SEARCH APPLE | Query text + region | Wider search: Off / Nominatim |
-| `nominatim.openstreetmap.org` | If chosen; per ⏎ | Query text, IP | Wider search: Off / Apple |
+| `nominatim.openstreetmap.org` (or your endpoint) | You press ⏎ on SEARCH OSM | Query text, IP | Wider search: Off |
+| Routing engine (your choice: self-hosted, FlockHopper, Valhalla) | You click ROUTE | **Start and end points**, buffer settings, IP. A Valhalla loop also sends the excluded camera points, which reveal the corridor. | Routing: Off (default) / self-hosted |
+| `api.tomtom.com` (traffic ETA on a route) | Traffic on and a route computed | Flow tiles along the route corridor, plus your key | Traffic off |
 | Apple Location Services (macOS) | ⌖ LOCATE / FOLLOW | macOS handles it per Apple's policy (Wi-Fi based). GRID sends nothing itself. | Don't press Locate; revoke in System Settings |
 
 - **Tile cache:** `~/Library/Application Support/GRID/Maps/tiles` (a dedicated `URLCache`, 200 MB
@@ -376,7 +429,10 @@ Every request below happens only on the Map page, after the one-time **ENABLE MA
 >   position. **Your location** is only read when you click Locate, stays in memory, and is never
 >   stored or sent by GRID.
 > - **Traffic and wider place search are off by default.** Traffic uses your own TomTom key;
->   wider search sends your query to Apple (or OpenStreetMap's Nominatim) only when you press ⏎.
+>   wider search sends your query to OpenStreetMap's Nominatim only when you press ⏎.
+> - **Routing is off until you choose an engine.** Your start and end points go only to the engine
+>   you pick, which can be one you run yourself. Routes aren't saved unless you save them, and
+>   printouts and GPX files are written only where you choose.
 
 The "Network requests GRID makes on its own" bullet stays true: none of these happen without you
 opening the Map and enabling it.
@@ -403,7 +459,7 @@ opening the Map and enabling it.
 
 ```
 ┌ ● ● ●  GRID │ 05 MAP ──────────────────────────────────────────── COMMAND ⇧⌘P ┐
-│ 01  │ ┌05 MAP .GEO ──────────────────────────── ⌖ ◉FOLLOW 2D|3D ⟳ ⋯ ┐┌LAYERS──────┐│
+│ 01  │ ┌05 MAP .GEO ───────────────────────── ⌖ ◉FOLLOW 2D|3D ⇄ ⟳ ⋯ ┐┌LAYERS──────┐│
 │TERM │ │⌕ search places, addresses…                       [LOCAL ▾]  ││[■] ROADS    ││
 │ 02  │ │                         ┃                                   ││[■] POI      ││
 │FILES│ │     ·  ·  ·  ·  ·  ·  · ┃ ·  ·  ·  ·  ·  ·  ·  ·  ·  ·      ││[■] ALPR  214││
@@ -485,7 +541,197 @@ opening the Map and enabling it.
 
 ---
 
-## 7. Phased implementation plan
+## 7. Routing that avoids mapped ALPR cameras
+
+### 7.1 What "out of view" can honestly mean
+
+GRID can route around **cameras that are mapped in OSM**. It can't promise a driver is unseen:
+
+- **Mapped cameras only.** The data is volunteer-mapped and incomplete. Mobile ALPRs (on patrol
+  cars or trailers) and newly installed cameras are not in it.
+- **Data age.** The snapshot is up to a day old, plus however long it takes for a camera to be
+  mapped in OSM at all.
+- **Unknown facing.** Many cameras have no `direction` tag. They are treated as seeing in every
+  direction, which is safe but makes avoidance harder.
+- **Assumed field of view.** Where `direction` is known, the field of view and range are
+  assumptions, not measurements.
+- **Some trips have no camera-free route.** A single bridge, an on-ramp or a dense downtown can
+  leave no way around. GRID then **minimises** the count and lists each camera it can't avoid,
+  with its location and the step where you pass it.
+
+The UI says *"avoids all mapped cameras"* or *"passes 2 mapped cameras"*. It never says
+"untracked" or "invisible". The legend and printouts carry the coverage disclaimer from §4.5.
+
+### 7.2 Exposure model (GridCore, tested)
+
+This is ported from FlockHopper's routing server (`flockhopperdev/FlockHopper`, MIT, files
+`server/utils/geo.ts`, `server/services/routingConfig.ts`, `cameraAwareRouting.ts`). The MIT
+notice goes in `LICENSES.md`. Using the same model as DeFlock's own router keeps the numbers
+comparable.
+
+- **Buffer D**, default 75 m, adjustable from 10 to 150 m.
+- **A camera "sees" a route segment** when both hold:
+  - the segment passes within D of the camera;
+  - the camera has no known direction, **or** the bearing from the camera to the nearest route
+    point is inside one of its view cones. Cones are 70° wide, centred on each `direction` value.
+    A camera tagged `45;225` has two.
+- **Avoidance zones** sent to engines that accept areas:
+  - Block zone: a cone (or a circle if the direction is unknown) of radius D × 1.6, plus a 15 m
+    buffer behind the camera.
+  - Penalty zone: radius D × 2.5.
+  - These multipliers are FlockHopper's.
+- **Fix compared with upstream:** FlockHopper's `if (!camera.direction)` treats a north-facing
+  camera (`direction=0`) as having no direction. GridCore parses directions as optional values,
+  and a test covers the north-facing case.
+- **Score.** Camera count plus FlockHopper's exposure scale (0 low, ≤ 2 medium, ≤ 5 high,
+  6+ extreme). The composite used to choose between candidate routes is
+  `distance + Σ (1 − d/150) · 800`.
+- **GRID re-scores every route itself.** Whatever an engine returns is checked against GRID's own
+  local camera snapshot, and the UI shows the cameras GRID found, not the engine's own count. The
+  engine's camera list (if any) is only a cross-check, and a mismatch is shown as △.
+
+### 7.3 Routing engines
+
+All engines sit behind one `RouteProvider` protocol, and the user picks one in **Settings › Map ›
+Routing**. Routing is **off until the user picks an engine**.
+
+| Engine | Avoidance | What leaves the Mac | Setup | Verdict |
+|---|---|---|---|---|
+| **FlockHopper-compatible API**: `POST {base}/api/v1/route` with `{origin, destination, costing:"auto", cameraDistanceMeters, useDirectionalZones}` | Full. The server uses GraphHopper `custom_model` block and penalty `areas` over about 146k cameras, then detour waypoints. It returns `normalRoute` and `avoidanceRoute`, each with `maneuvers[]`, `camerasOnRoute[]` and a score. Trips are limited to 300 mi. | **Start and end points** plus IP, sent to the server's operator | None if public | **v1 default engine type.** The public `api.dontgetflocked.com` (v2.0.0, cameras at most 72 h old, no auth, CORS `*`) is offered as a preset **only if the FlockHopper/DeFlock maintainers agree**. It has no published terms or rate limits, and the deployed version differs from the public source. |
+| **Self-hosted FlockHopper** (same API; GraphHopper + Express from the MIT repo) on your own Mac or server | Same | Nothing to third parties if it runs on your own machine | Docker + Java. GraphHopper RAM is roughly 8–16 GB for the whole US (estimate), much less for one state | **Recommended for privacy.** GRID only needs a base URL. Ship a recipe in `docs/MAPS-ROUTING-SELFHOST.md`. |
+| **Valhalla-compatible endpoint** (self-hosted, or the FOSSGIS public server) | GRID loops: route, find cameras in a corridor around it, add them as `exclude_locations` / `exclude_polygons`, re-route, at most 4 rounds. `linear_cost_factors` gives soft penalties. Maneuvers come with narrative instructions. | Start/end + the excluded points (which reveal the corridor) | FOSSGIS public: **1 request/s, at most 50 exclude locations, polygons ≤ 10 km perimeter and 100 vertices, URL must not be hard-coded**, no guarantees. Self-hosted: limits are configurable | **Second engine.** The public server's limits make hard avoidance unreliable in dense cities; self-hosting removes them. |
+| **On-device router in GRID** | Full, with camera penalties applied per edge | **Nothing** | A drivable graph built from a Geofabrik state extract (California's PBF is 1.34 GB) into a compact file of about 100–300 MB (estimate). A* with penalties. Our own turn instructions, using the `osrm-text-instructions` phrase templates (BSD-2) | **Later research (Phase 8)**, not committed. It's the most private option but costs about 3–6 weeks (estimate) plus graph-building tools; turn restrictions and access tags are the hard parts. |
+| Apple `MKDirections` | **None.** No waypoints and no avoid areas, only `tollPreference` / `highwayPreference` | — | — | **Rejected.** It can't avoid points, and Apple's licence forbids showing its routes on a non-Apple map (§2.1). |
+| OSRM | Only profile-level `exclude` classes, nothing per request | — | — | **Rejected.** |
+
+**Geocoding start and end points:**
+- clicking the map (right-click › *Route from here* / *Route to here*);
+- ⌖ current location;
+- local search over loaded tiles;
+- Nominatim when you press ⏎.
+
+Apple search can't be used here (§3).
+
+**ETA and traffic:**
+- Engine ETAs are free-flow or typical speeds.
+- If traffic is on (TomTom key), GRID samples flow tiles along the route corridor and shows an
+  adjusted estimate, for example `+6 MIN TRAFFIC`.
+  - This requests TomTom tiles along the route, which tells TomTom about the corridor. The setting
+    says so.
+
+**Privacy:**
+- Before the first request to a remote engine, a one-time confirmation (`ROUTE-NET`) says:
+  *"Your start and end points are sent to `<host>` to work out the route."*
+- Routes stay in memory unless you click **Save route**. Saved routes go to
+  `~/Library/Application Support/GRID/Maps/routes/`, and **Clear Map Data** removes them.
+- Start and end points are never put in a URL query string. Every engine call is a POST body.
+
+### 7.4 Route UI
+
+Clicking **⇄ ROUTE** in the map header, or the palette command `route <from> to <to>`, switches the
+right column to the route panel:
+
+```
+┌ROUTE────────────────────┐
+│A ◉ 1 Market St          │
+│B ◎ 2200 Mission St      │
+│[■] AVOID MAPPED ALPR    │
+│BUFFER  75 m      ◂ ▸    │
+│[■] DIRECTIONAL CONES    │
+│ENGINE  SELF-HOSTED  ▾   │
+│[ ROUTE ⏎ ]              │
+├RESULT───────────────────┤
+│▸ AVOID   14.1 km  26 min│
+│  ⌗ 0 mapped        LOW  │
+│  NORMAL  12.4 km  21 min│
+│  ⌗ 7 mapped        HIGH │
+│  +1.7 km · +5 min       │
+├STEPS────────────────────┤
+│01 ↑  Market St    400 m │
+│02 ↱  5th St       1.2 km│
+│03 ↰  Mission St   3.4 km│
+│   ⌗ camera 60 m, N-facing│
+│…                        │
+│[PRINT ⌘P]  [GPX ↓]  [⋯] │
+└─────────────────────────┘
+```
+
+**On the map:**
+- **Avoidance route.** A bright accent line with glow. It *draws on* from A to B in 600 ms, a
+  light-cycle trail in the build-on vocabulary (instant when Motion is off).
+- **Normal route.** Dim and dashed in textMute, for comparison.
+- **Cameras the route passes.** Shown with their cones and a △, and listed in STEPS at the
+  maneuver where you pass them.
+- **Block zones.** Drawn faintly while ⌥ is held.
+
+**Linked selection.** Hovering a step highlights its segment on the map. Clicking a camera scrolls
+to the step where you pass it.
+
+---
+
+## 8. Printable directions and GPX export
+
+The goal is to drive without the laptop.
+
+### 8.1 PDF cue sheet
+
+**Print… (⌘P)** opens the standard macOS print panel through `NSPrintOperation`, which also offers
+*Save as PDF*. The paper size comes from `NSPrintInfo` (Letter or A4).
+
+**Page 1:**
+- **Header:** "A → B", when it was generated, the engine, and the camera-data date.
+- **Overview map.**
+- **Summary:** distance, estimated time, mapped cameras on this route, and cameras avoided compared
+  with the normal route.
+- **Unavoidable cameras**, if any. For example: *"#2 at step 7: Mission St & 16th St, facing N,
+  60 m from the route."*
+
+**Following pages: the cue sheet.**
+- Columns: `#` · turn glyph · instruction · onto street · step distance · running total · notes
+  (⌗ camera within D).
+- 14–16 pt type, high contrast, alternating row tints, readable at arm's length.
+- **Optional strip maps:** a small map beside each complex maneuver (roundabouts, ramps, sharp
+  turns), 3–4 per page.
+
+**Every page footer:**
+- `page n/m`
+- `© OpenStreetMap contributors · routing: <engine> · ALPR data: DeFlock/OSM <date>`
+- The safety line: *"Have a passenger read these directions or stop safely to check them. Roads
+  and camera locations change; obey posted signs. Camera data is volunteer-mapped and
+  incomplete."*
+
+**Rendering:**
+- The map is **vector**, drawn with CoreGraphics into the PDF context from the same `TileGeometry`
+  the Metal renderer uses. It is not a screenshot: crisp at any print size, small files, and
+  nothing new to fetch beyond tiles prefetched when the route is computed.
+- **Two palettes:**
+  - **Paper** (default): white background, dark grey roads, a black route with a thin accent
+    stroke, and the accent darkened for print contrast.
+  - **Screen**: GRID's dark look, for a PDF viewed on a phone or tablet.
+- With the MapLibre fallback, the overview map would be a raster snapshot instead.
+- Units follow the locale (mi or km), with an override.
+
+### 8.2 GPX 1.1
+
+**GPX…** writes a `.gpx` file that a standalone GPS unit (Garmin) or an offline phone navigator
+(OsmAnd, Organic Maps) can import:
+- `<rte>` with one `<rtept>` per maneuver (`name` = instruction, `desc` = street + distance);
+- `<trk>` with the full geometry;
+- `<wpt>` for each unavoidable camera (`name` "ALPR", `desc` vendor/facing).
+
+This matches FlockHopper's `gpxService.ts` layout (MIT), so files work the same way in both tools.
+
+The export dialog warns: *"Navigation apps may recalculate your route if you go off course, and the
+new route can pass cameras. Turn off automatic recalculation, or follow the track."*
+
+### 8.3 Other hand-offs
+- **Copy as Text:** a plain cue sheet for Notes or Messages.
+- **Share…** (`NSSharingServicePicker`): AirDrop the PDF or GPX to a phone.
+- All exports are written only where you choose. Nothing is uploaded.
+
+---
+
+## 9. Phased implementation plan
 
 Every phase ends with `swift test` green, the TESTING.md checklist updated, and a release-notes
 entry. Nothing ships to users before Phase 2.
@@ -506,8 +752,10 @@ entry. Nothing ships to users before Phase 2.
   - Location entitlement under hardened runtime.
   - Which Info.plist key macOS 15 uses.
   - TomTom restyle and caching terms.
-  - Whether the FlockHopper GeoJSON is still refreshed.
-- **Contact DeFlock** about using the data files.
+  - That the daily GeoJSON cron is actually running (`Last-Modified` over a week).
+  - Self-hosting FlockHopper on an Apple-silicon Mac for one state: RAM, disk, import time.
+- **Contact DeFlock and FlockHopper** about using the data files and the routing API, and agree on a
+  User-Agent.
 
 ### Phase 1 — Map page and base map (3–5 weeks)
 - `Sources/GridCore/Maps/`
@@ -560,8 +808,8 @@ entry. Nothing ships to users before Phase 2.
 ### Phase 4 — POIs and search (1–2 weeks)
 - `GridCore/Maps/POICatalog.swift`: OpenMapTiles class → category and glyph. `GridCore/Maps/LocalSearch.swift`:
   ranking over loaded tile names, reusing `GridCore/FuzzyMatch.swift`.
-- `Sources/Grid/Maps/POILayer.swift`, `PlaceSearch.swift`: local → Apple `MKLocalSearch` on ⏎ →
-  optional Nominatim with a 1/s limiter and 24 h cache.
+- `Sources/Grid/Maps/POILayer.swift`, `PlaceSearch.swift`: local first, then Nominatim on ⏎ with a
+  1/s limiter and 24 h cache. "Open in Apple Maps" hand-off.
 
 ### Phase 5 — Traffic, offline and widget (2–3 weeks)
 - `Sources/Grid/Maps/TrafficProvider.swift`: TomTom vector flow, then HERE v7. Key in the Keychain,
@@ -571,9 +819,50 @@ entry. Nothing ships to users before Phase 2.
 - `Sources/Grid/Widgets/PerimeterWidget.swift` + `WidgetKind.perimeter`.
 - "Open in Apple Maps" (`maps://`) in the header `⋯` and the right-click menu.
 
+### Phase 6 — Camera-avoiding routing (3–4 weeks)
+- `Sources/GridCore/Maps/`
+  - `RouteModel.swift`: provider-neutral `Route`, `Maneuver`, `RouteComparison`.
+  - `CameraExposure.swift`: cones and circles, the facing test, block and penalty zones, scoring.
+    Ported from FlockHopper (MIT) with the north-facing fix.
+  - `Polyline.swift`: encoded polyline, precision 5 and 6.
+  - `FlockHopperAPI.swift` and `ValhallaAPI.swift`: Codable requests and responses, plus the corridor
+    loop.
+  - Tests: real tag cases, a camera at `direction=0`, a route with no camera-free option, and
+    re-scoring that disagrees with the engine.
+- `Sources/Grid/Maps/`
+  - `RouteProvider.swift`: the protocol, a serial queue and the ROUTE-NET consent.
+  - `RoutePanel.swift`
+  - `RouteLayer.swift`: draw-on trail, comparison route, unavoidable cameras.
+  - `RouteStore.swift`: saved routes, local only.
+  - `RouteSettingsSection.swift`: engine, endpoint, buffer, cones.
+- `docs/MAPS-ROUTING-SELFHOST.md`: run FlockHopper (GraphHopper + Express) locally and point GRID
+  at it.
+- `LICENSES.md`: FlockHopper's MIT notice for the ported algorithms. **No code from the AGPL
+  `deflock-app`.**
+
+### Phase 7 — Print and GPX export (1–2 weeks)
+- `Sources/GridCore/Maps/`
+  - `CueSheet.swift`: maneuvers become rows, with distance formatting, running totals, camera notes
+    and turn glyphs.
+  - `GPXWriter.swift`: GPX 1.1 `rte`/`trk`/`wpt` with XML escaping.
+  - Both tested.
+- `Sources/Grid/Maps/`
+  - `PrintMapRenderer.swift`: CoreGraphics vector map from `TileGeometry`, paper and screen
+    palettes.
+  - `RoutePrintView.swift`: paginated `NSView` for `NSPrintOperation`.
+  - `RouteExport.swift`: Print…, GPX…, Copy as Text, Share….
+- QA: Letter and A4, black-and-white printer, 1–40 page routes, a trip with unavoidable cameras,
+  and GPX imported into OsmAnd and Garmin BaseCamp.
+
+### Phase 8 — Research: on-device routing (not committed)
+- A prototype graph builder (Geofabrik state PBF → compact edge file) and A* with camera penalties
+  per edge.
+- Measure graph size, query time and instruction quality against FlockHopper on the same trips.
+- Ship it only if it is good enough to replace a server.
+
 ---
 
-## 8. Risks
+## 10. Risks
 
 | Risk | Likelihood / impact | Mitigation |
 |---|---|---|
@@ -587,10 +876,18 @@ entry. Nothing ships to users before Phase 2.
 | Users misread ALPR data as complete or authoritative | Medium / medium | Neutral wording, a coverage disclaimer in the legend, snapshot age shown, links to OSM for each camera. |
 | GPU, battery or memory cost of glow | Medium / low | Glow is skipped with Effects › Glow off. Half-res bloom. Paused when hidden. On-demand frames. |
 | Opaque Metal view for accessibility | High / medium | Accessible list view, keyboard camera controls, labelled controls. |
+| Routing gives a false sense of being unseen | Medium / high | Wording says "mapped cameras" throughout; unavoidable cameras are listed; the disclaimer is on screen and on every printed page; the data date is shown. |
+| Start and end points sent to a third-party engine | High (by design) / high | Routing is off by default; a one-time ROUTE-NET consent names the host; self-hosting is documented and recommended; POST bodies only; nothing stored unless saved. |
+| The public FlockHopper API changes, rate-limits or disappears (no published terms; deployed v2.0.0 differs from the public source) | Medium / high | It's only a preset after the maintainers agree; the endpoint is configurable; Codable decoding tolerates unknown fields; Valhalla is the second engine. |
+| Apple Maps data accidentally used on GRID's map | Low / high | Not imported in the Maps module except for the `maps://` hand-off; a code-review checklist item in ARCHITECTURE.md. |
+| GPX navigators re-route through cameras | Medium / medium | Warning in the export dialog; a track (`trk`) is included so the course can be followed as is. |
+| Using printed directions while driving | Medium / high | Large type, a safety line on every page, and no in-car live mode. |
 | ODbL or CC-BY attribution missed in some state (compact, popover) | Low / high | The attribution strip is part of the map view itself, not the chrome, and is tested in QA at each window size. |
 
-## 9. Out of scope (unless requested)
-- Routing or "avoid ALPR" navigation (FlockHopper does this on the web).
+## 11. Out of scope (unless requested)
+- Live turn-by-turn voice navigation in GRID. A laptop shouldn't be used while driving; §8's
+  exports cover the trip instead.
+- Apple Maps data (traffic, routes, search) on GRID's map. Apple's licence forbids it (§2.1).
 - Editing OSM, which needs an account.
 - Cloud sync of places.
 - Any AI or ranking service.
