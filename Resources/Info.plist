@@ -15,15 +15,15 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.4.0</string>
+	<string>0.5.0</string>
 	<key>CFBundleVersion</key>
-	<string>5</string>
+	<string>6</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>15.0</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>A program running in a GRID terminal wants to control another application.</string>
+	<string>The Now Playing widget uses this to show and control what Apple Music or Spotify is playing. Programs you run in a GRID terminal can also ask to control other apps.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Websites you allow in GRID’s browser can use the camera (for example, video calls).</string>
 	<key>NSDesktopFolderUsageDescription</key>

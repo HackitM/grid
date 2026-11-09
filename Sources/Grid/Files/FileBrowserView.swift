@@ -20,6 +20,11 @@ struct FileBrowserView: View {
                 IconButton(symbol: m.showHidden ? "eye" : "eye.slash", label: "Show hidden files (⇧⌘.)", active: m.showHidden) {
                     m.showHidden.toggle()
                 }
+                IconButton(symbol: app.settings.filesGrid ? "list.bullet" : "square.grid.2x2",
+                           label: app.settings.filesGrid ? "Show as list" : "Show as icons") {
+                    app.settings.filesGrid.toggle()
+                    CascadeClock.shared.start()
+                }
                 IconButton(symbol: "terminal", label: "Open terminal here (⌥⌘T)") { app.openTerminalHere() }
                 if !compact {
                     IconButton(symbol: "sidebar.right", label: "Toggle inspector (⌘I)", active: app.inspectorVisible) {
@@ -32,7 +37,7 @@ struct FileBrowserView: View {
                 NavBar(pathFocused: $pathFocused)
                 FilterBar(filterFocused: $filterFocused, compact: compact, onDown: { listFocused = true; m.moveSelection(1) })
                 Rectangle().fill(theme.line).frame(height: Metrics.hairline)
-                if !compact { ColumnHeader() }
+                if app.settings.filesGrid { ColumnHeader(inline: true) } else if !compact { ColumnHeader(inline: false) }
                 content(m)
                 StatusLine(compact: compact)
             }
@@ -56,6 +61,8 @@ struct FileBrowserView: View {
                     .padding(14)
                 Spacer()
             }
+        } else if app.settings.filesGrid {
+            FileGrid(listFocused: $listFocused)
         } else {
             FileList(compact: compact, listFocused: $listFocused)
         }
@@ -224,13 +231,21 @@ private struct FilterBar: View {
 private struct ColumnHeader: View {
     @Environment(AppState.self) private var app
     @Environment(\.theme) private var theme
+    /// Grid view: the sort keys in a row ("SORT  NAME TYPE SIZE MODIFIED"), no columns.
+    var inline = false
 
     var body: some View {
         HStack(spacing: 0) {
-            column(.name).frame(maxWidth: .infinity, alignment: .leading)
-            column(.kind).frame(width: 130, alignment: .leading)
-            column(.size).frame(width: 80, alignment: .trailing)
-            column(.modified).frame(width: 130, alignment: .trailing)
+            if inline {
+                SectionLabel("sort", color: theme.textMute).padding(.trailing, 10)
+                HStack(spacing: 12) { ForEach(FileSortKey.allCases, id: \.self) { column($0) } }
+                Spacer(minLength: 0)
+            } else {
+                column(.name).frame(maxWidth: .infinity, alignment: .leading)
+                column(.kind).frame(width: 130, alignment: .leading)
+                column(.size).frame(width: 80, alignment: .trailing)
+                column(.modified).frame(width: 130, alignment: .trailing)
+            }
         }
         .padding(.horizontal, 10)
         .frame(height: 20)
@@ -302,7 +317,7 @@ private struct FileList: View {
                                     listFocused.wrappedValue = true
                                 }
                             })
-                            .onDrag { dragProvider(for: e, m) }
+                            .onDrag { fileDragProvider(for: e, m) }
                             .gridContextMenu(title: FileContextMenu.title(app, e)) { FileContextMenu.items(app, e) }
                         } else {
                             TreePlaceholderRow(row: row).id(row.id)
@@ -317,7 +332,7 @@ private struct FileList: View {
                 if let id { withAnimation(nil) { proxy.scrollTo(id) } }
                 QuickLook.shared.update(m.selectedEntries.map(\.url))
             }
-            .onKeyPress(phases: .down) { press in handle(press, m) }
+            .onKeyPress(phases: .down) { press in handleFileKey(press, m, app, gridColumns: nil) }
             .onCopyCommand { m.selectedEntries.map { NSItemProvider(object: $0.url as NSURL) } }
             .onPasteCommand(of: [.fileURL]) { _ in app.fileOps.pasteFromPasteboard(into: m.currentURL, move: false) }
             // Dropping files from Finder (or another GRID folder) copies them here.
@@ -330,62 +345,268 @@ private struct FileList: View {
             .overlay { if dropTargeted { Rectangle().stroke(theme.accent, lineWidth: 1.5).allowsHitTesting(false) } }
         }
     }
+}
 
-    private func dragProvider(for e: FileEntry, _ m: FileBrowserModel) -> NSItemProvider {
-        // Drag the whole selection if the row is part of it; otherwise just this row.
-        let urls = m.selectedIDs.contains(e.id) ? m.selectedEntries.map(\.url) : [e.url]
-        let provider = NSItemProvider(object: (urls.first ?? e.url) as NSURL)
-        if let data = try? JSONEncoder().encode(urls.map(\.path)) {
-            provider.registerDataRepresentation(forTypeIdentifier: NSPasteboard.PasteboardType.gridPaths.rawValue, visibility: .ownProcess) { done in
-                done(data, nil); return nil
+@MainActor
+private func fileDragProvider(for e: FileEntry, _ m: FileBrowserModel) -> NSItemProvider {
+    // Drag the whole selection if the row is part of it; otherwise just this row.
+    let urls = m.selectedIDs.contains(e.id) ? m.selectedEntries.map(\.url) : [e.url]
+    let provider = NSItemProvider(object: (urls.first ?? e.url) as NSURL)
+    if let data = try? JSONEncoder().encode(urls.map(\.path)) {
+        provider.registerDataRepresentation(forTypeIdentifier: NSPasteboard.PasteboardType.gridPaths.rawValue, visibility: .ownProcess) { done in
+            done(data, nil); return nil
+        }
+    }
+    return provider
+}
+
+/// Keyboard handling shared by the list and the icon grid (`gridColumns` set: arrows move by
+/// cell and by row, and there is no tree to expand or collapse).
+@MainActor
+private func handleFileKey(_ press: KeyPress, _ m: FileBrowserModel, _ app: AppState, gridColumns: Int?) -> KeyPress.Result {
+    if m.renamingID != nil { return .ignored }
+    let cmd = press.modifiers.contains(.command)
+    let shift = press.modifiers.contains(.shift)
+    let opt = press.modifiers.contains(.option)
+    let ops = app.fileOps
+    switch press.key {
+    case .downArrow:
+        let step = gridColumns ?? 1
+        if cmd, let e = m.selectedEntry { m.activate(e) } else if shift { m.extendSelection(step) } else { m.moveSelection(step) }
+        return .handled
+    case .upArrow:
+        let step = gridColumns ?? 1
+        if cmd { m.goUp() } else if shift { m.extendSelection(-step) } else { m.moveSelection(-step) }
+        return .handled
+    case .leftArrow where !cmd && gridColumns != nil:
+        if shift { m.extendSelection(-1) } else { m.moveSelection(-1) }
+        return .handled
+    case .rightArrow where !cmd && gridColumns != nil:
+        if shift { m.extendSelection(1) } else { m.moveSelection(1) }
+        return .handled
+    case .return:
+        if let e = m.selectedEntry { m.activate(e) }
+        return .handled
+    case .space:
+        QuickLook.shared.toggle(m.selectedEntries.map(\.url))
+        return .handled
+    case .leftArrow where !cmd:
+        m.collapseOrAscend(); return .handled
+    case .rightArrow where !cmd:
+        m.expandOrDescend(option: opt); return .handled
+    case .home: if let f = m.visible.first { m.selectionID = f.id }; return .handled
+    case .end: if let l = m.visible.last { m.selectionID = l.id }; return .handled
+    case .pageDown: m.moveSelection(15); return .handled
+    case .pageUp: m.moveSelection(-15); return .handled
+    case .delete where cmd:
+        let urls = m.selectedEntries.map(\.url)
+        if opt { ops.requestDeleteImmediately(urls) } else { ops.trash(urls) }
+        return .handled
+    default:
+        break
+    }
+    guard cmd else { return .ignored }
+    switch press.characters.lowercased() {
+    case "a": m.selectAll(); return .handled
+    case "z" where !shift: ops.undo(); return .handled
+    case "v" where opt: ops.pasteFromPasteboard(into: m.currentURL, move: true); return .handled
+    case "c" where !opt: ops.copyToPasteboard(m.selectedEntries.map(\.url)); return .handled
+    case "v": ops.pasteFromPasteboard(into: m.currentURL, move: false); return .handled
+    default: return .ignored
+    }
+}
+
+// MARK: - Icon grid
+
+/// Files as a grid of GRID icons (Settings: the ▦ button in the panel header). Shows the current
+/// folder's items (or search results) without the tree; double-click or Return opens, arrows move
+/// by cell and row. Icons build on one after another when a folder opens.
+private struct FileGrid: View {
+    @Environment(AppState.self) private var app
+    @Environment(\.theme) private var theme
+    var listFocused: FocusState<Bool>.Binding
+    @State private var dropTargeted = false
+    @State private var columns = 1
+
+    static let spacing: CGFloat = 6
+
+    var body: some View {
+        let m = app.files
+        let items = m.visible
+        GeometryReader { geo in
+            let cols = max(1, Int((geo.size.width - 16 + Self.spacing) / (FileGridCell.width + Self.spacing)))
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(FileGridCell.width), spacing: Self.spacing), count: cols),
+                              alignment: .leading, spacing: Self.spacing) {
+                        if m.canGoUp && m.query.isEmpty { UpCell() }
+                        ForEach(Array(items.enumerated()), id: \.element.id) { i, e in
+                            FileGridCell(entry: e, index: i + 1, selected: m.selectedIDs.contains(e.id),
+                                         isCursor: e.id == m.selectionID, renaming: m.renamingID == e.id)
+                                .id(e.id)
+                                .onTapGesture(count: 2) { m.activate(e) }
+                                .simultaneousGesture(TapGesture().onEnded {
+                                    let mods = NSEvent.modifierFlags
+                                    m.click(e.id, command: mods.contains(.command), shift: mods.contains(.shift))
+                                    listFocused.wrappedValue = true
+                                })
+                                .onDrag { fileDragProvider(for: e, m) }
+                                .gridContextMenu(title: FileContextMenu.title(app, e)) { FileContextMenu.items(app, e) }
+                        }
+                    }
+                    .padding(8)
+                }
+                .focusable()
+                .focusEffectDisabled()
+                .focused(listFocused)
+                .onAppear { columns = cols }
+                .onChange(of: cols) { _, c in columns = c }
+                .onChange(of: m.selectionID) { _, id in
+                    if let id { withAnimation(nil) { proxy.scrollTo(id) } }
+                    QuickLook.shared.update(m.selectedEntries.map(\.url))
+                }
+                .onKeyPress(phases: .down) { press in handleFileKey(press, m, app, gridColumns: columns) }
+                .onCopyCommand { m.selectedEntries.map { NSItemProvider(object: $0.url as NSURL) } }
+                .onPasteCommand(of: [.fileURL]) { _ in app.fileOps.pasteFromPasteboard(into: m.currentURL, move: false) }
+                .dropDestination(for: URL.self) { urls, _ in
+                    let files = urls.filter(\.isFileURL)
+                    guard !files.isEmpty, !files.allSatisfy({ $0.deletingLastPathComponent().standardizedFileURL == m.currentURL.standardizedFileURL }) else { return false }
+                    app.fileOps.transfer(files, into: m.currentURL, move: false)
+                    return true
+                } isTargeted: { dropTargeted = $0 }
+                .overlay { if dropTargeted { Rectangle().stroke(theme.accent, lineWidth: 1.5).allowsHitTesting(false) } }
             }
         }
-        return provider
     }
+}
 
-    private func handle(_ press: KeyPress, _ m: FileBrowserModel) -> KeyPress.Result {
-        if m.renamingID != nil { return .ignored }
-        let cmd = press.modifiers.contains(.command)
-        let shift = press.modifiers.contains(.shift)
-        let opt = press.modifiers.contains(.option)
-        let ops = app.fileOps
-        switch press.key {
-        case .downArrow:
-            if cmd, let e = m.selectedEntry { m.activate(e) } else if shift { m.extendSelection(1) } else { m.moveSelection(1) }
-            return .handled
-        case .upArrow:
-            if cmd { m.goUp() } else if shift { m.extendSelection(-1) } else { m.moveSelection(-1) }
-            return .handled
-        case .return:
-            if let e = m.selectedEntry { m.activate(e) }
-            return .handled
-        case .space:
-            QuickLook.shared.toggle(m.selectedEntries.map(\.url))
-            return .handled
-        case .leftArrow where !cmd:
-            m.collapseOrAscend(); return .handled
-        case .rightArrow where !cmd:
-            m.expandOrDescend(option: opt); return .handled
-        case .home: if let f = m.visible.first { m.selectionID = f.id }; return .handled
-        case .end: if let l = m.visible.last { m.selectionID = l.id }; return .handled
-        case .pageDown: m.moveSelection(15); return .handled
-        case .pageUp: m.moveSelection(-15); return .handled
-        case .delete where cmd:
-            let urls = m.selectedEntries.map(\.url)
-            if opt { ops.requestDeleteImmediately(urls) } else { ops.trash(urls) }
-            return .handled
-        default:
-            break
+/// The build-on progress for a grid icon: icons that appear right after a folder opens trace and
+/// fill one after another (eDEX-style), icons that appear later (scrolling) are drawn at once.
+private struct GlyphBuild: ViewModifier {
+    @Environment(\.effects) private var effects
+    let index: Int
+    @State private var build: CGFloat = 1
+    func body(content: Content) -> some View {
+        content.environment(\.glyphBuild, build)
+            .onAppear {
+                guard effects.motion, index < 48, CascadeClock.shared.isActive else { return }
+                build = 0
+                withAnimation(.easeOut(duration: 0.3).delay(Double(index) * 0.011)) { build = 1 }
+            }
+    }
+}
+
+private struct GlyphBuildKey: EnvironmentKey { static let defaultValue: CGFloat = 1 }
+private extension EnvironmentValues {
+    var glyphBuild: CGFloat {
+        get { self[GlyphBuildKey.self] }
+        set { self[GlyphBuildKey.self] = newValue }
+    }
+}
+
+private struct FileGridCell: View {
+    @Environment(AppState.self) private var app
+    @Environment(\.theme) private var theme
+    let entry: FileEntry
+    let index: Int
+    let selected: Bool
+    let isCursor: Bool
+    let renaming: Bool
+    @State private var hover = false
+
+    static let width: CGFloat = 92
+    static let height: CGFloat = 88
+
+    var body: some View {
+        let glyph = FileGlyph.of(entry)
+        let color: Color = switch glyph {
+        case .folder, .up, .package: theme.accent
+        case .executable: theme.warn
+        default: theme.text.opacity(0.78)
         }
-        guard cmd else { return .ignored }
-        switch press.characters.lowercased() {
-        case "a": m.selectAll(); return .handled
-        case "z" where !shift: ops.undo(); return .handled
-        case "v" where opt: ops.pasteFromPasteboard(into: m.currentURL, move: true); return .handled
-        case "c" where !opt: ops.copyToPasteboard(m.selectedEntries.map(\.url)); return .handled
-        case "v": ops.pasteFromPasteboard(into: m.currentURL, move: false); return .handled
-        default: return .ignored
+        VStack(spacing: 5) {
+            GlyphCanvas(glyph: glyph, color: color, cutout: selected ? theme.bg2 : theme.bg1,
+                        dimmed: entry.isHidden, symlink: entry.isSymlink && !entry.isBrokenSymlink)
+                .frame(width: 46, height: 46)
+            if renaming {
+                RenameField(entry: entry)
+            } else {
+                BuildFade { Text(entry.name) }
+                    .font(entry.isNavigableFolder ? GridFont.small.weight(.semibold) : GridFont.small)
+                    .underline(entry.isSymlink, color: theme.textMute)
+                    .strikethrough(entry.isBrokenSymlink, color: theme.textMute)
+                    .foregroundStyle(selected ? theme.textOnAccent : (entry.isHidden || entry.isBrokenSymlink ? theme.textDim : theme.text))
+                    .lineLimit(2).truncationMode(.middle)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 3).padding(.vertical, 1)
+                    .background(selected ? theme.accent : .clear)
+            }
         }
+        .modifier(GlyphBuild(index: index))
+        .padding(.top, 6)
+        .frame(width: Self.width, height: Self.height, alignment: .top)
+        .background(selected ? theme.accentSoft : (hover ? theme.bg2 : .clear))
+        .overlay {
+            if selected || hover {
+                ClippedRect(cut: 6, topRight: true)
+                    .stroke(selected ? theme.accent.opacity(isCursor && app.files.selectedIDs.count > 1 ? 1 : 0.6) : theme.line,
+                            lineWidth: Metrics.hairline)
+            }
+        }
+        .clipShape(ClippedRect(cut: 6, topRight: true))
+        .contentShape(Rectangle())
+        .onHover { hover = $0 }
+        .help(entry.name + (entry.isSymlink ? " (link)" : ""))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(entry.isNavigableFolder ? "Folder" : entry.kind), \(entry.name)")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// Fades its content in with the icon's build-on (the label appears as the icon fills).
+private struct BuildFade<Content: View>: View {
+    @Environment(\.glyphBuild) private var build
+    @ViewBuilder let content: Content
+    var body: some View { content.opacity(Double(min(1, max(0, (build - 0.3) / 0.5)))) }
+}
+
+/// Reads the build progress from the environment so the icon itself animates (Animatable).
+private struct GlyphCanvas: View {
+    @Environment(\.glyphBuild) private var build
+    let glyph: FileGlyph
+    let color: Color
+    let cutout: Color
+    var dimmed = false
+    var symlink = false
+    var body: some View {
+        FileGlyphView(glyph: glyph, color: color, cutout: cutout, dimmed: dimmed, symlink: symlink, build: build)
+    }
+}
+
+/// "..": the enclosing folder, first in the grid (eDEX's "go up" cell).
+private struct UpCell: View {
+    @Environment(AppState.self) private var app
+    @Environment(\.theme) private var theme
+    @State private var hover = false
+
+    var body: some View {
+        Button { app.files.goUp() } label: {
+            VStack(spacing: 5) {
+                GlyphCanvas(glyph: .up, color: theme.accent.opacity(0.7), cutout: hover ? theme.bg2 : theme.bg1)
+                    .frame(width: 46, height: 46)
+                    .modifier(GlyphBuild(index: 0))
+                Text("..").font(GridFont.small.weight(.semibold)).foregroundStyle(theme.textDim)
+            }
+            .padding(.top, 6)
+            .frame(width: FileGridCell.width, height: FileGridCell.height, alignment: .top)
+            .background(hover ? theme.bg2 : .clear)
+            .clipShape(ClippedRect(cut: 6, topRight: true))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help("Enclosing folder (⌘↑)")
+        .accessibilityLabel("Enclosing folder")
     }
 }
 

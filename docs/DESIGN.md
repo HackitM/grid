@@ -74,6 +74,8 @@ and is skipped when Motion is off or macOS Reduce Motion is on.
 
 | Event | Motion (reference) | Duration |
 |---|---|---|
+| Window opens | **Startup build-on** (Legacy board room): the window frame traces from the top-left corner, the bar rules and rail divider extend, a scan line passes down the window, the bars fade in and the panels build on | ≤ 800 ms, skippable in Settings › Effects |
+| Menu opens / closes | **Unfold**: a bright line draws across the edge nearest the pointer, the plate unfolds from it under a scan band, the title types on; closing folds the plate back into the line, like a CRT switching off | 220 ms / 130 ms |
 | Panel appears (page switch, reopen, re-dock) | **Build-on** (Legacy light table): a bright trace runs around the frame from the top-left corner, the header rule extends, the plate expands from its centre; **Ares flash**: the plate lights as an accent fill that resolves | 340 ms |
 | Page switch | old page leaves at once; the new page builds on (no cross-fade) | 340 ms |
 | Command palette | build-on (both clipped corners) + header rule extends; first results cascade in | 340 ms |
@@ -86,7 +88,7 @@ and is skipped when Motion is off or macOS Reduce Motion is on.
 | DONE / BELL tags | pop in from 60% with a brief flash | spring 260 ms |
 | Widget readouts | update in place (no animation) | – |
 
-No boot sequence, no idle animation, no flicker, no scanlines.
+One startup build-on that never delays typing; no idle animation, no flicker, no scanlines.
 
 Performance rule: never animate values that refresh on a timer (readouts, clocks, widget
 displays), and never leave a shadow or an animation overlay in the view tree once it's done. Any

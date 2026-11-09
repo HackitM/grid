@@ -14,6 +14,12 @@ enum GridMotion {
     static let build = Animation.timingCurve(0.16, 0.84, 0.24, 1, duration: 0.34)
     static let quick = Animation.easeOut(duration: 0.16)
     static let snap = Animation.spring(response: 0.26, dampingFraction: 0.86)
+    #if DEBUG
+    /// QA: stretches the startup build-on and menu unfold so single frames can be captured.
+    nonisolated(unsafe) static var debugSlow: Double = 1
+    #else
+    static let debugSlow: Double = 1
+    #endif
 }
 
 // MARK: - Build-on (Legacy frame trace + Ares flash + expand from centre)

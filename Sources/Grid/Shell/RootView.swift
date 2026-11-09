@@ -4,6 +4,19 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppState.self) private var app
+    /// Startup build-on (StartupBuildOn): `booting` while its lines draw; the bars and panels are
+    /// held back for the first few hundred milliseconds of it.
+    @State private var booting: Bool
+    @State private var bootProgress: CGFloat = 0
+    @State private var chromeOpacity: Double
+    @State private var contentShown: Bool
+
+    init() {
+        let play = StartupBuildOn.shouldPlay
+        _booting = State(initialValue: play)
+        _chromeOpacity = State(initialValue: play ? 0 : 1)
+        _contentShown = State(initialValue: !play)
+    }
 
     var body: some View {
         let theme = app.settings.themeValue
@@ -12,16 +25,20 @@ struct RootView: View {
             theme.bg0.ignoresSafeArea()
             if fx.gridBackdrop { GridBackdrop().ignoresSafeArea() }
             VStack(spacing: 0) {
-                TopBar()
+                TopBar().opacity(chromeOpacity)
                 HStack(spacing: 0) {
-                    NavRail()
+                    NavRail().opacity(chromeOpacity)
                     Group {
-                        switch app.panel {
-                        case .terminal: TerminalPanel()
-                        case .files: FilesPanel()
-                        case .apps: AppsPanel()
-                        case .web: BrowserPanel()
-                        case .settings: SettingsPanel()
+                        if contentShown {
+                            switch app.panel {
+                            case .terminal: TerminalPanel()
+                            case .files: FilesPanel()
+                            case .apps: AppsPanel()
+                            case .web: BrowserPanel()
+                            case .settings: SettingsPanel()
+                            }
+                        } else {
+                            Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
                     }
                     .padding(Metrics.gutter)
@@ -29,9 +46,14 @@ struct RootView: View {
                     // at once and the new page's panels build on (BuildOn in Panel).
                     .transition(.identity)
                 }
-                StatusBar()
+                StatusBar().opacity(chromeOpacity)
             }
             .ignoresSafeArea(edges: .top)
+
+            if booting {
+                StartupTrace(p: bootProgress, accent: theme.accent, glow: fx.glow ? theme.glow.opacity(0.9) : .clear)
+                    .ignoresSafeArea()
+            }
 
             // GRID drag tracking: the single drop highlight and the label that follows the pointer.
             DockDragOverlay().ignoresSafeArea()
@@ -58,6 +80,28 @@ struct RootView: View {
         .tint(theme.accent)
         .frame(minWidth: 820, minHeight: 480)
         .onChange(of: app.panel) { _, p in if p == .terminal { app.focusTerminal() } }
+        .onAppear(perform: startBuildOn)
+        #if DEBUG
+        .onReceive(NotificationCenter.default.publisher(for: .gridQAReplayStartup)) { _ in
+            booting = true; bootProgress = 0; chromeOpacity = 0; contentShown = false
+            DispatchQueue.main.async { startBuildOn() }
+        }
+        #endif
+    }
+
+    private func startBuildOn() {
+        guard booting else { return }
+        withAnimation(.timingCurve(0.3, 0.6, 0.3, 1, duration: StartupBuildOn.duration)) { bootProgress = 1 }
+        withAnimation(.easeOut(duration: 0.3 * GridMotion.debugSlow).delay(StartupBuildOn.chromeDelay)) { chromeOpacity = 1 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + StartupBuildOn.contentDelay) {
+            contentShown = true
+            if app.panel == .terminal { app.focusTerminal() }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + StartupBuildOn.duration + 0.05) {
+            booting = false
+            chromeOpacity = 1
+            contentShown = true
+        }
     }
 }
 
@@ -181,6 +225,7 @@ private struct StatusBar: View {
                 cell("NO SESSION", grow: true)
             }
             Spacer(minLength: 0)
+            if app.showsNowPlayingInStatusBar { NowPlayingStatusCell() }
             if let n = app.notice {
                 HStack(spacing: 6) {
                     Text(n.tone == .error ? "✕" : "✓")

@@ -5,14 +5,14 @@ import Observation
 enum WidgetKind: String, Codable, CaseIterable, Identifiable {
     /// Kinds shown in the gallery's built-in list (custom widgets are listed by package).
     static var builtIn: [WidgetKind] { allCases.filter { $0 != .custom } }
-    case clock, system, network, storage, battery, sessions, apps, git, notes, folder, inspector, custom
+    case clock, system, network, storage, battery, sessions, apps, git, notes, folder, inspector, music, custom
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .clock: "Clock"; case .system: "System"; case .network: "Network"; case .storage: "Storage"
         case .battery: "Power"; case .sessions: "Sessions"; case .apps: "Pinned Apps"; case .git: "Git"
-        case .notes: "Notes"; case .folder: "Recent Files"; case .inspector: "File Inspector"; case .custom: "Custom"
+        case .notes: "Notes"; case .folder: "Recent Files"; case .inspector: "File Inspector"; case .music: "Now Playing"; case .custom: "Custom"
         }
     }
 
@@ -20,7 +20,7 @@ enum WidgetKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .clock: "time"; case .system: "cpu.mem"; case .network: "net"; case .storage: "disk"
         case .battery: "pwr"; case .sessions: "tty"; case .apps: "launch"; case .git: "repo"
-        case .notes: "txt"; case .folder: "recent"; case .inspector: "meta"; case .custom: "ext"
+        case .notes: "txt"; case .folder: "recent"; case .inspector: "meta"; case .music: "audio"; case .custom: "ext"
         }
     }
 
@@ -29,7 +29,7 @@ enum WidgetKind: String, Codable, CaseIterable, Identifiable {
         case .clock: "clock"; case .system: "cpu"; case .network: "arrow.up.arrow.down"; case .storage: "internaldrive"
         case .battery: "battery.75percent"; case .sessions: "terminal"; case .apps: "square.grid.2x2"
         case .git: "arrow.triangle.branch"; case .notes: "note.text"; case .folder: "clock.arrow.circlepath"
-        case .inspector: "doc.text.magnifyingglass"; case .custom: "puzzlepiece.extension"
+        case .inspector: "doc.text.magnifyingglass"; case .music: "music.note"; case .custom: "puzzlepiece.extension"
         }
     }
 
@@ -46,6 +46,7 @@ enum WidgetKind: String, Codable, CaseIterable, Identifiable {
         case .notes: "A local scratchpad, saved automatically."
         case .folder: "Most recently modified items in a folder; click to open."
         case .inspector: "The Files selection in detail: the exact quoted path it inserts, executable/downloaded warnings, text and image facts, and quick actions."
+        case .music: "What Apple Music or Spotify is playing, with play/pause and skip. Cover art is redrawn in GRID's colours. Pop it out to keep it above every page."
         case .custom: "A widget package from your Widgets folder."
         }
     }
@@ -72,7 +73,9 @@ struct WidgetInstance: Codable, Identifiable, Equatable {
 @Observable
 @MainActor
 final class WidgetStore {
-    private(set) var widgets: [WidgetInstance] = [] { didSet { save() } }
+    private(set) var widgets: [WidgetInstance] = [] { didSet { save(); onChange?() } }
+    /// Runs after every change (AppState keeps floating windows and Now Playing in step).
+    @ObservationIgnored var onChange: (() -> Void)?
     @ObservationIgnored private let key = "widgets.v1"
 
     init() {

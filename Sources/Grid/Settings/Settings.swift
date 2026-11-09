@@ -21,6 +21,10 @@ final class Settings {
     var showHiddenFiles: Bool { didSet { d.set(showHiddenFiles, forKey: "files.hidden") } }
     /// Show context and "⋯" menus as standard macOS menus instead of GRID-styled ones.
     var systemMenus: Bool { didSet { d.set(systemMenus, forKey: "ui.systemMenus") } }
+    /// Play the short startup build-on when the window opens (needs Motion).
+    var startupAnimation: Bool { didSet { d.set(startupAnimation, forKey: "fx.boot") } }
+    /// Files shows folders as an icon grid instead of a list.
+    var filesGrid: Bool { didSet { d.set(filesGrid, forKey: "files.grid") } }
 
     /// System "Reduce motion" wins over the in-app toggle.
     var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -30,7 +34,7 @@ final class Settings {
             "theme": ThemeID.legacy.rawValue, "fx.glow": true, "fx.motion": true, "fx.grid": false,
             "term.font": "", "term.size": 13.0, "term.optionMeta": true, "term.scrollback": 10_000,
             "term.confirmBusy": true, "term.shell": "",
-            "files.hidden": false, "ui.systemMenus": false,
+            "files.hidden": false, "ui.systemMenus": false, "fx.boot": true, "files.grid": false,
         ])
         theme = ThemeID(rawValue: d.string(forKey: "theme") ?? "") ?? .legacy
         glow = d.bool(forKey: "fx.glow")
@@ -44,6 +48,8 @@ final class Settings {
         shellOverride = d.string(forKey: "term.shell") ?? ""
         showHiddenFiles = d.bool(forKey: "files.hidden")
         systemMenus = d.bool(forKey: "ui.systemMenus")
+        startupAnimation = d.bool(forKey: "fx.boot")
+        filesGrid = d.bool(forKey: "files.grid")
 
         NotificationCenter.default.addObserver(forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
                                                object: nil, queue: .main) { [weak self] _ in
