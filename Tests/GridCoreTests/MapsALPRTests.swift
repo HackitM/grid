@@ -42,6 +42,8 @@ final class MapsALPRTests: XCTestCase {
         XCTAssertEqual(OSMSurveillance.vendor(["manufacturer:wikidata": "Q910379"]), .leonardo)
         XCTAssertEqual(OSMSurveillance.vendor(["manufacturer:wikidata": "Q2347731"]), .axis)
         XCTAssertEqual(OSMSurveillance.vendor(["manufacturer": "Flock Safety"]), .flock)
+        XCTAssertEqual(OSMSurveillance.vendor(brand: "Vigilant Solutions"), .motorola)
+        XCTAssertEqual(OSMSurveillance.vendor(brand: "ELSAG"), .leonardo)
         XCTAssertEqual(OSMSurveillance.vendor(["brand": "FLOCK"]), .flock)
         XCTAssertEqual(OSMSurveillance.vendor(["brand": "Rekor Systems"]), .rekor)
         XCTAssertEqual(OSMSurveillance.vendor(["manufacturer": "Axon"]), .axon)

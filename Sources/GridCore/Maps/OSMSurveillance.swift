@@ -110,7 +110,10 @@ public enum OSMSurveillance {
         if lower.contains("flock") { return .flock }
         let tokens = lower.split(whereSeparator: { !($0.isLetter || $0.isNumber) }).map(String.init)
         func has(_ w: String) -> Bool { tokens.contains(w) }
-        if has("motorola") { return .motorola }
+        // Product brands owned by a listed vendor: Vigilant Solutions is Motorola Solutions',
+        // ELSAG is Leonardo's ALPR line.
+        if has("motorola") || has("vigilant") { return .motorola }
+        if has("elsag") { return .leonardo }
         if has("genetec") { return .genetec }
         if has("leonardo") { return .leonardo }
         if has("axis") { return .axis }
