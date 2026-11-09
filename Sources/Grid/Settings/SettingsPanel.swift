@@ -57,10 +57,13 @@ struct SettingsPanel: View {
                     group("05.4", "Keyboard") {
                         ShortcutEditor()
                     }
-                    group("05.5", "Widgets") {
+                    group("05.5", "Browser") {
+                        BrowserSettingsSection()
+                    }
+                    group("05.6", "Widgets") {
                         WidgetsSettingsSection()
                     }
-                    group("05.6", "Privacy & permissions") {
+                    group("05.7", "Privacy & permissions") {
                         VStack(alignment: .leading, spacing: 6) {
                             bullet("No telemetry, accounts, cloud services, or AI features. Nothing leaves this Mac.")
                             bullet("Terminal contents and paths are not logged or stored by GRID (scrollback lives in memory only).")
@@ -73,7 +76,7 @@ struct SettingsPanel: View {
                             }
                         }.buttonStyle(GridButtonStyle(compact: true))
                     }
-                    group("05.7", "About") {
+                    group("05.8", "About") {
                         Text("GRID \(GridInfo.version) · terminal: SwiftTerm (MIT) · see LICENSES.md")
                             .font(GridFont.small).foregroundStyle(theme.textDim)
                     }

@@ -67,6 +67,17 @@ enum DebugHooks {
         }
     }
 
+    /// CGWindowListCreateImage is marked unavailable from the macOS 15 SDK on, but still works for an
+    /// app's own windows without Screen Recording permission (ScreenCaptureKit always asks). QA only.
+    static func captureWindow(_ id: CGWindowID) -> CGImage? {
+        typealias Fn = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
+        let fn = unsafeBitCast(sym, to: Fn.self)
+        let opts = CGWindowListOption.optionIncludingWindow.rawValue
+        let image = CGWindowImageOption([.boundsIgnoreFraming, .bestResolution]).rawValue
+        return fn(.null, opts, id, image)?.takeRetainedValue()
+    }
+
     static func uninstall() {
         server?.stop()
         server = nil
@@ -115,8 +126,7 @@ enum DebugHooks {
             // Real composited pixels of our own window (no Screen Recording permission needed
             // for an app's own windows).
             guard let w = window, let path else { return }
-            if let img = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(w.windowNumber),
-                                                 [.boundsIgnoreFraming, .bestResolution]) {
+            if let img = DebugHooks.captureWindow(CGWindowID(w.windowNumber)) {
                 let rep = NSBitmapImageRep(cgImage: img)
                 try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
             }
@@ -304,6 +314,70 @@ enum DebugHooks {
             case "sideBySide": app.widgets.arrangeSideBySide()
             case "stack": app.widgets.arrangeStacked()
             case "set": app.widgets.set(w.id, c["key"] as? String ?? "", c["value"] as? String)
+            default: break
+            }
+        case "browser":
+            // {"cmd":"browser","op":"open|go|close|reader|theme|block|eval|state|reload|find","url":..,"js":..,"path":..}
+            let b = app.browser
+            switch c["op"] as? String {
+            case "open": if let u = (c["url"] as? String).flatMap(URL.init(string:)) { b.open(u, newTab: (c["newTab"] as? Bool) ?? true) }
+            case "go": b.go(c["text"] as? String ?? "")
+            case "close": if let t = b.active { b.close(t.id) }
+            case "reload": b.active?.reload()
+            case "reader": Task { await b.toggleReader() }
+            case "theme": b.active?.setThemeEnabled((c["on"] as? Bool) ?? !(b.active?.themeActive ?? false))
+            case "block": if let t = b.active, let site = SiteKey.of(t.failedURL ?? t.url) { b.adBlocker.setBlocking((c["on"] as? Bool) ?? true, for: site); t.reload() }
+            case "eval":
+                guard let t = b.active, t.isLoaded, let js = c["js"] as? String, let path else { break }
+                t.webView.evaluateJavaScript(js, in: nil, in: .defaultClient) { r in
+                    let out: String
+                    switch r {
+                    case .success(let v): out = (v as? String) ?? String(describing: v)
+                    case .failure(let e): out = "ERROR: \(e)"
+                    }
+                    try? out.write(toFile: path, atomically: true, encoding: .utf8)
+                }
+            case "installExtension":
+                if #available(macOS 15.4, *), let ext = b.extensions, let p = c["path"] as? String {
+                    Task { await ext.install(from: URL(fileURLWithPath: p), app: app) }
+                }
+            case "extAction":
+                if #available(macOS 15.4, *), let ext = b.extensions, let a = ext.actions(for: b.active).first { ext.perform(a.item, tab: b.active) }
+            case "snapReader":
+                guard let w = ReaderView.lastWebView, let path else { break }
+                w.takeSnapshot(with: nil) { img, _ in
+                    guard let img, let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else { return }
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+                }
+            case "snap":
+                // WebKit's own snapshot (works while the window is in the background).
+                guard let t = b.active, t.isLoaded, let path else { break }
+                t.webView.takeSnapshot(with: nil) { img, _ in
+                    guard let img, let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else { return }
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+                }
+            case "state":
+                guard let path else { break }
+                var st: [String: Any] = ["tabs": b.tabs.map { t -> [String: Any] in
+                    ["url": t.url?.absoluteString ?? "", "title": t.title, "loading": t.isLoading, "loaded": t.isLoaded,
+                     "theme": t.themeActive, "blocking": t.blockingActive, "reader": t.reader?.title ?? "", "error": t.loadError ?? "",
+                     "active": t.id == b.activeID]
+                }]
+                st["popoverWindows"] = NSApp.windows.filter { $0.isVisible && String(describing: type(of: $0)).lowercased().contains("popover") }.map { "\(type(of: $0)) \(Int($0.frame.width))x\(Int($0.frame.height))" }
+                st["adblock"] = "\(b.adBlocker.status)"
+                st["adblockLists"] = b.adBlocker.ruleLists.count
+                st["adblockStats"] = b.adBlocker.stats
+                st["notice"] = app.notice?.text ?? ""
+                st["confirmation"] = app.confirmation?.title ?? ""
+                if #available(macOS 15.4, *) {
+                    st["extensions"] = b.extensions?.items.map { item -> String in
+                        let ctx = item.context
+                        let url = b.active?.url
+                        return "\(item.name) enabled=\(item.enabled) loaded=\(ctx?.isLoaded ?? false) access=\(url.map { ctx?.hasAccess(to: $0) ?? false } ?? false) granted=\(ctx?.grantedPermissionMatchPatterns.keys.map(\.string) ?? []) errors=\(item.errors + (ctx?.errors.map(\.localizedDescription) ?? []))"
+                    } ?? []
+                    st["tabHasController"] = b.active.map { $0.isLoaded && $0.webView.configuration.webExtensionController != nil } ?? false
+                }
+                if let d = try? JSONSerialization.data(withJSONObject: st, options: [.prettyPrinted, .sortedKeys]) { try? d.write(to: URL(fileURLWithPath: path)) }
             default: break
             }
         case "addCustom":
