@@ -2,21 +2,6 @@ import AppKit
 import Observation
 import SwiftUI
 
-enum PaletteShortcut: String, CaseIterable, Identifiable {
-    case cmdShiftP, cmdK, cmdShiftSpace
-    var id: String { rawValue }
-    var label: String {
-        switch self { case .cmdShiftP: "⇧⌘P"; case .cmdK: "⌘K"; case .cmdShiftSpace: "⇧⌘Space" }
-    }
-    var shortcut: KeyboardShortcut {
-        switch self {
-        case .cmdShiftP: KeyboardShortcut("p", modifiers: [.command, .shift])
-        case .cmdK: KeyboardShortcut("k", modifiers: [.command])
-        case .cmdShiftSpace: KeyboardShortcut(.space, modifiers: [.command, .shift])
-        }
-    }
-}
-
 /// User preferences, persisted to UserDefaults on every change. Local only.
 @Observable
 @MainActor
@@ -33,7 +18,6 @@ final class Settings {
     var scrollback: Int { didSet { d.set(scrollback, forKey: "term.scrollback") } }
     var confirmCloseBusy: Bool { didSet { d.set(confirmCloseBusy, forKey: "term.confirmBusy") } }
     var shellOverride: String { didSet { d.set(shellOverride, forKey: "term.shell") } }
-    var paletteShortcut: PaletteShortcut { didSet { d.set(paletteShortcut.rawValue, forKey: "palette.shortcut") } }
     var showHiddenFiles: Bool { didSet { d.set(showHiddenFiles, forKey: "files.hidden") } }
 
     /// System "Reduce motion" wins over the in-app toggle.
@@ -43,7 +27,7 @@ final class Settings {
         d.register(defaults: [
             "theme": ThemeID.legacy.rawValue, "fx.glow": true, "fx.motion": true, "fx.grid": false,
             "term.font": "", "term.size": 13.0, "term.optionMeta": true, "term.scrollback": 10_000,
-            "term.confirmBusy": true, "term.shell": "", "palette.shortcut": PaletteShortcut.cmdShiftP.rawValue,
+            "term.confirmBusy": true, "term.shell": "",
             "files.hidden": false,
         ])
         theme = ThemeID(rawValue: d.string(forKey: "theme") ?? "") ?? .legacy
@@ -56,7 +40,6 @@ final class Settings {
         scrollback = d.integer(forKey: "term.scrollback")
         confirmCloseBusy = d.bool(forKey: "term.confirmBusy")
         shellOverride = d.string(forKey: "term.shell") ?? ""
-        paletteShortcut = PaletteShortcut(rawValue: d.string(forKey: "palette.shortcut") ?? "") ?? .cmdShiftP
         showHiddenFiles = d.bool(forKey: "files.hidden")
 
         NotificationCenter.default.addObserver(forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,

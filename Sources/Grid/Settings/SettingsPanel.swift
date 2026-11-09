@@ -55,15 +55,7 @@ struct SettingsPanel: View {
                     .onChange(of: s.optionAsMeta) { _, _ in app.terminals.applyAppearance() }
 
                     group("05.4", "Keyboard") {
-                        row("Command palette") {
-                            Picker("", selection: $s.paletteShortcut) {
-                                ForEach(PaletteShortcut.allCases) { Text($0.label).tag($0) }
-                            }.labelsHidden().frame(width: 140)
-                            if s.paletteShortcut == .cmdK {
-                                Text("⌘K no longer clears the terminal").font(GridFont.small).foregroundStyle(theme.warn)
-                            }
-                        }
-                        ShortcutTable()
+                        ShortcutEditor()
                     }
                     group("05.5", "Privacy & permissions") {
                         VStack(alignment: .leading, spacing: 6) {
@@ -206,31 +198,89 @@ private struct ShellRow: View {
     }
 }
 
-private struct ShortcutTable: View {
+/// Rebindable shortcuts: click a key cap, press the new combination (Esc cancels, ⌫ clears).
+private struct ShortcutEditor: View {
     @Environment(AppState.self) private var app
     @Environment(\.theme) private var theme
+    @State private var recording: GridCommand?
+    @State private var message: (GridCommand, String)?
+    @State private var monitor: Any?
+
     var body: some View {
-        let rows: [(String, String)] = [
-            (app.settings.paletteShortcut.label, "Command palette"),
-            ("⌘T / ⌘W", "New / close terminal session"),
-            ("⌘1 … ⌘9", "Select terminal session"),
-            ("⇧⌘[ / ⇧⌘]", "Previous / next session"),
-            ("⌥⌘1 … ⌥⌘4", "Terminal · Files · Apps · Web"),
-            ("⌘B / ⌘I", "Files sidebar / inspector"),
-            ("⌥⌘T", "Open terminal in current Files folder"),
-            ("⇧⌘J", "Show terminal directory in Files"),
-            ("⌘[ ⌘] ⌘↑", "Files: back · forward · up"),
-            ("⌘L / ⌘F", "Files: edit path / filter"),
-            ("⇧⌘.", "Show hidden files"),
-            ("⌘C / ⌘V", "Copy / paste (terminal selection)"),
-        ]
-        VStack(alignment: .leading, spacing: 3) {
-            ForEach(rows, id: \.1) { k, v in
-                HStack(spacing: 12) {
-                    KeyCap(k).frame(width: 150, alignment: .leading)
-                    Text(v).font(GridFont.small).foregroundStyle(theme.textDim)
+        let store = app.shortcuts
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Click a shortcut, then press the new key combination. Esc cancels; ⌫ removes the shortcut. Shortcuts must include ⌘ (or be F1–F12) so they never take keys from programs in the terminal. ⌘1–⌘9 always switch tabs.")
+                .font(GridFont.small).foregroundStyle(theme.textMute)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(["Workspace", "Terminal", "Files"], id: \.self) { group in
+                VStack(alignment: .leading, spacing: 2) {
+                    SectionLabel(group, color: theme.textDim).padding(.bottom, 2)
+                    ForEach(GridCommand.allCases.filter { $0.group == group }) { cmd in
+                        HStack(spacing: 10) {
+                            Text(cmd.title).font(GridFont.body).foregroundStyle(theme.text)
+                                .frame(width: 260, alignment: .leading)
+                            Button { startRecording(cmd) } label: {
+                                Text(recording == cmd ? "press keys…" : (store.binding(cmd)?.display ?? "—"))
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(recording == cmd ? theme.textOnAccent : (store.binding(cmd) == nil ? theme.textMute : theme.text))
+                                    .frame(minWidth: 96).padding(.vertical, 2).padding(.horizontal, 6)
+                                    .background(recording == cmd ? theme.accent : theme.bg3)
+                                    .overlay(Rectangle().stroke(recording == cmd ? theme.accent : theme.line, lineWidth: Metrics.hairline))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(cmd.title) shortcut: \(store.binding(cmd)?.display ?? "none"). Activate to record a new one.")
+                            if store.isCustom(cmd) {
+                                Button("Reset") { store.reset(cmd); message = nil }.buttonStyle(GridButtonStyle(compact: true))
+                                    .help("Default: \(cmd.defaultBinding?.display ?? "none")")
+                            }
+                            if let (c, text) = message, c == cmd {
+                                Text(text).font(GridFont.small).foregroundStyle(theme.warn).lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .frame(minHeight: 24)
+                    }
                 }
             }
+            HStack {
+                Button("Restore All Defaults") { store.resetAll(); message = nil }.buttonStyle(GridButtonStyle(compact: true))
+                Text("Tabs: ⌘1 … ⌘9 (fixed)").font(GridFont.small).foregroundStyle(theme.textMute)
+            }
         }
+        .onDisappear { stopRecording() }
+    }
+
+    private func startRecording(_ cmd: GridCommand) {
+        stopRecording()
+        recording = cmd
+        message = nil
+        // A local monitor sees key events before menus, so the combination being recorded
+        // doesn't also trigger its current command.
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            handle(event, for: cmd)
+            return nil
+        }
+    }
+
+    private func handle(_ event: NSEvent, for cmd: GridCommand) {
+        let mods = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if event.keyCode == 53 && mods.isEmpty { stopRecording(); return }                 // Esc: cancel
+        if (event.keyCode == 51 || event.keyCode == 117) && mods.isEmpty {                  // ⌫: clear
+            app.shortcuts.unassign(cmd); stopRecording(); return
+        }
+        guard let b = ShortcutStore.binding(from: event) else { NSSound.beep(); return }
+        if let error = app.shortcuts.assign(b, to: cmd) {
+            message = (cmd, error)
+            NSSound.beep()
+            return                                                                          // keep recording
+        }
+        stopRecording()
+    }
+
+    private func stopRecording() {
+        if let m = monitor { NSEvent.removeMonitor(m) }
+        monitor = nil
+        recording = nil
     }
 }

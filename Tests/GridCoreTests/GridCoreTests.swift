@@ -403,3 +403,84 @@ final class GitStatusTests: XCTestCase {
         XCTAssertFalse(s.branch.isEmpty)
     }
 }
+
+final class SplitTreeTests: XCTestCase {
+    let a = UUID(), b = UUID(), c = UUID(), d = UUID()
+
+    private func fractions(_ t: SplitTree) -> [Double] {
+        if case .split(_, _, _, let f) = t { return f }
+        return []
+    }
+
+    func testSameAxisSplitJoinsParent() {
+        let t = SplitTree.leaf(a).splitting(a, axis: .horizontal, with: b).splitting(b, axis: .horizontal, with: c)
+        XCTAssertEqual(t.leaves, [a, b, c])
+        guard case .split(_, .horizontal, let children, let f) = t else { return XCTFail() }
+        XCTAssertEqual(children.count, 3)
+        XCTAssertEqual(f, [0.5, 0.25, 0.25])
+        XCTAssertEqual(f.reduce(0, +), 1, accuracy: 1e-9)
+    }
+
+    func testMixedAxisNests() {
+        let t = SplitTree.leaf(a).splitting(a, axis: .horizontal, with: b).splitting(b, axis: .vertical, with: c)
+        XCTAssertEqual(t.leaves, [a, b, c])
+        guard case .split(_, .horizontal, let children, _) = t, case .split(_, .vertical, let inner, _) = children[1] else { return XCTFail() }
+        XCTAssertEqual(inner.count, 2)
+    }
+
+    func testRemoveCollapsesAndGivesShareToNeighbour() {
+        let t = SplitTree.leaf(a).splitting(a, axis: .horizontal, with: b).splitting(b, axis: .horizontal, with: c)
+        let r = t.removing(b)!
+        XCTAssertEqual(r.leaves, [a, c])
+        XCTAssertEqual(fractions(r), [0.75, 0.25])
+        XCTAssertEqual(r.removing(a)!.removing(c), nil)
+        XCTAssertEqual(r.removing(a), .leaf(c))
+    }
+
+    func testRemoveFlattensSameAxis() {
+        // a | (b / (c | d)) → remove b → a | c | d (inner horizontal flattened into root)
+        let t = SplitTree.leaf(a).splitting(a, axis: .horizontal, with: b)
+            .splitting(b, axis: .vertical, with: c).splitting(c, axis: .horizontal, with: d)
+        let r = t.removing(b)!
+        guard case .split(_, .horizontal, let children, let f) = r else { return XCTFail() }
+        XCTAssertEqual(children, [.leaf(a), .leaf(c), .leaf(d)])
+        XCTAssertEqual(f.reduce(0, +), 1, accuracy: 1e-9)
+    }
+
+    func testResizeClampsAndEqualize() {
+        let t = SplitTree.leaf(a).splitting(a, axis: .horizontal, with: b)
+        guard case .split(let sid, _, _, _) = t else { return XCTFail() }
+        let moved = fractions(t.resizing(splitID: sid, divider: 0, by: 0.2))
+        XCTAssertEqual(moved[0], 0.7, accuracy: 1e-9)
+        XCTAssertEqual(moved[1], 0.3, accuracy: 1e-9)
+        let clamped = fractions(t.resizing(splitID: sid, divider: 0, by: 0.9, minFraction: 0.15))
+        XCTAssertEqual(clamped[1], 0.15, accuracy: 1e-9)
+        XCTAssertEqual(fractions(t.resizing(splitID: sid, divider: 0, by: 0.3).equalizing(splitID: sid)), [0.5, 0.5])
+    }
+}
+
+final class KeyBindingTests: XCTestCase {
+    func testDisplayOrder() {
+        XCTAssertEqual(KeyBinding("d", [.shift, .command]).display, "⇧⌘D")
+        XCTAssertEqual(KeyBinding("right", [.command, .option, .control]).display, "⌃⌥⌘→")
+        XCTAssertEqual(KeyBinding("f5", []).display, "F5")
+    }
+
+    func testRules() {
+        XCTAssertNil(KeyBinding("d", [.command]).problem)
+        XCTAssertNil(KeyBinding("f6", []).problem, "function keys are allowed without ⌘")
+        XCTAssertNotNil(KeyBinding("c", [.control]).problem, "⌃C must stay with the terminal")
+        XCTAssertNotNil(KeyBinding("left", [.option]).problem)
+        XCTAssertNotNil(KeyBinding("q", [.command]).problem)
+        XCTAssertNotNil(KeyBinding("v", [.command]).problem)
+        XCTAssertNotNil(KeyBinding("3", [.command]).problem, "⌘1–9 switch tabs")
+        XCTAssertNil(KeyBinding("3", [.command, .option]).problem)
+    }
+
+    func testCodableAndNormalizes() throws {
+        let b = KeyBinding("D", [.command, .shift])
+        XCTAssertEqual(b.key, "d")
+        let round = try JSONDecoder().decode(KeyBinding.self, from: JSONEncoder().encode(b))
+        XCTAssertEqual(round, b)
+    }
+}

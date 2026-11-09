@@ -2,7 +2,7 @@
 
 ## Automated
 ```bash
-swift test          # 42 unit tests (GridCore): quoting (incl. real zsh round-trip), ranking,
+swift test          # 50 unit tests (GridCore): quoting (incl. real zsh round-trip), ranking,
                     # paths, URL validation, palette grammar, env, listing, perms, symlinks,
                     # app discovery, libproc cwd tracking
 ```
@@ -16,6 +16,9 @@ app over a private Unix socket (`$DARWIN_USER_TEMP_DIR/grid-qa.sock`, 0600, same
 back real state (kernel cwd, foreground process, PTY size, terminal screen buffer, process tree).
 `gsnap` captures the composited window. For automated quit tests, temporarily set
 `defaults write local.grid.workspace term.confirmBusy -bool false` (and delete the key after).
+
+Note: synthesized key events (`keyEquiv`) don't carry Shift the way real keyboard events do (plain
+AppKit shows the same: ⇧⌘D never matches, ⌘D matches a ⇧⌘D item), so test ⇧ shortcuts by hand.
 
 Note: SwiftTerm cannot be rendered offscreen, and macOS stops redrawing while the screen is locked,
 so QA verifies terminal content through the screen buffer and uses real window captures when the
@@ -54,6 +57,10 @@ display is awake.
 | Quit with split panes | ✅ | jobs in multiple panes incl. a HUP-ignoring pipeline member: no orphans |
 | Contrast | ✅ | textMute ≥ 4.6:1 on bg2 in all themes (was 3.0–3.5) |
 | Release bundle | ✅ | icon + SwiftTerm license in Resources; 0 QA strings |
+| Split tree | ✅ | split right then down → `H[1 \| V[2 / 3]]`; divider drags clamp; PTY sizes follow (56×41, 46×19); closing collapses to `H[1 \| 2]` |
+| Find in terminal | ✅ | 120 plain matches with next stepping; case-sensitive 1 vs insensitive 2; regex `line 1[0-9]{2} ` = 21; invalid regex flagged; close clears |
+| Shortcut validation | ✅ | ⌃C refused (terminal), ⌘T refused (in use by New Tab), ⌘K refused (Clear Scrollback) |
+| Menu staleness (found + fixed) | ✅ | menu titles/shortcuts didn't update ("Show Files Sidebar" stuck; rebinding ignored until a menu opened); now refreshed on change: after rebinding Split Right to ⌥⌘E, ⌥⌘E splits and ⌘D no longer does |
 | Remote web content → privileged functions | n/a | no embedded web content in M1 (external browser only); non-http(s) schemes refused (unit tested) |
 
 ## Manual checklist (needs a person at the keyboard)
@@ -69,3 +76,5 @@ display is awake.
 - [ ] Drag several selected files into the terminal (all paths inserted, quoted)
 - [ ] Space opens Quick Look on the selection; Open With submenu lists apps
 - [ ] Double-click a terminal tab to rename it
+- [ ] Settings › Keyboard: record a new shortcut, try a conflicting one, reset
+- [ ] ⌘F in a pane, then ⏎ / ⇧⏎ / ⌘G / ⇧⌘G; drag a pane divider; ⇧⌘D works with the real keyboard

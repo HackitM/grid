@@ -66,6 +66,7 @@ final class AppState {
         didSet { UserDefaults.standard.set(deckVisible, forKey: "layout.deck") }
     }
     let layout = LayoutState()
+    let shortcuts = ShortcutStore()
     let widgets = WidgetStore()
     var paletteOpen = false
     var confirmation: Confirmation?
@@ -140,7 +141,7 @@ final class AppState {
         return true
     }
 
-    func split(_ axis: Axis) {
+    func split(_ axis: SplitAxis) {
         if panel != .terminal { show(.terminal) }
         if terminals.split(axis) == nil {
             flash(.error, "A tab holds at most \(TerminalManager.maxPanesPerTab) panes.")

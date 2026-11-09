@@ -3,22 +3,53 @@ import GridCore
 import Observation
 import SwiftUI
 
-/// A terminal tab: one or more panes (sessions) laid out in a row or a column.
+/// A terminal tab: panes (sessions) arranged by a split tree, so panes can be split right or
+/// down anywhere and divided unevenly.
 @Observable
 @MainActor
 final class TerminalTab: Identifiable {
     let id = UUID()
-    var panes: [TerminalSession]
-    /// .horizontal = panes side by side (⌘D); .vertical = stacked (⇧⌘D). Set by the first split.
-    var axis: Axis = .horizontal
+    private(set) var layout: SplitTree
+    private(set) var sessionsByID: [UUID: TerminalSession]
     var focusedPaneID: UUID
     /// User-chosen name (double-click the tab); nil = automatic (focused pane's title).
     var customTitle: String?
 
     init(first: TerminalSession) {
-        panes = [first]
+        layout = .leaf(first.id)
+        sessionsByID = [first.id: first]
         focusedPaneID = first.id
     }
+
+    /// Panes in reading order.
+    var panes: [TerminalSession] { layout.leaves.compactMap { sessionsByID[$0] } }
+
+    func session(_ id: UUID) -> TerminalSession? { sessionsByID[id] }
+
+    func insert(_ s: TerminalSession, splitting target: UUID, axis: SplitAxis) {
+        sessionsByID[s.id] = s
+        layout = layout.splitting(target, axis: axis, with: s.id)
+        focusedPaneID = s.id
+    }
+
+    /// Removes a pane from the layout. Returns false if it was the last one.
+    func remove(_ id: UUID) -> Bool {
+        let order = layout.leaves
+        sessionsByID[id] = nil
+        guard let next = layout.removing(id) else { return false }
+        layout = next
+        if focusedPaneID == id, let i = order.firstIndex(of: id) {
+            let remaining = next.leaves
+            focusedPaneID = remaining[min(max(i - 1, 0), remaining.count - 1)]
+        }
+        return true
+    }
+
+    func resize(split: UUID, divider: Int, by delta: Double, minFraction: Double) {
+        layout = layout.resizing(splitID: split, divider: divider, by: delta, minFraction: minFraction)
+    }
+
+    func equalize(split: UUID) { layout = layout.equalizing(splitID: split) }
 
     var focused: TerminalSession? { panes.first { $0.id == focusedPaneID } ?? panes.first }
     var title: String { customTitle ?? focused?.displayTitle ?? "shell" }
@@ -30,7 +61,7 @@ final class TerminalTab: Identifiable {
 @Observable
 @MainActor
 final class TerminalManager {
-    static let maxPanesPerTab = 4
+    static let maxPanesPerTab = 6
 
     private(set) var tabs: [TerminalTab] = []
     var activeTabID: UUID?
@@ -55,7 +86,7 @@ final class TerminalManager {
     var active: TerminalSession? { activeTab?.focused }
     var activeID: UUID? { active?.id }
 
-    func tab(containing id: UUID) -> TerminalTab? { tabs.first { t in t.panes.contains { $0.id == id } } }
+    func tab(containing id: UUID) -> TerminalTab? { tabs.first { $0.session(id) != nil } }
 
     private func makeSession(at directory: String?) -> TerminalSession {
         counter += 1
@@ -84,17 +115,16 @@ final class TerminalManager {
         return s
     }
 
-    /// Splits the active tab: the new pane opens in the focused pane's current directory.
+    /// Splits the focused pane of the active tab right (.horizontal) or down (.vertical); the
+    /// new pane opens in the focused pane's current directory.
     @discardableResult
-    func split(_ axis: Axis) -> TerminalSession? {
-        guard let t = activeTab else { return newSession() }
+    func split(_ axis: SplitAxis) -> TerminalSession? {
+        guard let t = activeTab, let focused = t.focused else { return newSession() }
         guard t.panes.count < Self.maxPanesPerTab else { return nil }
-        if t.panes.count == 1 { t.axis = axis }
-        let cwd = t.focused.map { $0.refresh(); return $0.cwd } ?? nil
+        focused.refresh()
+        let cwd = focused.cwd
         let s = makeSession(at: cwd)
-        let at = (t.panes.firstIndex { $0.id == t.focusedPaneID } ?? t.panes.count - 1) + 1
-        t.panes.insert(s, at: at)
-        t.focusedPaneID = s.id
+        t.insert(s, splitting: focused.id, axis: axis)
         s.start(directory: cwd)
         return s
     }
@@ -145,18 +175,14 @@ final class TerminalManager {
     /// Removes one pane (session) after hanging it up; removes the tab when it was the last pane.
     /// Callers confirm first if `needsConfirmation`.
     func close(_ id: UUID) {
-        guard let t = tab(containing: id), let i = t.panes.firstIndex(where: { $0.id == id }) else { return }
-        let s = t.panes[i]
+        guard let t = tab(containing: id), let s = t.session(id) else { return }
         s.onExit = nil
         s.hangUp()
         s.view.removeFromSuperview()
-        t.panes.remove(at: i)
-        if t.panes.isEmpty {
+        if !t.remove(id) {
             let ti = tabs.firstIndex { $0.id == t.id } ?? 0
             tabs.removeAll { $0.id == t.id }
             if activeTabID == t.id { activeTabID = tabs.isEmpty ? nil : tabs[min(ti, tabs.count - 1)].id }
-        } else if t.focusedPaneID == id {
-            t.focusedPaneID = t.panes[min(i, t.panes.count - 1)].id
         }
     }
 

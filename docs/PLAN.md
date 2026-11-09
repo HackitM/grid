@@ -39,10 +39,13 @@
 - [x] App icon; SwiftTerm license shipped in the bundle
 - [x] Contrast: textMute raised to ≥ 4.6:1 (WCAG AA) on all themes
 - [x] Performance: cached file listing; 2M-line output in ~4 s
-- [ ] Terminal find bar styling
-- [ ] Keyboard shortcut customization beyond the palette key
-- [ ] VoiceOver walkthrough (needs a person)
-- [ ] Unequal pane sizes (draggable pane dividers), mixed-axis split layouts
+- [x] Themed terminal find bar: case / regex / whole-word options, live match count, ⌘G / ⇧⌘G
+- [x] Customizable keyboard shortcuts for every command (recorder in Settings, with validation)
+- [x] Split tree: split right or down anywhere, up to 6 panes per tab
+- [x] Draggable pane dividers (double-click to even out)
+- [x] Fix: menu titles, enabled states, and shortcuts went stale (SwiftUI didn't re-evaluate
+      Commands); now refreshed on every relevant state change
+- [ ] VoiceOver walkthrough (needs a person; skipped by request)
 - [ ] Optional OSC 7 / OSC 133 shell integration file (opt-in, documented) for prompt marks
 
 ## Widget deck ✅

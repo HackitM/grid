@@ -106,6 +106,17 @@ the next scan; missing apps are flagged, never silently launched. Same-name apps
 Spotlight (`NSMetadataQuery`) is not used: a deterministic scan works with indexing disabled and
 found 163 apps on the development Mac.
 
+### Panes, find, and shortcuts
+Each tab's panes form a `SplitTree` (GridCore, unit tested): leaves are pane IDs, splits hold an
+axis and size fractions. Splitting joins a same-axis parent instead of nesting; closing a pane gives
+its share to a neighbour and collapses or flattens splits. Find uses SwiftTerm's search API
+(`findNext`, `findPrevious`, `searchMatchSummary`) behind GRID's own bar. Shortcuts are data
+(`KeyBinding`, GridCore), stored as per-command overrides; every menu command reads its binding
+from `ShortcutStore`. SwiftUI doesn't re-evaluate `Commands` when @Observable state changes, and
+it rebuilds its NSMenu items lazily, so `CommandsRefresher` observes exactly the state the menus
+read, republishes it, and asks the menus to refresh. Otherwise titles, enabled states, and new
+shortcuts would stay stale until a menu was opened.
+
 ### Widget deck
 `WidgetStore` keeps an ordered list of `WidgetInstance` (kind, collapsed, expanded, string-map
 config) persisted as JSON in UserDefaults, so new options never break saved layouts.

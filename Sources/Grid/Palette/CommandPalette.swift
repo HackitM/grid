@@ -19,25 +19,25 @@ struct PaletteItem: Identifiable {
 enum PaletteBuilder {
     static func commands(_ app: AppState) -> [PaletteItem] {
         var c: [PaletteItem] = [
-            .init(id: "new-term", section: "COMMAND", title: "New Terminal Tab", glyph: "+", shortcut: "⌘T") { app.newTerminal() },
-            .init(id: "split-right", section: "COMMAND", title: "Split Pane Right", glyph: "▥", shortcut: "⌘D") { app.split(.horizontal) },
-            .init(id: "split-down", section: "COMMAND", title: "Split Pane Down", glyph: "▤", shortcut: "⇧⌘D") { app.split(.vertical) },
-            .init(id: "deck", section: "COMMAND", title: app.deckVisible ? "Hide Widget Deck" : "Show Widget Deck", glyph: "▦", shortcut: "⌘J") {
+            .init(id: "new-term", section: "COMMAND", title: "New Terminal Tab", glyph: "+", shortcut: app.shortcuts.display(.newTab)) { app.newTerminal() },
+            .init(id: "split-right", section: "COMMAND", title: "Split Pane Right", glyph: "▥", shortcut: app.shortcuts.display(.splitRight)) { app.split(.horizontal) },
+            .init(id: "split-down", section: "COMMAND", title: "Split Pane Down", glyph: "▤", shortcut: app.shortcuts.display(.splitDown)) { app.split(.vertical) },
+            .init(id: "deck", section: "COMMAND", title: app.deckVisible ? "Hide Widget Deck" : "Show Widget Deck", glyph: "▦", shortcut: app.shortcuts.display(.toggleDeck)) {
                 if app.panel != .terminal { app.show(.terminal); app.deckVisible = true } else { app.deckVisible.toggle() }
             },
-            .init(id: "new-folder", section: "COMMAND", title: "New Folder", subtitle: PathResolver.abbreviate(app.files.currentURL.path), glyph: "+", shortcut: "⇧⌘N") {
+            .init(id: "new-folder", section: "COMMAND", title: "New Folder", subtitle: PathResolver.abbreviate(app.files.currentURL.path), glyph: "+", shortcut: app.shortcuts.display(.newFolder)) {
                 app.show(.files); app.fileOps.newFolder()
             },
-            .init(id: "go-term", section: "COMMAND", title: "Go to Terminal", glyph: "01", shortcut: "⌥⌘1") { app.show(.terminal); app.focusTerminal() },
-            .init(id: "go-files", section: "COMMAND", title: "Go to Files", glyph: "02", shortcut: "⌥⌘2") { app.show(.files) },
-            .init(id: "go-apps", section: "COMMAND", title: "Go to Applications", glyph: "03", shortcut: "⌥⌘3") { app.show(.apps) },
-            .init(id: "go-web", section: "COMMAND", title: "Go to Web", glyph: "04", shortcut: "⌥⌘4") { app.show(.web) },
-            .init(id: "settings", section: "COMMAND", title: "Settings", glyph: "05", shortcut: "⌘,") { app.show(.settings) },
-            .init(id: "cwd-files", section: "COMMAND", title: "Show Terminal Directory in Files", subtitle: app.terminals.active?.cwd.map { PathResolver.abbreviate($0) } ?? "", glyph: "⇄", shortcut: "⇧⌘J") { app.revealTerminalDirectoryInFiles() },
-            .init(id: "term-here", section: "COMMAND", title: "Open Terminal Here", subtitle: PathResolver.abbreviate(app.files.currentURL.path), glyph: "⇄", shortcut: "⌥⌘T") { app.openTerminalHere() },
-            .init(id: "sidebar", section: "COMMAND", title: "Toggle Files Sidebar", glyph: "▤", shortcut: "⌘B") { app.filesSidebar.toggle() },
-            .init(id: "inspector", section: "COMMAND", title: "Toggle Inspector", glyph: "▥", shortcut: "⌘I") { app.inspectorVisible.toggle() },
-            .init(id: "hidden", section: "COMMAND", title: app.files.showHidden ? "Hide Hidden Files" : "Show Hidden Files", glyph: "◌", shortcut: "⇧⌘.") { app.files.showHidden.toggle() },
+            .init(id: "go-term", section: "COMMAND", title: "Go to Terminal", glyph: "01", shortcut: app.shortcuts.display(.showTerminal)) { app.show(.terminal); app.focusTerminal() },
+            .init(id: "go-files", section: "COMMAND", title: "Go to Files", glyph: "02", shortcut: app.shortcuts.display(.showFiles)) { app.show(.files) },
+            .init(id: "go-apps", section: "COMMAND", title: "Go to Applications", glyph: "03", shortcut: app.shortcuts.display(.showApps)) { app.show(.apps) },
+            .init(id: "go-web", section: "COMMAND", title: "Go to Web", glyph: "04", shortcut: app.shortcuts.display(.showWeb)) { app.show(.web) },
+            .init(id: "settings", section: "COMMAND", title: "Settings", glyph: "05", shortcut: app.shortcuts.display(.settings)) { app.show(.settings) },
+            .init(id: "cwd-files", section: "COMMAND", title: "Show Terminal Directory in Files", subtitle: app.terminals.active?.cwd.map { PathResolver.abbreviate($0) } ?? "", glyph: "⇄", shortcut: app.shortcuts.display(.revealTerminalDirectory)) { app.revealTerminalDirectoryInFiles() },
+            .init(id: "term-here", section: "COMMAND", title: "Open Terminal Here", subtitle: PathResolver.abbreviate(app.files.currentURL.path), glyph: "⇄", shortcut: app.shortcuts.display(.terminalHere)) { app.openTerminalHere() },
+            .init(id: "sidebar", section: "COMMAND", title: "Toggle Files Sidebar", glyph: "▤", shortcut: app.shortcuts.display(.toggleSidebar)) { app.filesSidebar.toggle() },
+            .init(id: "inspector", section: "COMMAND", title: "Toggle Inspector", glyph: "▥", shortcut: app.shortcuts.display(.toggleInspector)) { app.inspectorVisible.toggle() },
+            .init(id: "hidden", section: "COMMAND", title: app.files.showHidden ? "Hide Hidden Files" : "Show Hidden Files", glyph: "◌", shortcut: app.shortcuts.display(.toggleHidden)) { app.files.showHidden.toggle() },
             .init(id: "rescan", section: "COMMAND", title: "Rescan Applications", glyph: "↻") { app.apps.rescan(); app.flash(.info, "Rescanning applications") },
             .init(id: "copy-cwd", section: "COMMAND", title: "Copy Terminal Directory Path", glyph: "⧉") {
                 if let d = app.terminals.active?.cwd { app.files.copyPaths([URL(fileURLWithPath: d)]); app.flash(.info, "Copied \(PathResolver.abbreviate(d))") }

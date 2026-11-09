@@ -69,7 +69,7 @@ private struct TopBar: View {
             Button { app.paletteOpen.toggle() } label: {
                 HStack(spacing: 6) {
                     SectionLabel("command")
-                    KeyCap(app.settings.paletteShortcut.label)
+                    if !app.shortcuts.display(.palette).isEmpty { KeyCap(app.shortcuts.display(.palette)) }
                 }
             }
             .buttonStyle(.plain)
@@ -105,6 +105,10 @@ private struct RailItem: View {
     let panel: PanelID
     @State private var hover = false
 
+    private var railCommand: GridCommand {
+        switch panel { case .terminal: .showTerminal; case .files: .showFiles; case .apps: .showApps; case .web: .showWeb; case .settings: .settings }
+    }
+
     var body: some View {
         let active = app.panel == panel
         let badge = panel == .terminal && app.terminals.sessions.contains { $0.unseenCompletion }
@@ -127,7 +131,7 @@ private struct RailItem: View {
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
-        .help("\(panel.title)  \(panel == .settings ? "⌘," : "⌥⌘\(panel.shortcutKey)")")
+        .help(panel.title + app.shortcuts.hint(railCommand))
         .accessibilityLabel(panel.title)
         .accessibilityAddTraits(active ? .isSelected : [])
     }

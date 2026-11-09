@@ -29,6 +29,16 @@ enum DebugHooks {
         }
     }
 
+    /// Compact text form of a split tree, e.g. "H[1 0.50 | V[2 0.50 / 3 0.50] 0.50]".
+    static func describe(_ t: SplitTree, _ tab: TerminalTab) -> String {
+        switch t {
+        case .leaf(let id): return "\(tab.session(id)?.number ?? 0)"
+        case .split(_, let axis, let children, let f):
+            let parts = zip(children, f).map { describe($0.0, tab) + String(format: " %.2f", $0.1) }
+            return (axis == .horizontal ? "H[" : "V[") + parts.joined(separator: axis == .horizontal ? " | " : " / ") + "]"
+        }
+    }
+
     static func uninstall() {
         server?.stop()
         server = nil
@@ -143,6 +153,72 @@ enum DebugHooks {
             }
         case "split":
             app.split((c["axis"] as? String) == "down" ? .vertical : .horizontal)
+        case "shortcut":
+            // {"cmd":"shortcut","command":"splitRight","key":"e","mods":["command","option"]} | "reset":true | "resetAll":true
+            if (c["resetAll"] as? Bool) == true { app.shortcuts.resetAll(); app.flash(.info, "reset all"); break }
+            guard let cmd = GridCommand(rawValue: c["command"] as? String ?? "") else { break }
+            if (c["reset"] as? Bool) == true { app.shortcuts.reset(cmd); app.flash(.info, "reset"); break }
+            let mods = Set(((c["mods"] as? [String]) ?? []).compactMap(KeyBinding.Modifier.init(rawValue:)))
+            let err = app.shortcuts.assign(KeyBinding(c["key"] as? String ?? "", mods), to: cmd)
+            app.flash(err == nil ? .info : .error, err ?? "assigned")
+        case "menuKeys":
+            // Writes the live menu bar's key equivalents for the given item titles.
+            guard let path, let titles = c["titles"] as? [String] else { break }
+            var out: [String: String] = [:]
+            func walk(_ m: NSMenu) {
+                for item in m.items {
+                    if titles.contains(item.title) {
+                        let f = item.keyEquivalentModifierMask
+                        out[item.title] = (f.contains(.control) ? "⌃" : "") + (f.contains(.option) ? "⌥" : "") +
+                            (f.contains(.shift) ? "⇧" : "") + (f.contains(.command) ? "⌘" : "") + item.keyEquivalent
+                    }
+                    if let sub = item.submenu { walk(sub) }
+                }
+            }
+            // Let menus refresh first, exactly as AppKit does before showing or matching them.
+            func refresh(_ m: NSMenu) {
+                m.delegate?.menuNeedsUpdate?(m)
+                m.update()
+                for item in m.items { if let sub = item.submenu { refresh(sub) } }
+            }
+            if let main = NSApp.mainMenu { refresh(main); walk(main) }
+            if let data = try? JSONSerialization.data(withJSONObject: out, options: [.sortedKeys]) { try? data.write(to: URL(fileURLWithPath: path)) }
+        case "keyEquiv":
+            // Sends a key-down through the menu bar's key-equivalent matching, like a real keypress.
+            // {"cmd":"keyEquiv","chars":"e","mods":["command","option"],"path":...}
+            guard let path, let chars = c["chars"] as? String, let w = window else { break }
+            var flags: NSEvent.ModifierFlags = []
+            for m in (c["mods"] as? [String]) ?? [] {
+                switch m { case "command": flags.insert(.command); case "option": flags.insert(.option)
+                case "shift": flags.insert(.shift); case "control": flags.insert(.control); default: break }
+            }
+            let fkeys: [String: Int] = ["f6": NSF6FunctionKey]
+            let ch = fkeys[chars].flatMap { UnicodeScalar($0).map { String(Character($0)) } } ?? chars
+            let ev = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                                      windowNumber: w.windowNumber, context: nil, characters: ch, charactersIgnoringModifiers: ch,
+                                      isARepeat: false, keyCode: UInt16((c["keyCode"] as? Int) ?? (chars == "f6" ? 97 : 0)))
+            // Dispatch like a real keypress (window → menus), not by calling the menu directly.
+            if let ev { NSApp.sendEvent(ev) }
+            try? "sent".write(toFile: path, atomically: true, encoding: .utf8)
+        case "find":
+            // {"cmd":"find","query":"x","regex":false,"case":false} ; {"cmd":"find","op":"next"|"prev"|"close"}
+            guard let s = app.terminals.active else { break }
+            switch c["op"] as? String {
+            case "next": s.find.next(s.view)
+            case "prev": s.find.previous(s.view)
+            case "close": s.find.close(s.view)
+            default:
+                s.find.open()
+                s.find.regex = (c["regex"] as? Bool) ?? false
+                s.find.caseSensitive = (c["case"] as? Bool) ?? false
+                s.find.query = (c["query"] as? String) ?? ""
+                s.find.update(s.view)
+            }
+        case "resizePane":
+            // {"cmd":"resizePane","delta":0.2}: moves the first divider of the active tab's root split
+            if let t = app.terminals.activeTab, case .split(let sid, _, _, _) = t.layout {
+                t.resize(split: sid, divider: 0, by: (c["delta"] as? Double) ?? 0.1, minFraction: 0.1)
+            }
         case "closeTab":
             if let id = app.terminals.activeTabID { app.requestCloseTab(id) }
         case "deck":
@@ -187,7 +263,8 @@ enum DebugHooks {
                 s.refresh()
                 return ["number": s.number, "pid": s.shellPID, "cwd": s.cwd ?? "", "fg": s.foregroundName ?? "",
                         "cols": s.columns, "rows": s.rows, "exited": s.exited, "exitCode": s.exitCode.map { Int($0) } ?? -999,
-                        "title": s.programTitle, "focus": s.hasFocus, "bell": s.bellPending, "metal": s.view.isUsingMetalRenderer,
+                        "title": s.programTitle, "focus": s.hasFocus, "bell": s.bellPending,
+                        "find": ["visible": s.find.visible, "index": s.find.index, "total": s.find.total, "invalid": s.find.invalidPattern], "metal": s.view.isUsingMetalRenderer,
                         "screen": (s.view.terminalContentSnapshot(region: .viewport)?.rows.map { r in
                             var t = r.text; while t.last == " " { t.removeLast() }; return t } ?? []), "descendants": ProcessInspector.descendants(of: s.shellPID).map { Int($0) }]
             }
@@ -200,7 +277,7 @@ enum DebugHooks {
                           "renaming": app.files.renamingID ?? "", "busy": app.fileOps.busy ?? "",
                           "undo": app.fileOps.undoLabel ?? ""],
                 "apps": app.apps.records.count, "confirmation": app.confirmation?.code ?? "",
-                "tabs": app.terminals.tabs.map { t in ["panes": t.panes.map(\.number), "axis": t.axis == .horizontal ? "h" : "v",
+                "tabs": app.terminals.tabs.map { t in ["panes": t.panes.map(\.number), "layout": DebugHooks.describe(t.layout, t),
                                                          "focused": t.focused?.number ?? 0, "title": t.title] },
                 "widgets": app.widgets.widgets.map { ["kind": $0.kind.rawValue, "expanded": $0.expanded, "collapsed": $0.collapsed] },
                 "deck": app.deckVisible,

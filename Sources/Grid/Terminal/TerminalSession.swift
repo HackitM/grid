@@ -28,6 +28,8 @@ final class TerminalSession: Identifiable {
     var unseenCompletion = false
     /// The program rang the bell (BEL) while this pane wasn't focused.
     var bellPending = false
+    /// Find-in-scrollback state for this pane.
+    let find = TerminalFind()
 
     var isBusy: Bool { foregroundName != nil && !exited }
 

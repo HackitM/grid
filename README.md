@@ -53,7 +53,8 @@ Include SwiftTerm's MIT license notice with binaries (see LICENSES.md).
 |---|---|
 | ⇧⌘P | Command palette (configurable: ⌘K, ⇧⌘Space) |
 | ⌘T / ⌘W / ⇧⌘W | New tab / close pane (or tab) / close tab (⌘W on other panels returns to the terminal) |
-| ⌘D / ⇧⌘D, ⌥⌘← ⌥⌘→ | Split pane right / down, move between panes |
+| ⌘D / ⇧⌘D, ⌥⌘← ⌥⌘→ | Split the focused pane right / down (mix freely), move between panes; drag dividers to resize |
+| ⌘F, ⌘G / ⇧⌘G | Find in the terminal (case / regex / whole word), next / previous match |
 | ⌘1…⌘9, ⇧⌘[ ⇧⌘] | Select / cycle tabs (double-click a tab to rename it) |
 | ⌘J | Widget deck |
 | ⌥⌘1…⌥⌘4, ⌘, | Terminal · Files · Apps · Web · Settings |
@@ -63,7 +64,11 @@ Include SwiftTerm's MIT license notice with binaries (see LICENSES.md).
 | ⌘L, ⌘F, ⌘[ ⌘] ⌘↑, ⇧⌘. | Files: path · filter · back/forward/up · hidden files |
 | ⇧⌘N, ⌘C ⌘V ⌥⌘V, ⌘⌫, ⌘Z | Files: new folder · copy/paste/move · Move to Trash · undo |
 | Space, ⇧↑↓, ⌘A, ⌘-click ⇧-click | Files: Quick Look · multi-select |
-| ⌘K | Clear scrollback (unless used for the palette) |
+| ⌘K | Clear scrollback |
+
+Every shortcut except ⌘1–⌘9 can be changed in **Settings › Keyboard**: click a shortcut and press
+the new keys. Shortcuts must include ⌘ (or be F1–F12) so they never take keys from programs in the
+terminal, and conflicts and reserved combinations are refused.
 
 Palette grammar (application commands, never sent to the shell): `app Safari`,
 `files ~/Projects`, `term ~/Projects`, `web example.com`, `theme ares`.
@@ -100,7 +105,7 @@ motion, and backdrop effects, with Reduce Motion respected. Web: opening address
 browser.
 
 ## Known limitations
-- Split panes share one axis per tab (set by the first split) and stay equal-sized.
+- A tab holds up to 6 panes.
 - Multi-item drags into Finder carry only the first item (an AppKit/SwiftUI drag limitation);
   drags into GRID's terminal carry them all.
 - The Git widget runs `git status` in the terminal's folder (with `core.fsmonitor` disabled). Like
@@ -114,7 +119,7 @@ browser.
   the in-app confirmation. (⌘W never closes the window while sessions exist: it closes the
   active session, or returns to the terminal from other panels.)
 - Web pages aren't rendered in-app yet (Milestone 3: reader mode first).
-- Find bar styling and keyboard-shortcut customization beyond the palette key are still to do.
+- ⌘1–⌘9 (tab switching) and ⌘Z in the file list aren't rebindable.
 
 ## Privacy
 No telemetry, accounts, network services, or AI integration. Settings are stored in UserDefaults
