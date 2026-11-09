@@ -6,3 +6,6 @@ build/
 # Reference media is copyrighted film material: keep it local, never commit or redistribute.
 inspo_media/
 dist/
+
+# Live map fixtures (ODbL-derived; never committed)
+Tests/Fixtures/live/
