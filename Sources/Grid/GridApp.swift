@@ -14,6 +14,7 @@ struct GridApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 800)
+        .windowResizability(.contentMinSize)
         .commands { GridCommands(app: delegate.state, refresher: delegate.commandsRefresher) }
     }
 }

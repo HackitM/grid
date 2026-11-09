@@ -1,163 +1,231 @@
+<div align="center">
+
 # GRID
 
-A terminal-first macOS workspace: a real PTY terminal, a file browser, and an app launcher in one
-keyboard-driven window, with a restrained interface language derived from the *Tron: Legacy* and
-*Tron: Ares* production design. Native Swift (SwiftUI + AppKit) on top of
-[SwiftTerm](https://github.com/migueldeicaza/SwiftTerm).
+**A terminal-first workspace for macOS.**<br>
+A real terminal, a file browser, an app launcher, a widget deck and a web browser in one keyboard-driven window, styled after the production design of *Tron: Legacy* and *Tron: Ares*.
 
-![GRID: split panes and the widget deck](docs/screenshots/grid-deck.png)
+[![macOS 15+](https://img.shields.io/badge/macOS-15%2B-0b0f12?logo=apple&logoColor=white)](#requirements)
+[![Swift 6](https://img.shields.io/badge/Swift-6-f05138?logo=swift&logoColor=white)](Package.swift)
+[![Apple silicon](https://img.shields.io/badge/Apple%20silicon-native-6be3ff)](#requirements)
+[![Release](https://img.shields.io/badge/release-v0.3.0-6be3ff)](https://github.com/HackitM/grid/releases/latest)
 
-- **docs/ARCHITECTURE.md**: proposal, stack comparison, architecture, security model, web research
-- **docs/DESIGN.md**: visual spec and design tokens
-- **docs/PLAN.md**: staged checklist (what's done, what's next)
-- **docs/TESTING.md**: test results and manual checklist
-- **LICENSES.md**: dependencies and licenses
+[**Download**](https://github.com/HackitM/grid/releases/latest) · [Features](#features) · [Install](#install) · [Build from source](#build-from-source) · [Shortcuts](#keyboard-shortcuts) · [Docs](#documentation)
 
-## Requirements
-macOS 14+, Xcode 16+ (developed with Xcode 27.2 / Swift 6.4). No other tools.
+![GRID with the Files tree, a split terminal and the widget deck](docs/screenshots/hero.png)
 
-## Build & run
+</div>
+
+## Why GRID?
+
+- **The terminal comes first.** Your real login shell in a native terminal ([SwiftTerm](https://github.com/migueldeicaza/SwiftTerm)) with tabs, splits and find. Everything else sits around it.
+- **Everything is one keystroke away.** Files, apps, settings and web pages all open from the command palette (⇧⌘P), and every shortcut can be changed.
+- **Native and lightweight.** Swift, SwiftUI and AppKit, with WebKit for the browser. No Electron, no background services.
+- **Private by default.** No accounts, no telemetry, no cloud. Your data stays on your Mac ([details](#privacy--security)).
+
+## Features
+
+### Terminal
+- Your login shell (zsh by default) with your usual PATH and dotfiles, in tabs and **split panes** (up to six per tab, any direction, draggable dividers).
+- **Find** with case, regex and whole-word options; renamable tabs; busy, finished-job and bell indicators.
+- **Drag files in safely:** dropped paths are inserted quoted and are **never run** for you.
+- GRID tracks each session's working directory, so the Files panel and widgets can follow it.
+
+### Files
+- A file browser with breadcrumbs, history, an editable path, sorting, filtering and a deep recursive search.
+- Folders **expand in place** as a tree (▸, or → / ←; ⌥ expands three levels).
+- Everyday file operations: new folder, rename, duplicate, copy / paste / move, Move to Trash, multi-step undo, Quick Look and Open With.
+- The **File Inspector** shows exactly what a file will insert into the terminal before you drag it, and warns about executables and downloaded files.
+
+### A workspace you arrange
+
+![The widget deck docked under the terminal with cards side by side, in the Ares theme](docs/screenshots/deck.png)
+
+- **Dockable panels.** Drag Files, Terminal or the Widget Deck by its title bar to any edge of another panel. Terminal panes and tabs move the same way. The layout is saved.
+- **Widget deck (⌘J).** Clock, System, Network, Storage, Power, Sessions, Pinned Apps, Git, Notes, Recent Files and the File Inspector, all showing real measurements. Drop a card beside another for side-by-side rows, which works well with the deck docked at the bottom.
+- **Build your own widgets.** A widget is a folder with a `manifest.json` and some JavaScript. GRID draws it with its own components, so it always matches the design. Widgets run in a sandboxed helper process and can only use what you approve. See the [Widget API](docs/WIDGETS.md) and [nine examples](widgets/examples).
+
+### Built-in browser
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/browser.png" alt="GitHub in GRID's browser with GRID's site theme"></td>
+    <td width="50%"><img src="docs/screenshots/reader.png" alt="A Wikipedia article in GRID's reader view"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Site theme on GitHub</sub></td>
+    <td align="center"><sub>Reader view (⇧⌘R)</sub></td>
+  </tr>
+</table>
+
+- A full WebKit browser (Safari's engine) drawn in GRID's style: tabs, address bar with search, find, zoom and history.
+- **Site themes** give GitHub, Hacker News, MDN, Wikipedia and Stack Overflow GRID's colours and type. You can toggle them per site, and they follow your GRID theme.
+- **Reader view** re-sets articles in GRID's monospaced layout.
+- **Ad blocking** uses uBlock Origin's default filter lists through Safari's built-in content blocker, with a one-click "off for this site".
+- **Extensions** in Chrome / Safari WebExtension format (macOS 15.4+) install after a permission review. Their buttons only appear once one is installed.
+- Web pages can't reach your terminal, files or apps. Downloads always ask first.
+
+### Command palette and themes
+
+<img src="docs/screenshots/palette.png" alt="The command palette in the ENCOM amber theme" width="640" align="right">
+
+**⇧⌘P** opens the palette for commands, apps, folders and web addresses. It understands a small grammar:
+
+```text
+app Safari
+files ~/Projects
+term ~/Projects
+web example.com
+theme ares
+```
+
+Palette commands are GRID commands. They are never sent to your shell.
+
+Three themes: **Legacy** (cyan), **Ares** (red) and **ENCOM** (amber). Glow, motion and the grid backdrop can each be turned off, and GRID respects Reduce Motion.
+
+<br clear="right">
+
+## Install
+
+1. Download **GRID-x.y.z-macOS.zip** from the [latest release](https://github.com/HackitM/grid/releases/latest), unzip it and move **GRID.app** to Applications.
+2. GRID isn't notarized by Apple yet, so macOS blocks the first launch. Open it once, then go to **System Settings › Privacy & Security** and click **Open Anyway**. You only need to do this once.
+3. Optional: verify the download against the `.sha256` file from the same release:
+   ```bash
+   shasum -a 256 GRID-0.3.0-macOS.zip
+   ```
+
+### Requirements
+- macOS 15 Sequoia or later (browser extensions need macOS 15.4)
+- Apple silicon
+
+### First run
+- The first time a shell or the Files panel touches **Desktop, Documents, Downloads** or a removable or network volume, macOS asks for permission. That's the normal macOS privacy system, and GRID doesn't try to get around it. The command waits until you answer.
+- Your shell starts as a login shell, so it behaves just like it does in Terminal.app.
+
+## Keyboard shortcuts
+
+| Keys | Action |
+|---|---|
+| **⇧⌘P** | Command palette (or ⌘K, ⇧⌘Space; set in Settings) |
+| **⌘T** / **⌘W** | New tab / close pane or tab |
+| **⌘D** / **⇧⌘D** | Split pane right / down |
+| **⌥⌘← ⌥⌘→** | Move between panes |
+| **⌘1…⌘9**, **⇧⌘[ ⇧⌘]** | Select or cycle tabs |
+| **⌘F**, **⌘G** / **⇧⌘G** | Find, next / previous |
+| **⌘B** / **⌘J** | Show or hide Files / Widget Deck |
+| **⌥⌘1…⌥⌘4**, **⌘,** | Terminal · Files · Apps · Web · Settings |
+| **⌥⌘T** / **⇧⌘J** | New terminal in this folder / show the terminal's folder in Files |
+| **⇧⌘R** | Reader view (browser) |
+
+<details>
+<summary><b>All shortcuts</b></summary>
+
+| Keys | Action |
+|---|---|
+| ⇧⌘W | Close tab |
+| ⌥⌘0 | Show or hide the Terminal panel |
+| ⌘I | Files inspector |
+| ⌘K | Clear scrollback |
+| ⌘L, ⌘F, ⌘[ ⌘] ⌘↑, ⇧⌘. | Files: path · filter · back / forward / up · hidden files |
+| ⇧⌘N, ⌘C ⌘V ⌥⌘V, ⌘⌫, ⌘Z | Files: new folder · copy / paste / move · Move to Trash · undo |
+| Space, ⇧↑↓, ⌘A, ⌘-click ⇧-click | Files: Quick Look · multi-select |
+| ▸ click, → / ←, ⌥→ | Files: expand / collapse folders in place (⌥ expands three levels) |
+| ⌘T ⌘W ⌘F ⌘L ⌘R ⌘[ ⌘] | Browser: new tab · close tab · find · address bar · reload · back / forward |
+| ⇧⌘[ ⇧⌘] | Browser: previous / next tab |
+
+</details>
+
+Every shortcut except ⌘1–⌘9 can be changed in **Settings › Keyboard**: click a shortcut and press the new keys. Shortcuts must include ⌘ (or be F1–F12) so they never take keys from programs running in the terminal.
+
+## Build from source
+
+You need Xcode 16.3 or later (GRID is developed with Xcode 27 and Swift 6.4). There are no other dependencies to install, because Swift Package Manager fetches them.
+
 ```bash
-scripts/bundle.sh          # release build -> build/GRID.app
+git clone https://github.com/HackitM/grid.git
+cd grid
+scripts/bundle.sh        # release build -> build/GRID.app
 open build/GRID.app
 ```
-Development:
-```bash
-swift build                # compile
-swift test                 # unit tests
-scripts/bundle.sh debug    # debug .app; QA hooks only with `--args --qa` (see docs/TESTING.md)
-open Package.swift         # work in Xcode (run the "Grid" scheme)
-```
-Running the bare executable from `swift run` works for quick checks, but use the `.app` bundle for
-real use: macOS privacy prompts, the Dock icon, and LaunchServices need a bundle identifier.
 
-## Packaging for distribution
-GRID can't be App-Sandboxed (its shell must reach your files), so it ships outside the Mac App Store:
+For development:
+
+```bash
+swift build              # compile
+swift test               # run the unit tests
+scripts/bundle.sh debug  # debug build of the .app
+open Package.swift       # work in Xcode (run the "Grid" scheme)
+```
+
+Use the `.app` bundle for real use rather than `swift run`, since macOS privacy prompts, the Dock icon and LaunchServices all need a bundle identifier.
+
+## Privacy & security
+
+- **No accounts, telemetry, cloud services or AI features.** Settings, browsing data and history stay on your Mac. Terminal contents are never logged or stored.
+- **Network requests GRID makes on its own:** downloading the ad-blocking filter lists from their publishers (only while ad blocking is on), and Safari's standard fraudulent-site check in the browser. Everything else happens because you asked for it.
+- **Web content is isolated.** Pages get no bridge into GRID, can't run commands, and can't open other apps without a click and a confirmation. Downloads are confirmed and quarantined like Safari's.
+- **Widgets are sandboxed.** Custom widgets run in a separate, locked-down process and only get the permissions you approve. Those are shown in plain words, with the exact commands, paths and hosts.
+- **macOS protections stay on.** GRID isn't App-Sandboxed (your shell needs to reach your files), so it ships outside the Mac App Store. It never tries to work around macOS privacy prompts.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full security model.
+
+## Known limitations
+
+- Not notarized yet (see [Install](#install)).
+- A terminal tab holds up to six panes.
+- Directory tracking follows the shell process, not `ssh` sessions or subshells.
+- Dragging several items into Finder carries only the first one (an AppKit / SwiftUI limitation). Drags into GRID's terminal carry them all.
+- The Git widget runs `git status`. Like any prompt that shows git status, a malicious repository's config could run commands, so point it only at repositories you trust.
+- Some ads that uBlock Origin removes with page scripts (for example on YouTube) can't be blocked by Safari's content blocker.
+- App discovery scans the standard Applications folders, up to three levels deep.
+
+## Documentation
+
+| Document | What's in it |
+|---|---|
+| [WIDGETS.md](docs/WIDGETS.md) | Widget API: build and share your own widgets |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architecture, security model, technology choices |
+| [DESIGN.md](docs/DESIGN.md) | Visual spec and design tokens |
+| [TESTING.md](docs/TESTING.md) | Automated tests, QA hooks and manual checklist |
+| [PLAN.md](docs/PLAN.md) | Roadmap: what's done and what's next |
+| [releases/](docs/releases) | Release notes |
+
+## Development
+
+```text
+Sources/GridCore        Core logic (paths, shell quoting, layout, ad-block filters, widget packages); unit-tested
+Sources/Grid            The app: SwiftUI + AppKit views, terminal, files, widgets, browser
+Sources/GridWidgetHost  Sandboxed helper process that runs custom widgets
+Tests/GridCoreTests     Unit tests (swift test)
+widgets/examples        Example widget packages
+scripts/                bundle.sh (build the .app), release.sh (publish a release)
+```
+
+Debug builds include automation hooks for UI testing. They're only active when launched with `--args --qa`. See [docs/TESTING.md](docs/TESTING.md).
+
+### Releasing
+
+1. Bump `CFBundleShortVersionString` in `Resources/Info.plist`.
+2. Write `docs/releases/<version>.md`.
+3. Commit, then run `scripts/release.sh <version>`.
+
+The script runs the tests, builds into `dist/`, zips the app with a SHA-256 checksum, tags `v<version>` and publishes a GitHub Release with the notes.
+
+To sign and notarize with your own Developer ID:
+
 ```bash
 SIGN_ID="Developer ID Application: Your Name (TEAMID)" scripts/bundle.sh
 ditto -c -k --keepParent build/GRID.app build/GRID.zip
 xcrun notarytool submit build/GRID.zip --keychain-profile <profile> --wait
 xcrun stapler staple build/GRID.app
 ```
-Include SwiftTerm's MIT license notice with binaries (see LICENSES.md).
 
-**Publishing a release:** bump `CFBundleShortVersionString` in `Resources/Info.plist`, write
-`docs/releases/<version>.md`, commit, then run `scripts/release.sh <version>`. It runs the tests,
-builds into `dist/`, zips the app, adds a SHA-256 file, tags `v<version>` and creates the GitHub
-Release with both attached.
+## Acknowledgements
 
-## First run: what to expect
-- The first time a shell or the file browser touches **Desktop, Documents, Downloads**, or a
-  removable/network volume, macOS asks “GRID would like to access…”. That's the normal privacy
-  system; GRID never tries to get around it. Until you answer, that command waits.
-- Your login shell (zsh by default) starts as a login shell, so your PATH and dotfiles load as they
-  do in Terminal.app.
+- [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) powers the terminal.
+- [Readability.js](https://github.com/mozilla/readability) from Mozilla powers reader view.
+- [uBlock Origin](https://github.com/gorhill/uBlock)'s default filter lists (EasyList, EasyPrivacy, Peter Lowe's list and uBlock filters) power ad blocking.
 
-## Keyboard
-| Keys | Action |
-|---|---|
-| ⇧⌘P | Command palette (configurable: ⌘K, ⇧⌘Space) |
-| ⌘T / ⌘W / ⇧⌘W | New tab / close pane (or tab) / close tab (⌘W on other panels returns to the terminal) |
-| ⌘D / ⇧⌘D, ⌥⌘← ⌥⌘→ | Split the focused pane right / down (mix freely), move between panes; drag dividers to resize |
-| ⌘F, ⌘G / ⇧⌘G | Find in the terminal (case / regex / whole word), next / previous match |
-| ⌘1…⌘9, ⇧⌘[ ⇧⌘] | Select / cycle tabs (double-click a tab to rename it) |
-| ⌘B / ⌥⌘0 / ⌘J | Files / Terminal / Widget Deck panels (show or hide) |
-| ⌥⌘1…⌥⌘4, ⌘, | Terminal · Files · Apps · Web · Settings |
-| ⌘B / ⌘I | Files sidebar / inspector |
-| ⌥⌘T | New session in the current Files folder |
-| ⇧⌘J | Show the terminal's directory in Files |
-| ⌘L, ⌘F, ⌘[ ⌘] ⌘↑, ⇧⌘. | Files: path · filter · back/forward/up · hidden files |
-| ⇧⌘N, ⌘C ⌘V ⌥⌘V, ⌘⌫, ⌘Z | Files: new folder · copy/paste/move · Move to Trash · undo |
-| Space, ⇧↑↓, ⌘A, ⌘-click ⇧-click | Files: Quick Look · multi-select |
-| ▸ click, → / ←, ⌥→ | Files: expand / collapse folders in place (⌥ expands 3 levels) |
-| ⌘K | Clear scrollback |
+Third-party licenses are listed in [LICENSES.md](LICENSES.md). Include SwiftTerm's MIT notice when you distribute binaries.
 
-Every shortcut except ⌘1–⌘9 can be changed in **Settings › Keyboard**: click a shortcut and press
-the new keys. Shortcuts must include ⌘ (or be F1–F12) so they never take keys from programs in the
-terminal, and conflicts and reserved combinations are refused.
-
-Palette grammar (application commands, never sent to the shell): `app Safari`,
-`files ~/Projects`, `term ~/Projects`, `web example.com`, `theme ares`.
-
-## Implemented
-
-**Workspace docking:** Files, Terminal and the Widget Deck are dockable panels.
-- **Move:** drag a panel's title bar (≡) onto another panel's left, right, top or bottom edge; a highlight shows where it will land.
-- **Close and reopen:** × closes a panel, and closing the terminal panel only hides it, so sessions keep running. Reopen panels from the View menu, their shortcuts, or the buttons shown when everything is closed.
-- **Resize:** drag the dividers.
-- **Persists:** the layout is saved across launches; *View › Reset Workspace Layout* restores the default.
-
-**Terminal panes** move the same way. Drag a pane's header onto another pane's edge, onto a tab (to move it into that tab), or onto empty tab-bar space (to give it its own tab). Drag tabs to reorder them. Each pane header has its own ×.
-
-**Milestone 2:** split panes (up to 4 per tab), tab rename, bell indicator. File operations:
-new folder, inline rename, duplicate, copy/cut/paste and move, drag into Files, Move to Trash,
-Delete Immediately (confirmed), name-conflict handling (Replace / Keep Both / Skip), and multi-step
-undo. Multi-select, Quick Look (Space), Open With, multi-path drag into the terminal. Draggable
-panel dividers and persisted layout (widths, visibility, last folder). App icon. WCAG-AA label
-contrast. Cached file listing.
-
-**Widget deck (⌘J):** eleven built-in widgets that show real data or perform real actions, plus
-your own:
-- **Clock:** extra time zones.
-- **System:** CPU, memory, load and uptime, measured.
-- **Network:** live rates and IP.
-- **Storage** and **Power:** disk space; battery charge and charging state.
-- **Sessions:** your tabs and panes; click to switch.
-- **Pinned Apps:** a launch strip.
-- **Git:** status of the terminal's folder or a fixed repo.
-- **Notes** and **Recent Files.**
-- **File Inspector:** the Files selection before you drag it into the terminal: the exact quoted
-  text it will insert, executable/interpreter and "downloaded from" warnings, line count,
-  encoding, line endings, image size, a preview, folder totals on request, and Insert / Copy /
-  Quick Look / Terminal actions. Drag its icon into the terminal to insert the path.
-- **Custom widgets:** folders with a `manifest.json` and JavaScript. **New Widget…** scaffolds one
-  that hot-reloads as you edit; **Install…** reviews and copies someone else's. They run in a
-  sandboxed helper process, can only use what you approve (shown in plain words with exact
-  commands, paths and hosts), and are drawn with GRID's own components. See
-  [docs/WIDGETS.md](docs/WIDGETS.md) and [widgets/examples](widgets/examples).
-
-Drag a card by its title bar onto another card's edge, like docking a panel: left or right puts it
-beside that card, top or bottom gives it its own row. Rows show their cards side by side (handy
-with the deck docked at the bottom) and wrap when the deck is too narrow. The deck's ⋯ menu has
-**Place All Side by Side** and **Stack All Vertically**, and each card's ⋯ menu moves it up, down,
-left or right. ⚙ flips a card to its settings, ↗ expands it, ⌃ collapses it, × removes it, and +
-opens the gallery. The layout persists.
-
-**Web (⌥⌘4):** an embedded WebKit browser in GRID's style. Tabs, address bar or search, find,
-zoom and history; downloads always ask first. **Reader view** (⇧⌘R) re-sets articles in GRID's
-monospaced layout. **Site themes** give GitHub, Hacker News, MDN, Wikipedia and Stack Overflow GRID's
-colours and type (per site, one click to the original). **Ad blocking** uses uBlock Origin's default
-filter lists through Safari's native content blocker, with a per-site off switch. **Extensions**
-(Chrome/Safari WebExtensions, macOS 15.4+) install from a folder or .zip after a permission review;
-their buttons appear as GRID glyphs only when installed. Pages can't reach your terminal, files or
-apps. Requires macOS 15.
-
-**Milestone 1:**
-Real PTY terminal with tabs, busy and finished-job indicators, safe quit and close, kernel-based
-working-directory tracking, and safe drag-to-insert paths. File browser with breadcrumbs, editable
-path, history, sorting, filter vs recursive search, inspector with preview, live refresh, and clear
-permission and missing-item states. App launcher with search, pins, recents, and moved-app recovery.
-Command palette. Three themes (Legacy cyan, Ares red, ENCOM amber). Independently toggleable glow,
-motion, and backdrop effects, with Reduce Motion respected. Web: opening addresses in the default
-browser.
-
-## Known limitations
-- A tab holds up to 6 panes.
-- Multi-item drags into Finder carry only the first item (an AppKit/SwiftUI drag limitation);
-  drags into GRID's terminal carry them all.
-- The Git widget runs `git status` in the terminal's folder (with `core.fsmonitor` disabled). Like
-  any shell prompt that shows git status, a malicious repo's filter config could still run
-  commands, so point it only at repos you trust (or give it a fixed path).
-- Directory tracking follows the shell process only (not ssh or subshell `cd`); Files follows only
-  when asked.
-- App discovery scans standard folders (≤3 levels); apps elsewhere don't appear (Spotlight-based
-  discovery is a possible addition).
-- Closing the window via the red button quits GRID; busy sessions then get a native alert instead of
-  the in-app confirmation. (⌘W never closes the window while sessions exist: it closes the
-  active session, or returns to the terminal from other panels.)
-- Web pages aren't rendered in-app yet (Milestone 3: reader mode first).
-- ⌘1–⌘9 (tab switching) and ⌘Z in the file list aren't rebindable.
-
-## Privacy
-No telemetry, accounts, network services, or AI integration. Settings are stored in UserDefaults
-(`local.grid.workspace`). Terminal contents and browsing are never logged or persisted.
+GRID is an independent fan project inspired by the look of the *Tron* films. It isn't affiliated with or endorsed by Disney.

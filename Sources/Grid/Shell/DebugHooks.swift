@@ -8,6 +8,7 @@ import GridCore
 /// - Compiled out of release builds (`#if DEBUG`).
 /// - Even in debug builds, only enabled when GRID is launched with `--qa`
 ///   (`open build/GRID.app --args --qa`); the status bar then shows "QA HOOKS".
+///   Add `--qa-quiet` to hide that badge (for README screenshots).
 /// - Transport is a Unix-domain socket inside the per-user temp directory
 ///   (`$DARWIN_USER_TEMP_DIR`, mode 0700, unreachable from other users and from sandboxed
 ///   apps), the socket itself is 0600, and every connection's peer UID is checked.
@@ -364,6 +365,14 @@ enum DebugHooks {
                      "active": t.id == b.activeID]
                 }]
                 st["popoverWindows"] = NSApp.windows.filter { $0.isVisible && String(describing: type(of: $0)).lowercased().contains("popover") }.map { "\(type(of: $0)) \(Int($0.frame.width))x\(Int($0.frame.height))" }
+                // Page / reader view rectangles in window points (top-left origin), for screenshot compositing.
+                func rect(_ v: NSView?) -> [Double] {
+                    guard let v, let win = v.window else { return [] }
+                    let r = v.convert(v.bounds, to: nil)
+                    return [Double(r.minX), Double(win.frame.height - r.maxY), Double(r.width), Double(r.height), Double(win.frame.width), Double(win.frame.height)]
+                }
+                st["webFrame"] = rect(b.active?.webViewIfLoaded)
+                st["readerFrame"] = rect(ReaderView.lastWebView)
                 st["adblock"] = "\(b.adBlocker.status)"
                 st["adblockLists"] = b.adBlocker.ruleLists.count
                 st["adblockStats"] = b.adBlocker.stats
@@ -487,6 +496,7 @@ enum DebugHooks {
                 "deck": app.deckVisible,
                 "workspace": app.workspace.tree.map { DebugHooks.describePanels($0) } ?? "(empty)",
                 "workspaceViewport": [app.workspace.viewport.width, app.workspace.viewport.height],
+                "windowInfo": window.map { w in ["frame": NSStringFromRect(w.frame), "minSize": NSStringFromSize(w.minSize), "contentMinSize": NSStringFromSize(w.contentMinSize), "fitting": NSStringFromSize(w.contentView?.fittingSize ?? .zero)] } ?? [:],
                 "drag": DockDrag.shared.payload?.string ?? "",
                 "dockTargets": DockDrag.shared.debugFrames,
                 "notice": app.notice?.text ?? "", "recents": app.apps.recents,
