@@ -754,6 +754,8 @@ entry. Nothing ships to users before Phase 2.
   - TomTom restyle and caching terms.
   - That the daily GeoJSON cron is actually running (`Last-Modified` over a week).
   - Self-hosting FlockHopper on an Apple-silicon Mac for one state: RAM, disk, import time.
+  - Real numbers for §11: GridMap and MapLibre framework size, resident memory on the Map page
+    (Instruments › Allocations + VM Tracker), and GRID's idle baseline.
 - **Contact DeFlock and FlockHopper** about using the data files and the routing API, and agree on a
   User-Agent.
 
@@ -884,7 +886,70 @@ entry. Nothing ships to users before Phase 2.
 | Using printed directions while driving | Medium / high | Large type, a safety line on every page, and no in-car live mode. |
 | ODbL or CC-BY attribution missed in some state (compact, popover) | Low / high | The attribution strip is part of the map view itself, not the chrome, and is tested in QA at each window size. |
 
-## 11. Out of scope (unless requested)
+## 11. App size, memory and disk budget
+
+**Baseline.** `GRID.app` 0.4.0 (release build, arm64) is **17 MB**: the `Grid` binary is 16.8 MB and
+`GridWidgetHost` is 94 KB. Idle RAM wasn't measured for this plan.
+
+Everything below is an **estimate** except where a source is given. Phase 0 replaces the estimates
+with measurements.
+
+**Design rule.** The Maps module loads nothing until the Map page is first shown. It frees its GPU
+buffers, tile cache in memory and camera index **30 s after the page is hidden**, the same pattern
+as the widget hosts. With the Map never opened, GRID's memory use is unchanged.
+
+### 11.1 App size (download / installed)
+
+| Piece | Adds to `GRID.app` | Basis |
+|---|---|---|
+| GridMap (custom Metal renderer, data clients, UI, routing client, print/GPX) | **≈ +1–2 MB** | Swift code plus Metal shaders compiled at run time, as the globe does. No bundled map or camera data (ODbL, §1.4). |
+| MapLibre Native fallback | **≈ +10–15 MB**, plus 1–3 MB if glyph ranges for the label font are bundled | The iOS dynamic xcframework zip for 6.27.0 is 10.1 MB and holds device and simulator slices. A stripped arm64-only macOS framework should land in this range. The 7.0 zip is 164 MB only because it bundles debug symbols. |
+| MapKit (only as a permitted fallback) | 0 | System framework |
+| Traffic, ALPR, routing clients, print, GPX | < 0.5 MB together | Pure Swift |
+| On-device router (Phase 8) | < 1 MB of code | The graph is downloaded and built per region, not bundled |
+
+So the recommended path keeps GRID at **about 18–19 MB**. The MapLibre fallback roughly **doubles**
+it to about 30 MB.
+
+### 11.2 Memory (resident, unified memory: GPU buffers count)
+
+| State | Recommended (GridMap) | MapLibre fallback | Notes |
+|---|---|---|---|
+| Map never opened | **+0** | +0 (framework mapped, not touched) | Lazy loading |
+| Map visible, browsing a city at z14 | **≈ 80–200 MB** (Phase 0 target: under 200 MB) | ≈ 150–300 MB | GridMap breakdown: up to 60 tiles of vertex buffers (≈ 30–120 MB in dense downtowns), the half-res glow targets (≈ 10–15 MB on a Retina window, 0 with Glow off), the label layer (≈ 5–10 MB) |
+| ALPR layer on | **+≈ 10 MB** | same | 160k cameras in a compact struct (≈ 40–60 B each) plus the spatial grid. The 39 MB gz GeoJSON is **stream-parsed** once into a binary file. Loading it whole with `JSONSerialization` would peak far above 1 GB and is ruled out. |
+| Traffic on | +≈ 5–20 MB | same | Flow tiles for the viewport, memory only |
+| Route computed (remote engine) | +< 5 MB | same | Geometry, maneuvers, scored cameras |
+| Printing a route | +≈ 50–150 MB **while printing** | raster snapshots: similar | Freed when the print job finishes |
+| On-device routing (Phase 8) | +≈ 100–300 MB **while routing** | same | Graph memory-mapped; only touched pages count; A* working set grows with trip length |
+| Map hidden for more than 30 s | back to **+≈ 0–10 MB** | MapLibre keeps more internal state; ≈ 30–60 MB | Freed by the rule above |
+
+### 11.3 Disk (Application Support, all clearable with Clear Map Data)
+
+| Data | Size | Notes |
+|---|---|---|
+| Tile cache | **≤ 200 MB** (default cap, adjustable) | `URLCache`, LRU |
+| ALPR snapshot | **≈ 6–10 MB** stored. The download is 39 MB, usually weekly. | Converted to a compact binary on arrival; the GeoJSON is deleted |
+| Overpass cell cache | < 5 MB | 24 h TTL |
+| Saved routes | KB each | Only if saved |
+| Offline PMTiles extract (Phase 5) | ≈ 50–150 MB for a metro area, hundreds of MB to ≈ 1 GB for a state at z0–14 | Optional; the planet build is about 139 GB, so never the planet |
+| On-device routing graph (Phase 8) | ≈ 100–300 MB per state | Built from a Geofabrik PBF, deleted after the build. California's PBF is 1.34 GB, the whole US 12.3 GB. |
+
+### 11.4 Outside GRID: a self-hosted routing engine
+
+This isn't GRID's memory, but it is the Mac's if the user runs the engine locally:
+
+| Engine | One state | Whole US |
+|---|---|---|
+| FlockHopper (GraphHopper JVM, contraction hierarchies off) | ≈ 2–4 GB RAM | ≈ 8–16 GB RAM |
+| Valhalla | ≈ 1–2 GB RAM to serve. Building the tiles needs more. | ≈ 8–16 GB RAM to build |
+
+- On macOS, Docker Desktop adds its own VM, roughly 1–2 GB more.
+- For the whole US, a separate always-on machine is more practical than a laptop.
+- One state fits comfortably on a 16 GB Mac.
+- Phase 0 measures this for one state (§9).
+
+## 12. Out of scope (unless requested)
 - Live turn-by-turn voice navigation in GRID. A laptop shouldn't be used while driving; §8's
   exports cover the trip instead.
 - Apple Maps data (traffic, routes, search) on GRID's map. Apple's licence forbids it (§2.1).
