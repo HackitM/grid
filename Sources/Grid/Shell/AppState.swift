@@ -85,8 +85,11 @@ final class AppState {
     let layout = LayoutState()
     let shortcuts = ShortcutStore()
     let widgets = WidgetStore()
+    let widgetLibrary = WidgetLibrary()
     var paletteOpen = false
     var confirmation: Confirmation?
+    /// Pending "Allow this widget?" review (Settings › Widgets, gallery, or a card).
+    var widgetApproval: WidgetApprovalRequest?
     var notice: Notice?
 
     let settings: Settings
@@ -109,6 +112,7 @@ final class AppState {
             return self.panel == .terminal && self.workspace.contains(.terminal) && NSApp.isActive
         }
         fileOps.app = self
+        widgets.onRemove = { [weak self] keep in self?.widgetLibrary.pruneRuntimes(keeping: keep) }
         configureDocking()
         // Restore the last Files folder if it still exists; remember it as the user navigates.
         if let last = UserDefaults.standard.string(forKey: "files.lastFolder"),
@@ -170,8 +174,8 @@ final class AppState {
                 case (.pane(let id), .tabBar): tm.detachPane(id)
                 case (.tab(let id), .tab(let other)): tm.moveTab(id, before: other)
                 case (.tab(let id), .tabBar): tm.moveTab(id, before: nil)
-                case (.widget(let id), .widget(let other)): self.widgets.move(id, before: other)
-                case (.widget(let id), .widgetEnd): self.widgets.move(id, before: nil)
+                case (.widget(let id), .widget(let other)): self.widgets.place(id, at: other, edge: edge)
+                case (.widget(let id), .widgetEnd): self.widgets.place(id, at: nil, edge: nil)
                 default: break
                 }
             }

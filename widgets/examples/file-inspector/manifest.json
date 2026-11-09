@@ -1,0 +1,25 @@
+{
+  "api": 1,
+  "id": "com.example.file-inspector",
+  "name": "Inspector",
+  "version": "1.1.0",
+  "description": "Details and a text preview for the file selected in Files, plus its last commit.",
+  "author": "GRID examples",
+  "entry": "widget.js",
+  "refresh": 0,
+  "events": ["files.selection"],
+  "settings": [
+    { "key": "previewLines", "type": "number", "label": "Preview lines", "default": 12, "min": 3, "max": 60 }
+  ],
+  "permissions": {
+    "files.selection": true,
+    "terminal.cwd": true,
+    "terminal.insertPath": true,
+    "clipboard.write": true,
+    "fs.read": ["{selection}", "{selection}/**"],
+    "exec": [
+      { "command": "/usr/bin/wc", "args": ["-l", "--", "{selection}"] },
+      { "command": "/usr/bin/git", "args": ["-C", "{cwd}", "--no-optional-locks", "log", "-1", "--format=%h%x1f%s%x1f%cr", "--", "{selection}"] }
+    ]
+  }
+}

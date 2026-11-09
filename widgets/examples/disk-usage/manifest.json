@@ -1,0 +1,23 @@
+{
+  "api": 1,
+  "id": "com.example.disk-usage",
+  "name": "Disk Usage",
+  "version": "1.1.0",
+  "description": "Size of the Files panel's folder and its biggest children.",
+  "author": "GRID examples",
+  "entry": "widget.js",
+  "refresh": 0,
+  "events": ["files.folder"],
+  "settings": [
+    { "key": "rows", "type": "number", "label": "Children shown", "default": 8, "min": 3, "max": 25 },
+    { "key": "cacheMin", "type": "number", "label": "Cache (minutes)", "default": 10, "min": 0, "max": 120 }
+  ],
+  "permissions": {
+    "files.selection": true,
+    "terminal.insertPath": true,
+    "fs.read": ["{folder}/**"],
+    "exec": [
+      { "command": "/usr/bin/du", "args": ["-kx", "-d", "1", "--", "{folder}"], "timeout": 30 }
+    ]
+  }
+}

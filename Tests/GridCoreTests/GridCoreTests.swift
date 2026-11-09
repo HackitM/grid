@@ -1186,3 +1186,390 @@ final class FileTreeTests: XCTestCase {
         XCTAssertEqual(FileTree.reachable(roots: roots, children: kids, expanded: ["/r/src", "/r/src/lib"])["/r/src/lib/x.c"]?.name, "x.c")
     }
 }
+
+final class WidgetSecurityTests: XCTestCase {
+    func manifest(_ json: String) throws -> WidgetManifest {
+        try JSONDecoder().decode(WidgetManifest.self, from: Data(json.utf8))
+    }
+
+    func testManifestValidation() throws {
+        let ok = try manifest(#"{"api":1,"id":"com.example.git-log","name":"Git Log","version":"1.0.0","entry":"widget.js","events":["terminal.cwd"],"permissions":{"terminal.cwd":true,"exec":[{"command":"/usr/bin/git","args":["-C","{cwd}","log","-n","{int}"]}]}}"#)
+        XCTAssertEqual(ok.validationErrors(), [])
+        XCTAssertEqual(ok.permissions?.exec?.first?.args.count, 5)
+        let bad = try manifest(#"{"api":2,"id":"NotDNS","name":"","version":"x","entry":"../evil.js","refresh":5000,"events":["files.selection","bogus"]}"#)
+        let errs = bad.validationErrors().joined(separator: "\n")
+        for needle in ["api version", "reverse-DNS", "name", "version", "../evil.js", "refresh", "bogus", "requires the files.selection"] {
+            XCTAssertTrue(errs.contains(needle), "missing error about \(needle): \(errs)")
+        }
+    }
+
+    func testExecTemplateRejectsInterpreters() {
+        XCTAssertFalse(ExecTemplate(command: "/bin/zsh", args: ["-c", "{word}"]).validationErrors().isEmpty)
+        XCTAssertFalse(ExecTemplate(command: "/usr/bin/python3.12", args: ["{word}"]).validationErrors().isEmpty)
+        XCTAssertFalse(ExecTemplate(command: "/usr/bin/env", args: ["{word}"]).validationErrors().isEmpty)
+        XCTAssertFalse(ExecTemplate(command: "git", args: []).validationErrors().isEmpty, "relative command")
+        XCTAssertFalse(ExecTemplate(command: "/usr/bin/git", args: ["{bogus}"]).validationErrors().isEmpty)
+        XCTAssertTrue(ExecTemplate(command: "/usr/bin/git", args: ["status", "{setting:repo}"]).validationErrors().isEmpty)
+    }
+
+    func testExecMatching() {
+        let t = [ExecTemplate(command: "/usr/bin/git", args: ["-C", "{cwd}", "log", "-n", "{int}"]),
+                 ExecTemplate(command: "/usr/bin/du", args: ["-sk", "{selection}"]),
+                 ExecTemplate(command: "/usr/bin/brew", args: ["services", "restart", "{word}"], userInitiated: true)]
+        let ctx = WidgetCallContext(cwd: "/Users/me/proj", selection: ["/Users/me/a b.txt"], settings: [:])
+        func ok(_ c: String, _ a: [String]) -> Bool { if case .success = ExecMatcher.match(command: c, args: a, templates: t, context: ctx) { true } else { false } }
+        XCTAssertTrue(ok("/usr/bin/git", ["-C", "/Users/me/proj", "log", "-n", "5"]))
+        XCTAssertFalse(ok("/usr/bin/git", ["-C", "/etc", "log", "-n", "5"]), "cwd must be the real cwd")
+        XCTAssertFalse(ok("/usr/bin/git", ["-C", "/Users/me/proj", "log", "-n", "5;rm"]))
+        XCTAssertFalse(ok("/usr/bin/git", ["-C", "/Users/me/proj", "log", "-n"]), "arity")
+        XCTAssertTrue(ok("/usr/bin/du", ["-sk", "/Users/me/a b.txt"]))
+        XCTAssertFalse(ok("/usr/bin/du", ["-sk", "/etc/passwd"]), "not selected")
+        XCTAssertTrue(ok("/usr/bin/brew", ["services", "restart", "postgresql@16"]) == false, "@ is not a word char")
+        XCTAssertTrue(ok("/usr/bin/brew", ["services", "restart", "redis"]))
+        XCTAssertFalse(ok("/usr/bin/brew", ["services", "restart", "--upload-pack=x"]), "leading dash")
+        XCTAssertFalse(ok("/usr/local/bin/brew", ["services", "restart", "redis"]), "different binary")
+    }
+
+    func testPathRules() {
+        let home = "/Users/me"
+        let ctx = WidgetCallContext(cwd: "/Users/me/proj", selection: ["/Users/me/Downloads/x.zip"], settings: [:])
+        func allows(_ p: String, _ pats: [String]) -> Bool { PathRule.allows(p, patterns: pats, context: ctx, home: home) }
+        XCTAssertTrue(allows("/Users/me/Projects/a/b.txt", ["~/Projects/**"]))
+        XCTAssertFalse(allows("/Users/me/Projects/../.ssh/id_rsa", ["~/Projects/**"]), ".. is normalized")
+        XCTAssertFalse(allows("/Users/me/.ssh/id_rsa", ["~/**"]), "sensitive roots need explicit naming")
+        XCTAssertTrue(allows("/Users/me/.ssh/config", ["~/.ssh/config"]))
+        XCTAssertTrue(allows("/Users/me/proj/README.md", ["{cwd}/*"]))
+        XCTAssertFalse(allows("/Users/me/proj/src/a.c", ["{cwd}/*"]))
+        XCTAssertTrue(allows("/Users/me/Downloads/x.zip", ["{selection}"]))
+        XCTAssertFalse(allows("/Users/me/Downloads/y.zip", ["{selection}"]))
+        XCTAssertFalse(allows("/dev/zero", ["/**"]))
+        XCTAssertFalse(allows("relative.txt", ["**"]))
+        XCTAssertTrue(PathRule.globMatch(pattern: "/a/*.md", path: "/a/x.md"))
+        XCTAssertFalse(PathRule.globMatch(pattern: "/a/*.md", path: "/a/b/x.md"))
+        XCTAssertTrue(PathRule.globMatch(pattern: "/a/**/x.md", path: "/a/x.md"))
+        XCTAssertTrue(PathRule.globMatch(pattern: "/a/**/x.md", path: "/a/b/c/x.md"))
+    }
+
+    func testPathRuleResolvesSymlinks() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("grid-wsec-\(UUID().uuidString)").resolvingSymlinksInPath()
+        let allowed = dir.appendingPathComponent("allowed"), secret = dir.appendingPathComponent("secret")
+        try FileManager.default.createDirectory(at: allowed, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: secret, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try "s".write(to: secret.appendingPathComponent("key"), atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: allowed.appendingPathComponent("link"), withDestinationURL: secret)
+        let ctx = WidgetCallContext(cwd: nil, selection: [], settings: [:])
+        XCTAssertFalse(PathRule.allows(allowed.path + "/link/key", patterns: [allowed.path + "/**"], context: ctx))
+        XCTAssertTrue(PathRule.allows(secret.path + "/key", patterns: [dir.path + "/**"], context: ctx))
+    }
+
+    func testNetRules() {
+        let hosts = ["api.github.com", "*.example.com"]
+        XCTAssertTrue(NetRule.allows(URL(string: "https://api.github.com/repos")!, hosts: hosts))
+        XCTAssertFalse(NetRule.allows(URL(string: "http://api.github.com/")!, hosts: hosts), "https only")
+        XCTAssertFalse(NetRule.allows(URL(string: "https://api.github.com.evil.io/")!, hosts: hosts))
+        XCTAssertTrue(NetRule.allows(URL(string: "https://a.example.com/")!, hosts: hosts))
+        XCTAssertFalse(NetRule.allows(URL(string: "https://example.com/")!, hosts: hosts), "wildcard is subdomains only")
+        XCTAssertFalse(NetRule.allows(URL(string: "https://badexample.com/")!, hosts: hosts))
+        XCTAssertFalse(NetRule.allows(URL(string: "https://user:pw@api.github.com/")!, hosts: hosts))
+        XCTAssertFalse(NetRule.allows(URL(string: "https://api.github.com:8443/")!, hosts: hosts))
+        XCTAssertTrue(NetRule.isValidPattern("*.example.com"))
+        XCTAssertFalse(NetRule.isValidPattern("*"))
+        XCTAssertFalse(NetRule.isValidPattern("localhost"))
+    }
+
+    func testViewTreeParsingAndLimits() throws {
+        let json = try JSONDecoder().decode(WidgetJSON.self, from: Data(#"{"type":"stack","children":[{"type":"text","text":"hi","tone":"ok"},{"type":"button","title":"Go","action":{"kind":"insertPath","value":"/tmp/x"}},{"type":"button","title":"Bad","action":{"kind":"runShell"}},{"type":"marquee"}]}"#.utf8))
+        let (node, warnings) = WidgetTreeParser.parse(json)
+        guard case .stack(_, _, let kids) = node else { return XCTFail("not a stack") }
+        XCTAssertEqual(kids.count, 4)
+        XCTAssertEqual(kids[0], .text("hi", style: "body", tone: "ok", lines: nil))
+        if case .button(_, let a, _) = kids[1] { XCTAssertEqual(a.kind, "insertPath") } else { XCTFail() }
+        XCTAssertEqual(kids[2], .unsupported("button without a valid action"))
+        XCTAssertTrue(warnings.contains { $0.contains("marquee") })
+        // Node budget.
+        let many = WidgetJSON.object(["type": .string("stack"), "children": .array(Array(repeating: .object(["type": .string("divider")]), count: 1000))])
+        guard case .stack(_, _, let k2) = WidgetTreeParser.parse(many).0 else { return XCTFail() }
+        XCTAssertLessThanOrEqual(k2.count, WidgetTreeParser.maxNodes)
+        // Depth.
+        var deep = WidgetJSON.object(["type": .string("divider")])
+        for _ in 0..<50 { deep = .object(["type": .string("stack"), "children": .array([deep])]) }
+        XCTAssertTrue(WidgetTreeParser.parse(deep).1.contains { $0.contains("deeper") })
+    }
+}
+
+final class FileFactsTests: XCTestCase {
+    func testTextStats() {
+        let s = FileFacts.textStats(Data("a\nb\nc".utf8), complete: true)!
+        XCTAssertEqual(s.lines, 3); XCTAssertEqual(s.lineEndings, "LF"); XCTAssertEqual(s.encoding, "ASCII")
+        let crlf = FileFacts.textStats(Data("a\r\nb\r\n".utf8), complete: true)!
+        XCTAssertEqual(crlf.lines, 2); XCTAssertEqual(crlf.lineEndings, "CRLF")
+        XCTAssertEqual(FileFacts.textStats(Data("a\r\nb\n".utf8), complete: true)?.lineEndings, "mixed")
+        XCTAssertEqual(FileFacts.textStats(Data("héllo".utf8), complete: true)?.encoding, "UTF-8")
+        XCTAssertNil(FileFacts.textStats(Data([0x41, 0x00, 0x42]), complete: true), "binary")
+        // A multi-byte character cut at the sample boundary is still text.
+        let cut = Data("abcé".utf8).dropLast()
+        XCTAssertNotNil(FileFacts.textStats(Data(cut), complete: false))
+        XCTAssertNil(FileFacts.textStats(Data(cut), complete: true))
+    }
+
+    func testQuarantineParsing() {
+        let (agent, date) = FileFacts.parseQuarantine("0083;6543a1b2;Safari;9C1E0B36-0000")
+        XCTAssertEqual(agent, "Safari")
+        XCTAssertEqual(date, Date(timeIntervalSince1970: TimeInterval(0x6543a1b2)))
+        XCTAssertNil(FileFacts.parseQuarantine("0083;zz;;").0)
+    }
+
+    func testReadFactsFromDisk() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("grid-facts-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let script = dir.appendingPathComponent("run.sh")
+        try "#!/bin/zsh\necho hi\n".write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let f = FileFacts.read(path: script.path)
+        XCTAssertTrue(f.isExecutable)
+        XCTAssertEqual(f.shebang, "#!/bin/zsh")
+        XCTAssertEqual(f.text?.lines, 2)
+        // FIFOs are never opened.
+        let fifo = dir.appendingPathComponent("pipe").path
+        XCTAssertEqual(mkfifo(fifo, 0o600), 0)
+        XCTAssertNil(FileFacts.read(path: fifo).text)
+        let m = FolderMeasure.measure(dir)
+        XCTAssertEqual(m.files, 2)
+        XCTAssertFalse(m.truncated)
+    }
+}
+
+final class WidgetPackageTests: XCTestCase {
+    var dir: URL!
+    override func setUpWithError() throws {
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent("grid-pkg-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("lib"), withIntermediateDirectories: true)
+        try #"{"api":1,"id":"com.example.t","name":"T","version":"1.0","entry":"widget.js","scripts":["lib/a.js"]}"#
+            .write(to: dir.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
+        try "grid.widget({render(){}})".write(to: dir.appendingPathComponent("widget.js"), atomically: true, encoding: .utf8)
+        try "var a=1".write(to: dir.appendingPathComponent("lib/a.js"), atomically: true, encoding: .utf8)
+    }
+    override func tearDownWithError() throws { try? FileManager.default.removeItem(at: dir) }
+
+    func testLoadsAndDigestChangesWithContent() throws {
+        let p = try WidgetPackage.load(dir)
+        XCTAssertEqual(p.sources.map(\.name), ["lib/a.js", "widget.js"])
+        let d1 = p.digest
+        try "var a=2".write(to: dir.appendingPathComponent("lib/a.js"), atomically: true, encoding: .utf8)
+        XCTAssertNotEqual(try WidgetPackage.load(dir).digest, d1)
+        // Files GRID never reads don't affect the digest.
+        try Data([1, 2, 3]).write(to: dir.appendingPathComponent("logo.png"))
+        XCTAssertEqual(try WidgetPackage.load(dir).digest, try WidgetPackage.load(dir).digest)
+    }
+
+    func testRefusesSymlinksAndOversize() throws {
+        try FileManager.default.createSymbolicLink(at: dir.appendingPathComponent("lib/evil.js"), withDestinationURL: URL(fileURLWithPath: "/etc/hosts"))
+        XCTAssertThrowsError(try WidgetPackage.load(dir))
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("lib/evil.js"))
+        try Data(count: WidgetPackage.maxBytes + 10).write(to: dir.appendingPathComponent("big.js"))
+        XCTAssertThrowsError(try WidgetPackage.load(dir)) { XCTAssertEqual($0 as? WidgetPackage.LoadError, .tooLarge) }
+    }
+
+    func testPermissionText() {
+        var p = WidgetPermissions()
+        p.exec = [ExecTemplate(command: "/usr/bin/git", args: ["-C", "{cwd}", "status"])]
+        p.fsRead = ["~/Projects/**"]
+        let lines = WidgetPermissionText.lines(p).map(\.text)
+        XCTAssertEqual(lines.first, "Run /usr/bin/git -C ‹terminal folder› status")
+        XCTAssertTrue(lines.contains("Read files: ~/Projects and everything inside it"))
+    }
+}
+
+final class WidgetGuardrailDeltaTests: XCTestCase {
+    func testStemDenylistAndGitHardening() {
+        XCTAssertTrue(ExecTemplate.isForbidden("/opt/homebrew/bin/python3.12"))
+        XCTAssertTrue(ExecTemplate.isForbidden("/usr/bin/perl5.34"))
+        XCTAssertTrue(ExecTemplate.isForbidden("/opt/homebrew/bin/tmux"))
+        XCTAssertTrue(ExecTemplate.isForbidden("/usr/bin/curl"))
+        XCTAssertFalse(ExecTemplate.isForbidden("/usr/bin/git"))
+        XCTAssertFalse(ExecTemplate(command: "/usr/bin/git", args: ["-c", "core.fsmonitor=touch /tmp/x", "status"]).validationErrors().isEmpty)
+        XCTAssertFalse(ExecTemplate(command: "/usr/bin/git", args: ["fetch", "--upload-pack=evil"]).validationErrors().isEmpty)
+        XCTAssertTrue(ExecTemplate(command: "/usr/bin/git", args: ["-C", "{cwd}", "status", "--porcelain=v2"]).validationErrors().isEmpty)
+    }
+
+    func testCommandAlternativesAndTiers() throws {
+        let t = try JSONDecoder().decode(ExecTemplate.self, from: Data(#"{"command":["/opt/homebrew/bin/brew","/usr/local/bin/brew"],"args":["services","list"],"timeout":20}"#.utf8))
+        XCTAssertEqual(t.validationErrors(), [])
+        XCTAssertEqual(t.tier, .readOnly)
+        XCTAssertEqual(t.effectiveTimeout, 20)
+        XCTAssertEqual(ExecTemplate(command: "/opt/homebrew/bin/brew", args: ["services", "restart", "{token}"]).tier, .modifies)
+        XCTAssertEqual(ExecTemplate(command: "/usr/bin/git", args: ["-C", "{cwd}", "log", "-n", "{int}"]).tier, .readOnly)
+        XCTAssertEqual(ExecTemplate(command: "/usr/bin/git", args: ["-C", "{cwd}", "push"]).tier, .modifies)
+        XCTAssertEqual(ExecTemplate(command: "/usr/local/bin/mytool", args: []).tier, .opaque)
+        XCTAssertFalse(try JSONDecoder().decode(ExecTemplate.self, from: Data(#"{"command":["/usr/bin/git","/usr/bin/du"],"args":[]}"#.utf8)).validationErrors().isEmpty)
+        let ctx = WidgetCallContext(cwd: nil, selection: [], settings: [:])
+        if case .failure = ExecMatcher.match(command: "/usr/local/bin/brew", args: ["services", "list"], templates: [t], context: ctx) { XCTFail() }
+        let tok = ExecTemplate(command: "/opt/homebrew/bin/brew", args: ["services", "restart", "{token}"], userInitiated: true)
+        if case .failure = ExecMatcher.match(command: tok.command, args: ["services", "restart", "php@8.3"], templates: [tok], context: ctx) { XCTFail() }
+    }
+
+    func testManifestCrossChecks() throws {
+        let m = try JSONDecoder().decode(WidgetManifest.self, from: Data(#"""
+        {"api":1,"id":"com.example.x","name":"X","version":"1","entry":"w.js",
+         "settings":[{"key":"repo","type":"string","label":"Repo"},{"key":"token","type":"secret","label":"Token","hosts":["api.evil.com"]}],
+         "permissions":{"net":["api.github.com"],"exec":[{"command":"/usr/bin/git","args":["-C","{setting:repo}","status"]},{"command":"/usr/bin/du","args":["-sk","{selection}"]}]}}
+        """#.utf8))
+        let e = m.validationErrors().joined(separator: "\n")
+        XCTAssertTrue(e.contains("only use number, bool or choice"), e)
+        XCTAssertTrue(e.contains("api.evil.com"), e)
+        XCTAssertTrue(e.contains("{selection} requires the files.selection"), e)
+    }
+
+    func testPlaceholderPathPatterns() {
+        let ctx = WidgetCallContext(cwd: "/Users/me/p[1]", folder: "/Users/me/Downloads", selection: ["/Users/me/sel"], settings: [:])
+        func allows(_ p: String, _ pats: [String]) -> Bool { PathRule.allows(p, patterns: pats, context: ctx, home: "/Users/me") }
+        XCTAssertTrue(allows("/Users/me/p[1]/a.txt", ["{cwd}/*"]), "glob chars in the placeholder value are literal")
+        XCTAssertFalse(allows("/Users/me/p1/a.txt", ["{cwd}/*"]))
+        XCTAssertTrue(allows("/Users/me/Downloads/x.zip", ["{folder}/*"]))
+        XCTAssertTrue(allows("/Users/me/sel/deep/f", ["{selection}/**"]))
+        XCTAssertFalse(allows("/Users/me/other", ["{selection}/**"]))
+        XCTAssertFalse(allows("/Users/me/.zsh_history", ["~/*"]))
+    }
+
+    func testNetHelpers() {
+        for ip in ["127.0.0.1", "10.1.2.3", "192.168.1.1", "172.20.0.1", "169.254.1.1", "100.64.0.1", "::1", "fe80::1", "fd00::1", "::ffff:127.0.0.1", "0.0.0.0"] {
+            XCTAssertTrue(NetRule.isPrivateAddress(ip), ip)
+        }
+        for ip in ["140.82.112.5", "1.1.1.1", "2606:4700::1111", "172.32.0.1"] { XCTAssertFalse(NetRule.isPrivateAddress(ip), ip) }
+        let secrets = ["token": (value: "s3cr3t", hosts: ["api.github.com"])]
+        XCTAssertEqual(try NetRule.expandSecrets("Bearer {secret:token}", secrets: secrets, host: "api.github.com").get(), "Bearer s3cr3t")
+        XCTAssertThrowsError(try NetRule.expandSecrets("Bearer {secret:token}", secrets: secrets, host: "evil.com").get())
+        XCTAssertThrowsError(try NetRule.expandSecrets("{secret:nope}", secrets: secrets, host: "api.github.com").get())
+        XCTAssertTrue(OpenURLRule.any.allows(URL(string: "https://news.ycombinator.com/item?id=1")!))
+        XCTAssertFalse(OpenURLRule.any.allows(URL(string: "file:///etc/passwd")!))
+        XCTAssertFalse(OpenURLRule.any.allows(URL(string: "x-apple.systempreferences:foo")!))
+    }
+
+    func testTokenBucketAndSandboxProfile() {
+        var b = TokenBucket(burst: 3, perMinute: 60, now: 0)
+        XCTAssertTrue(b.take(now: 0)); XCTAssertTrue(b.take(now: 0)); XCTAssertTrue(b.take(now: 0))
+        XCTAssertFalse(b.take(now: 0.5))
+        XCTAssertTrue(b.take(now: 1.6))
+        let p = ExecMatcher.sandboxProfile(for: ExecTemplate(command: "/usr/bin/git", args: []), tmp: "/tmp/x", home: "/Users/me")
+        XCTAssertTrue(p.contains("(deny network*)"))
+        XCTAssertTrue(p.contains("(deny file-write*)"))
+        XCTAssertTrue(p.contains("/Users/me/.ssh"))
+        let pn = ExecMatcher.sandboxProfile(for: ExecTemplate(command: "/usr/bin/git", args: [], net: true, writes: true), tmp: "/tmp/x", home: "/Users/me")
+        XCTAssertFalse(pn.contains("(deny network*)"))
+        XCTAssertFalse(pn.contains("(deny file-write*)"))
+    }
+}
+
+
+final class WidgetReviewFixTests: XCTestCase {
+    func testModifyingCommandsNeedAClick() {
+        XCTAssertFalse(ExecTemplate(command: "/bin/kill", args: ["-TERM", "{int}"]).validationErrors().isEmpty)
+        XCTAssertTrue(ExecTemplate(command: "/bin/kill", args: ["-TERM", "{int}"], userInitiated: true).validationErrors().isEmpty)
+        XCTAssertEqual(ExecTemplate(command: "/usr/sbin/diskutil", args: ["list"]).tier, .modifies)
+        XCTAssertEqual(ExecTemplate(command: "/usr/bin/git", args: ["-C", "{cwd}", "remote", "get-url", "origin"]).tier, .readOnly)
+        XCTAssertEqual(ExecTemplate(command: "/usr/bin/git", args: ["-C", "{cwd}", "remote", "add", "x", "y"], userInitiated: true).tier, .modifies)
+        XCTAssertTrue(ExecTemplate.isForbidden("/usr/bin/xcrun"))
+        XCTAssertTrue(ExecTemplate.isForbidden("/opt/homebrew/bin/gpg"))
+        let kill = ExecTemplate(command: "/bin/kill", args: ["-TERM", "{int}"], userInitiated: true)
+        let ctx = WidgetCallContext(cwd: nil, selection: [], settings: [:])
+        if case .success = ExecMatcher.match(command: "/bin/kill", args: ["-TERM", "0"], templates: [kill], context: ctx) { XCTFail("pid 0 = own process group") }
+        if case .failure = ExecMatcher.match(command: "/bin/kill", args: ["-TERM", "4242"], templates: [kill], context: ctx) { XCTFail() }
+    }
+
+    func testDotfilesAndLibraryNeedExplicitPatterns() {
+        let ctx = WidgetCallContext(cwd: "/Users/me", selection: [], settings: [:])
+        func allows(_ p: String, _ pats: [String]) -> Bool { PathRule.allows(p, patterns: pats, context: ctx, home: "/Users/me") }
+        XCTAssertFalse(allows("/Users/me/.zshrc", ["~/**"]))
+        XCTAssertFalse(allows("/Users/me/.config/anything/token", ["~/**"]))
+        XCTAssertFalse(allows("/Users/me/Library/Preferences/x.plist", ["~/**"]))
+        XCTAssertFalse(allows("/Users/me/.env", ["{cwd}/*"]), "a placeholder at home doesn't reach dotfiles")
+        XCTAssertTrue(allows("/Users/me/Projects/app/.env", ["~/Projects/**"]), "only dot-entries directly in home are protected")
+        XCTAssertTrue(allows("/Users/me/.config/starship.toml", ["~/.config/starship.toml"]))
+        XCTAssertTrue(allows("/Users/me/Library/Mobile Documents/x.txt", ["~/Library/Mobile Documents/**"]))
+        XCTAssertFalse(allows("/Users/me/Library/Keychains/login.keychain-db", ["~/Library/**"]), "listed stores need their own name")
+        XCTAssertTrue(PathRule.lexicallyPlausible("/Users/me/Projects/a", patterns: ["~/Projects/**"], context: ctx, home: "/Users/me"))
+        XCTAssertFalse(PathRule.lexicallyPlausible("/Volumes/slow/x", patterns: ["~/Projects/**"], context: ctx, home: "/Users/me"))
+    }
+
+    func testManifestTextLimits() throws {
+        let long = String(repeating: "x", count: 301)
+        let m = try JSONDecoder().decode(WidgetManifest.self, from: Data(#"{"api":1,"id":"com.example.x","name":"X","version":"1","entry":"w.js","description":"\#(long)","author":"Ev‮il"}"#.utf8))
+        let e = m.validationErrors().joined(separator: " ")
+        XCTAssertTrue(e.contains("300"), e)
+        XCTAssertTrue(e.contains("bidi"), e)
+    }
+
+    func testMoreAddressRanges() {
+        for ip in ["::ffff:7f00:1", "64:ff9b::7f00:1", "2002:7f00:1::", "ff02::1", "fe80::1%en0".split(separator: "%").first.map(String.init)!, "192.0.2.1", "not-an-ip"] {
+            XCTAssertTrue(NetRule.isPrivateAddress(ip), ip)
+        }
+        XCTAssertFalse(NetRule.isPrivateAddress("64:ff9b::808:808"), "NAT64 of a public address")
+        XCTAssertFalse(NetRule.isPrivateAddress("2a00:1450:4001::1"))
+    }
+
+    func testExecProfileBlocksForeignExecutables() {
+        let git = ExecTemplate(command: "/usr/bin/git", args: ["status"])
+        let p = ExecMatcher.sandboxProfile(for: git, exe: "/usr/bin/git", tmp: "/tmp/x", home: "/Users/me")
+        XCTAssertTrue(p.contains("(deny process-exec (subpath \"/Users/me\")"))
+        XCTAssertTrue(p.contains("(literal \"/bin/sh\")"), "git can't spawn shells for repo-configured helpers")
+        XCTAssertTrue(p.contains("(allow process-exec (literal \"/usr/bin/git\"))"))
+        XCTAssertTrue(p.contains("Library/LaunchAgents"))
+        let du = ExecMatcher.sandboxProfile(for: ExecTemplate(command: "/usr/bin/du", args: []), tmp: "/tmp/x", home: "/Users/me")
+        XCTAssertFalse(du.contains("(literal \"/bin/sh\")"))
+    }
+
+    func testChoiceSettingsAreSpelledOut() {
+        var p = WidgetPermissions()
+        p.exec = [ExecTemplate(command: "/bin/ps", args: ["-A", "{setting:sort}"])]
+        let spec = WidgetSettingSpec(key: "sort", type: "choice", label: "Sort", default: nil, min: nil, max: nil, maxLength: nil, options: ["-r", "-m"], hosts: nil)
+        XCTAssertEqual(WidgetPermissionText.lines(p, settings: [spec]).first?.text, "Run /bin/ps -A ‹-r|-m›")
+    }
+}
+
+final class DeckRowsTests: XCTestCase {
+    typealias I = DeckItem<String>
+    func items(_ rows: [[String]]) -> [I] { DeckRows.items(rows) }
+    func rows(_ i: [I]) -> [[String]] { DeckRows.rows(i) }
+
+    func testRowsRoundTrip() {
+        let r = [["a", "b"], ["c"], ["d", "e", "f"]]
+        XCTAssertEqual(rows(items(r)), r)
+        XCTAssertEqual(rows([I(id: "a", beside: true), I(id: "b", beside: true)]), [["a", "b"]], "first card always starts a row")
+    }
+
+    func testMovingBesideAndAcross() {
+        let start = items([["a"], ["b"], ["c"]])
+        XCTAssertEqual(rows(DeckRows.moving("c", to: "a", edge: .right, in: start)), [["a", "c"], ["b"]])
+        XCTAssertEqual(rows(DeckRows.moving("c", to: "a", edge: .left, in: start)), [["c", "a"], ["b"]])
+        XCTAssertEqual(rows(DeckRows.moving("a", to: "c", edge: .bottom, in: start)), [["b"], ["c"], ["a"]])
+        XCTAssertEqual(rows(DeckRows.moving("c", to: "a", edge: .top, in: start)), [["c"], ["a"], ["b"]])
+        XCTAssertEqual(rows(DeckRows.moving("a", to: nil, edge: nil, in: start)), [["b"], ["c"], ["a"]])
+        XCTAssertEqual(DeckRows.moving("a", to: "a", edge: .right, in: start), start, "self-drop is a no-op")
+    }
+
+    func testRemovingKeepsRowMates() {
+        let start = items([["a", "b", "c"], ["d"]])
+        XCTAssertEqual(rows(DeckRows.removing("a", from: start)), [["b", "c"], ["d"]])
+        XCTAssertEqual(rows(DeckRows.moving("a", to: "d", edge: .right, in: start)), [["b", "c"], ["d", "a"]])
+        XCTAssertEqual(rows(DeckRows.moving("d", to: "b", edge: .top, in: start)), [["d"], ["a", "b", "c"]])
+    }
+
+    func testFullRowOverflowsToNewRow() {
+        let start = items([["a", "b", "c", "d", "e", "f"], ["g"]])
+        XCTAssertEqual(rows(DeckRows.moving("g", to: "b", edge: .right, in: start)), [["a", "b", "c", "d", "e", "f"], ["g"]])
+        XCTAssertEqual(rows(DeckRows.moving("g", to: "b", edge: .left, in: start)), [["g"], ["a", "b", "c", "d", "e", "f"]])
+        XCTAssertEqual(rows(DeckRows.normalized(items([["a", "b", "c", "d", "e", "f", "g", "h"]]))), [["a", "b", "c", "d", "e", "f"], ["g", "h"]])
+    }
+
+    func testArrangeAndLineFitting() {
+        let start = items([["a"], ["b"], ["c"], ["d"], ["e"], ["f"], ["g"]])
+        XCTAssertEqual(rows(DeckRows.sideBySide(start)), [["a", "b", "c", "d", "e", "f"], ["g"]])
+        XCTAssertEqual(rows(DeckRows.stacked(items([["a", "b"], ["c"]]))), [["a"], ["b"], ["c"]])
+        XCTAssertEqual(DeckRows.lines(count: 3, width: 900, minWidth: 200, spacing: 8), [3])
+        XCTAssertEqual(DeckRows.lines(count: 3, width: 300, minWidth: 200, spacing: 8), [1, 1, 1], "narrow deck: one per line")
+        XCTAssertEqual(DeckRows.lines(count: 4, width: 450, minWidth: 200, spacing: 8), [2, 2])
+        XCTAssertEqual(DeckRows.lines(count: 0, width: 450, minWidth: 200, spacing: 8), [])
+    }
+}

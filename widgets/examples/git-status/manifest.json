@@ -1,0 +1,24 @@
+{
+  "api": 1,
+  "id": "com.example.git-status",
+  "name": "Git Status",
+  "version": "1.1.0",
+  "description": "Branch, ahead/behind, working-tree counts and recent commits for the terminal's repository.",
+  "author": "GRID examples",
+  "entry": "widget.js",
+  "scripts": [],
+  "refresh": 10,
+  "events": ["terminal.cwd"],
+  "settings": [
+    { "key": "count", "type": "number", "label": "Commits shown", "default": 5, "min": 1, "max": 30 },
+    { "key": "showLog", "type": "bool", "label": "Show recent commits", "default": true }
+  ],
+  "permissions": {
+    "terminal.cwd": true,
+    "clipboard.write": true,
+    "exec": [
+      { "command": "/usr/bin/git", "args": ["-C", "{cwd}", "--no-optional-locks", "status", "--porcelain=v2", "--branch", "--ignore-submodules=all"] },
+      { "command": "/usr/bin/git", "args": ["-C", "{cwd}", "--no-optional-locks", "log", "--format=%h%x1f%s%x1f%cr", "-n", "{setting:count}"] }
+    ]
+  }
+}

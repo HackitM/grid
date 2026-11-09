@@ -1,0 +1,21 @@
+{
+  "api": 1,
+  "id": "com.example.hn-top",
+  "name": "Hacker News",
+  "version": "1.1.0",
+  "description": "Top stories from Hacker News; click to open the article or its comments.",
+  "author": "GRID examples",
+  "entry": "widget.js",
+  "refresh": 300,
+  "events": [],
+  "settings": [
+    { "key": "feed", "type": "choice", "label": "Feed", "default": "top", "options": ["top", "best", "new", "ask", "show"] },
+    { "key": "count", "type": "number", "label": "Stories", "default": 8, "min": 3, "max": 20 },
+    { "key": "minScore", "type": "number", "label": "Min points", "default": 0, "min": 0, "max": 1000 },
+    { "key": "open", "type": "choice", "label": "Row click opens", "default": "article", "options": ["article", "comments"] }
+  ],
+  "permissions": {
+    "net": ["hacker-news.firebaseio.com"],
+    "openURL": "any"
+  }
+}

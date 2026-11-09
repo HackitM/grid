@@ -2,9 +2,11 @@
 
 ## Automated
 ```bash
-swift test          # 95 unit tests (GridCore): quoting (incl. real zsh round-trip), ranking,
+swift test          # 114 unit tests (GridCore): quoting (incl. real zsh round-trip), ranking,
                     # paths, URL validation, palette grammar, env, listing, perms, symlinks,
-                    # app discovery, libproc cwd tracking
+                    # app discovery, libproc cwd tracking, widget manifests/permissions/exec
+                    # matching/path & net rules/view trees/packages, file facts
+.build/debug/GridWidgetHost --selftest   # proves the widget sandbox blocks files, network, spawn
 ```
 
 ## Workflow QA (DEBUG build)
@@ -67,6 +69,16 @@ display is awake.
 | Docking review fixes (Fable) | ✅ | balance recursion removed (re-balance once per change; `balanced` made idempotent, 5,000-case test + the exact oscillating input); per-kind private drag types (foreign text/files never match; payload read from the drop, round trip verified for panel/pane/tab, not exposed as plain text); full-width tab-bar drop zone; 6-pane cap on drops; "done" badge respects a closed terminal panel; hover cursors can't get stuck; 120 rapid re-docks stable |
 | Dynamic layout fixes (Fable) | ✅ | stuck "DOCK" highlight: drag sessions now end themselves (mouse-state watcher runs inside AppKit's drag loop), highlights clear whenever the drag ends; drops resolve the payload synchronously when the private type matches; panels have point minimums (terminal ≥ 360 pt), docking shares by weight (terminal 3 : 1 : 1), squeezed v1 layouts repaired on load (seeded `[0.55, 0.17, 0.28]` → `[0.33, 0.50, 0.17]`); narrow title bars collapse to title + ⋯ instead of vanishing |
 | Animations | ✅ | frame captures at 50–140 ms show the build-on trace + accent flash on panels and palette; page switches no longer double-expose |
+| Widget host sandbox | ✅ | `GridWidgetHost --selftest`: reading /etc/hosts and ~/.zshrc, writing tmp, network connect and process spawn all denied; JS engine exposes no `setTimeout`/`fetch`/`require`/XHR/`process` |
+| Widget guardrails (hostile test widget) | ✅ | undeclared fs/exec/net/selection/cwd calls → `PermissionError`; `~/.ssh/id_rsa` and `~/.zsh_history` refused even under an approved `~/**`; exec with a spoofed `{cwd}` or a leading `-` refused; clicks on insertPath/openURL without permission blocked and logged; log flood capped at 40 lines |
+| Widget budgets | ✅ | `while(true)` in an action → suspended after 2 s, restarted after 5 s backoff; memory hog → suspended (app limit 150 MB, host self-limit 200 MB) |
+| Widget exec sandbox | ✅ | git status works; writes outside its temp folder, reading ~/.ssh, network and Keychain access fail; setuid `ps` runs (read-only allowlist), other setuid programs refused |
+| Widget lifecycle / efficiency | ✅ | 8 example hosts ≈ 123 MB RSS total, ~0% CPU idle; hide deck → all hosts gone after 30 s; quick re-show reuses them; removing a card kills its host at once |
+| Widget actions | ✅ | custom actions + storage counter, copy, native `grid.confirm` dialog naming the widget, approval re-required after a Dev widget's exec template changed |
+| Example widgets | ✅ | pomodoro, git status, top (ps + system stats), inspector, disk usage, brew services, Hacker News (live), GitHub PRs (no-token state) all render; found + fixed: ICU locale data must be warmed before the sandbox, setuid `ps` under sandbox-exec, `du -s` with `-d`, readouts wrapping in rows, hosts orphaned when the deck was hidden |
+| Widget security review fixes | ✅ | Fable review (16 findings) fixed and re-tested live: userInitiated exec refused from render and limited to one per click; `kill` of GRID's pid refused; `~/.zshrc` / `~/Library/Preferences` refused under `~/**`; file icons only for readable paths; openFile always confirms; git can't run a repo's `diff.external` (direct or via shell) under the exec sandbox; SIGPIPE-safe host pipe; wall-clock and in-flight call limits |
+| Deck rows (side by side) | ✅ | real drags through the controller: card → right edge of another = beside, → top edge = new row above; deck docked at the bottom + Place All Side by Side = one row of 5 equal-height cards; docked at the side the same rows wrap to one card per line; drop highlight clipped to the deck's visible area; found + fixed: measuring cards at a made-up width in the row layout's ideal-size pass caused an endless AppKit layout loop |
+| File Inspector widget | ✅ | quoted insertion preview, text stats (lines/encoding/line endings), mode, default app, xattrs, preview in expanded mode, actions |
 | GRID drag tracking (replaces system DnD) | ✅ | real controller driven by simulated pointer paths: targets register true frames (panels, panes, tab, tab bar, widget cards, list end); deck→bottom of files, files→right of terminal, self-drop ignored, cancel leaves no state; pane→pane edge, pane→tab bar (new tab), tab reorder, pane→into tab, widget reorder; mid-drag capture shows exactly one highlight + pointer label |
 | Folder tree (Fable) | ✅ | expand to depth 3 with indentation guides; inline error row for unreadable folders; packages not expandable; → ← ⌥→; expansion restored on back; filter shows nested match with ancestors; nested rename/duplicate stay in their folder; watcher picks up changes in expanded folders |
 | Pane moves | ✅ | `H[1 \| 2 \| 3]` → 3 to bottom of 1 → `H[V[1 / 3] \| 2]` → 2 to left of 1 → `V[H[2 \| 1] / 3]` |
@@ -81,6 +93,9 @@ display is awake.
 - [ ] System Settings › Accessibility › Reduce Motion → transitions stop
 - [ ] Copy/paste and mouse selection in the terminal; `htop`/`less` mouse scrolling
 - [ ] Scroll the command palette quickly (lag fix)
+- [ ] Widgets: New Widget… → edit widget.js in an editor → card reloads on save; Install… an example
+      folder → approval screen → card runs; set the GitHub PRs token (Keychain) and see PRs
+- [ ] File Inspector: drag its icon into the terminal → quoted path inserted, nothing runs
 - [ ] Drag widget cards to reorder; drag panel dividers; double-click a divider to reset
 - [ ] Drag several selected files into the terminal (all paths inserted, quoted)
 - [ ] Space opens Quick Look on the selection; Open With submenu lists apps

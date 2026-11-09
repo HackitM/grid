@@ -1,0 +1,23 @@
+{
+  "api": 1,
+  "id": "com.example.top-procs",
+  "name": "Top",
+  "version": "1.1.0",
+  "description": "Busiest processes by CPU or memory, with a system summary and an opt-in Quit action.",
+  "author": "GRID examples",
+  "entry": "widget.js",
+  "refresh": 5,
+  "events": [],
+  "settings": [
+    { "key": "sort", "type": "choice", "label": "Sort by", "default": "cpu", "options": ["cpu", "mem"] },
+    { "key": "rows", "type": "number", "label": "Rows", "default": 6, "min": 3, "max": 20 },
+    { "key": "allowQuit", "type": "bool", "label": "Click a row to quit that process", "default": false }
+  ],
+  "permissions": {
+    "exec": [
+      { "command": "/bin/ps", "args": ["-Aceo", "pid,pcpu,pmem,rss,comm", "-r"] },
+      { "command": "/bin/ps", "args": ["-Aceo", "pid,pcpu,pmem,rss,comm", "-m"] },
+      { "command": "/bin/kill", "args": ["-TERM", "{int}"], "userInitiated": true }
+    ]
+  }
+}

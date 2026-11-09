@@ -182,11 +182,18 @@ struct Panel<Content: View, Trailing: View, Overflow: View>: View {
             }
         }
         .clipShape(ClippedRect(topRight: clipped))
-        .overlay(
-            ClippedRect(topRight: clipped)
-                .stroke(focused ? theme.lineStrong : theme.line, lineWidth: Metrics.hairline)
-                .shadow(color: (focused && effects.glow) ? theme.glow.opacity(0.55) : .clear, radius: 5)
-        )
+        .overlay {
+            // The glow shadow is attached only when shown: a shadow blurs even with a clear color,
+            // and re-blurring a whole panel on every content change is expensive.
+            if focused && effects.glow {
+                ClippedRect(topRight: clipped)
+                    .stroke(theme.lineStrong, lineWidth: Metrics.hairline)
+                    .shadow(color: theme.glow.opacity(0.55), radius: 5)
+            } else {
+                ClippedRect(topRight: clipped)
+                    .stroke(focused ? theme.lineStrong : theme.line, lineWidth: Metrics.hairline)
+            }
+        }
         .overlay(
             // Focus selector: brackets snap in from just outside the frame.
             CornerBrackets()
