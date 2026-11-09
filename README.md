@@ -101,6 +101,8 @@ The window opens with a short build-on (its frame traces itself in, then the pan
    shasum -a 256 GRID-0.5.0-macOS.zip
    ```
 
+**Updating.** GRID can check GitHub once a day for a new version (it asks first; change it in **Settings › Updates**, or use **GRID › Check for Updates…**). When one is out, **Download & Verify** saves the zip to Downloads, checks its SHA-256, unzips it and shows the new GRID.app in Finder. Quit GRID and replace the app in Applications. GRID never replaces itself.
+
 ### Requirements
 - macOS 15 Sequoia or later (browser extensions need macOS 15.4)
 - Apple silicon
@@ -170,7 +172,7 @@ Use the `.app` bundle for real use rather than `swift run`, since macOS privacy 
 ## Privacy & security
 
 - **No accounts, telemetry, cloud services or AI features.** Settings, browsing data and history stay on your Mac. Terminal contents are never logged or stored.
-- **Network requests GRID makes on its own:** downloading the ad-blocking filter lists from their publishers (only while ad blocking is on), Safari's standard fraudulent-site check in the browser, and Spotify cover art from Spotify's image server (only with a Now Playing widget following Spotify). Everything else happens because you asked for it.
+- **Network requests GRID makes on its own:** downloading the ad-blocking filter lists from their publishers (only while ad blocking is on), Safari's standard fraudulent-site check in the browser, Spotify cover art from Spotify's image server (only with a Now Playing widget following Spotify), and **checking GitHub for a new GRID version once a day (only if you turned it on; no identifiers are sent)**. Everything else happens because you asked for it.
 - **Web content is isolated.** Pages get no bridge into GRID, can't run commands, and can't open other apps without a click and a confirmation. Downloads are confirmed and quarantined like Safari's.
 - **Widgets are sandboxed.** Custom widgets run in a separate, locked-down process and only get the permissions you approve. Those are shown in plain words, with the exact commands, paths and hosts.
 - **macOS protections stay on.** GRID isn't App-Sandboxed (your shell needs to reach your files), so it ships outside the Mac App Store. It never tries to work around macOS privacy prompts.

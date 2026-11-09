@@ -11,6 +11,7 @@ struct SettingsPanel: View {
         Panel(index: "05", title: "Settings", suffix: "sys") {
             Text("stored locally · UserDefaults").font(GridFont.small).foregroundStyle(theme.textMute)
         } content: {
+            ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     group("05.1", "Appearance") {
@@ -80,7 +81,11 @@ struct SettingsPanel: View {
                             }
                         }.buttonStyle(GridButtonStyle(compact: true))
                     }
-                    group("05.8", "About") {
+                    group("05.8", "Updates") {
+                        UpdateSettingsSection()
+                    }
+                    .id("updates")
+                    group("05.9", "About") {
                         Text("GRID \(GridInfo.version) · terminal: SwiftTerm (MIT) · see LICENSES.md")
                             .font(GridFont.small).foregroundStyle(theme.textDim)
                     }
@@ -89,6 +94,18 @@ struct SettingsPanel: View {
                 .frame(maxWidth: 820, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            // "View" on an update notice (and similar links) opens Settings at a section.
+            .onAppear { scroll(proxy) }
+            .onChange(of: app.settingsSection) { _, _ in scroll(proxy) }
+            }
+        }
+    }
+
+    private func scroll(_ proxy: ScrollViewProxy) {
+        guard let id = app.settingsSection else { return }
+        DispatchQueue.main.async {
+            withAnimation(app.settings.effects.motion ? GridMotion.quick : nil) { proxy.scrollTo(id, anchor: .top) }
+            app.settingsSection = nil
         }
     }
 

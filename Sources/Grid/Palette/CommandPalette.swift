@@ -38,6 +38,7 @@ enum PaletteBuilder {
             .init(id: "sidebar", section: "COMMAND", title: "Toggle Files Sidebar", glyph: "▤", shortcut: app.shortcuts.display(.toggleSidebar)) { app.filesSidebar.toggle() },
             .init(id: "inspector", section: "COMMAND", title: "Toggle Inspector", glyph: "▥", shortcut: app.shortcuts.display(.toggleInspector)) { app.inspectorVisible.toggle() },
             .init(id: "hidden", section: "COMMAND", title: app.files.showHidden ? "Hide Hidden Files" : "Show Hidden Files", glyph: "◌", shortcut: app.shortcuts.display(.toggleHidden)) { app.files.showHidden.toggle() },
+            .init(id: "update", section: "COMMAND", title: "Check for Updates", subtitle: "GRID \(app.updates.current) · asks GitHub for the latest release", glyph: "◆", shortcut: app.shortcuts.display(.checkForUpdates)) { app.updates.checkNowAndReport() },
             .init(id: "rescan", section: "COMMAND", title: "Rescan Applications", glyph: "↻") { app.apps.rescan(); app.flash(.info, "Rescanning applications") },
             .init(id: "copy-cwd", section: "COMMAND", title: "Copy Terminal Directory Path", glyph: "⧉") {
                 if let d = app.terminals.active?.cwd { app.files.copyPaths([URL(fileURLWithPath: d)]); app.flash(.info, "Copied \(PathResolver.abbreviate(d))") }
