@@ -7,7 +7,7 @@ import SwiftUI
 enum GridCommand: String, CaseIterable, Identifiable, Codable {
     case palette, newTab, closePane, closeTab, splitRight, splitDown, nextPane, previousPane, nextTab, previousTab,
          clearScrollback, find, findNext, findPrevious,
-         showTerminal, showFiles, showApps, showWeb, settings, toggleSidebar, toggleInspector, toggleDeck, toggleTerminalPanel,
+         showTerminal, showFiles, showApps, showWeb, showMap, settings, toggleSidebar, toggleInspector, toggleDeck, toggleTerminalPanel,
          terminalHere, revealTerminalDirectory, newFolder, goBack, goForward, goUp, goHome, goToFolder, toggleHidden,
          checkForUpdates
 
@@ -21,7 +21,7 @@ enum GridCommand: String, CaseIterable, Identifiable, Codable {
         case .previousTab: "Previous Tab"; case .clearScrollback: "Clear Scrollback"; case .find: "Find"
         case .findNext: "Find Next"; case .findPrevious: "Find Previous"
         case .showTerminal: "Show Terminal"; case .showFiles: "Show Files"; case .showApps: "Show Applications"
-        case .showWeb: "Show Web"; case .settings: "Settings"; case .toggleSidebar: "Files Sidebar"
+        case .showWeb: "Show Web"; case .showMap: "Show Map"; case .settings: "Settings"; case .toggleSidebar: "Files Sidebar"
         case .toggleInspector: "Inspector"; case .toggleDeck: "Widget Deck"; case .toggleTerminalPanel: "Terminal Panel"
         case .terminalHere: "New Tab in Files Folder"; case .revealTerminalDirectory: "Show Terminal Directory in Files"
         case .newFolder: "New Folder"; case .goBack: "Back"; case .goForward: "Forward"; case .goUp: "Enclosing Folder"
@@ -32,7 +32,7 @@ enum GridCommand: String, CaseIterable, Identifiable, Codable {
 
     var group: String {
         switch self {
-        case .palette, .showTerminal, .showFiles, .showApps, .showWeb, .settings, .toggleSidebar, .toggleInspector, .toggleDeck, .toggleTerminalPanel,
+        case .palette, .showTerminal, .showFiles, .showApps, .showWeb, .showMap, .settings, .toggleSidebar, .toggleInspector, .toggleDeck, .toggleTerminalPanel,
              .checkForUpdates: "Workspace"
         case .newTab, .closePane, .closeTab, .splitRight, .splitDown, .nextPane, .previousPane, .nextTab, .previousTab,
              .clearScrollback, .find, .findNext, .findPrevious: "Terminal"
@@ -60,6 +60,7 @@ enum GridCommand: String, CaseIterable, Identifiable, Codable {
         case .showFiles: KeyBinding("2", [.command, .option])
         case .showApps: KeyBinding("3", [.command, .option])
         case .showWeb: KeyBinding("4", [.command, .option])
+        case .showMap: KeyBinding("5", [.command, .option])
         case .settings: KeyBinding(",", [.command])
         case .toggleSidebar: KeyBinding("b", [.command])
         case .toggleInspector: KeyBinding("i", [.command])

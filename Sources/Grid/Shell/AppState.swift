@@ -4,25 +4,25 @@ import Observation
 import SwiftUI
 
 enum PanelID: String, CaseIterable, Identifiable {
-    case terminal, files, apps, web, settings
+    case terminal, files, apps, web, map, settings
     var id: String { rawValue }
     var index: String {
-        switch self { case .terminal: "01"; case .files: "02"; case .apps: "03"; case .web: "04"; case .settings: "05" }
+        switch self { case .terminal: "01"; case .files: "02"; case .apps: "03"; case .web: "04"; case .map: "05"; case .settings: "06" }
     }
     var label: String {
-        switch self { case .terminal: "TERM"; case .files: "FILES"; case .apps: "APPS"; case .web: "WEB"; case .settings: "SYS" }
+        switch self { case .terminal: "TERM"; case .files: "FILES"; case .apps: "APPS"; case .web: "WEB"; case .map: "MAP"; case .settings: "SYS" }
     }
     var title: String {
-        switch self { case .terminal: "Terminal"; case .files: "Files"; case .apps: "Applications"; case .web: "Web"; case .settings: "Settings" }
+        switch self { case .terminal: "Terminal"; case .files: "Files"; case .apps: "Applications"; case .web: "Web"; case .map: "Map"; case .settings: "Settings" }
     }
     var symbol: String {
         switch self {
         case .terminal: "terminal"; case .files: "folder"; case .apps: "square.grid.2x2"
-        case .web: "globe"; case .settings: "slider.horizontal.3"
+        case .web: "globe"; case .map: "map"; case .settings: "slider.horizontal.3"
         }
     }
     var shortcutKey: Character {
-        switch self { case .terminal: "1"; case .files: "2"; case .apps: "3"; case .web: "4"; case .settings: "," }
+        switch self { case .terminal: "1"; case .files: "2"; case .apps: "3"; case .web: "4"; case .map: "5"; case .settings: "," }
     }
 }
 
@@ -91,6 +91,17 @@ final class AppState {
     let updates = UpdateChecker()
     /// A Settings section to scroll to when the Settings page next shows (e.g. "updates").
     var settingsSection: String?
+    /// The Map page's model, created the first time it is needed (nothing runs before that).
+    @ObservationIgnored private var _maps: MapModel?
+    var maps: MapModel {
+        if let m = _maps { return m }
+        let m = MapModel()
+        m.app = self
+        _maps = m
+        return m
+    }
+    /// The map model only if the Map page has been opened (for status readouts).
+    var mapsIfLoaded: MapModel? { _maps }
     let browser = BrowserModel()
     var paletteOpen = false
     var confirmation: Confirmation?

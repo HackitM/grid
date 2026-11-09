@@ -233,7 +233,7 @@ struct GridCommands: Commands {
             Button("Command Palette") { app.paletteOpen.toggle() }
                 .keyboardShortcut(key(.palette))
             Divider()
-            ForEach([(PanelID.terminal, GridCommand.showTerminal), (.files, .showFiles), (.apps, .showApps), (.web, .showWeb)], id: \.0) { p, cmd in
+            ForEach([(PanelID.terminal, GridCommand.showTerminal), (.files, .showFiles), (.apps, .showApps), (.web, .showWeb), (.map, .showMap)], id: \.0) { p, cmd in
                 Button(p.title) {
                     app.show(p)
                     if p == .apps { NotificationCenter.default.post(name: .gridFocusAppSearch, object: nil) }
