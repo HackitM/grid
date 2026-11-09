@@ -78,13 +78,16 @@
 - [ ] Ideas: calendar (EventKit needs a permission prompt), weather (network — out of scope
       unless requested), per-widget accent, a full-screen deck panel
 
-## Milestone 3 — Web
-- [ ] Reader prototype: hidden non-persistent WKWebView + Readability in isolated content world →
-      sanitized HTML → native monospaced renderer with numbered links (`f 12` to follow)
-- [ ] Clear “READER VIEW — simplified” labelling; “Open in browser” always available
-- [ ] Decide on embedded browsing against real needs; if built: no script bridges, http(s)-only
-      navigation policy, separate data store, download confirmation, themed chrome only
-- [ ] Test: page JavaScript cannot reach any GRID function
+## Milestone 3 — Web ✅
+- [x] Engine research (WebKit vs Chromium/CEF vs Gecko/Servo/Ladybird vs terminal browsers) → WebKit
+- [x] Embedded browser: tabs (lazy), address/search, navigation policy, separate data store,
+      confirmed + quarantined downloads, GRID-drawn page dialogs, popups, find, zoom, history
+- [x] Reader view (Readability in an isolated world → JS-off, CSP-locked GRID-styled view)
+- [x] Per-site GRID themes: GitHub, Hacker News, MDN, Wikipedia, Stack Overflow (opt-in per site)
+- [x] Ad blocking with uBlock Origin's default lists via WebKit content blockers; per-site off
+- [x] WebExtensions (macOS 15.4+): install with review, monochrome toolbar glyphs, popups
+- [x] Test: page JavaScript cannot reach any GRID function (no message handlers / schemes)
+- [ ] More theme packs (YouTube, Reddit, Google results…); per-site zoom memory
 
 ## Later / needs a design decision first
 - [ ] System-wide launcher hotkey (Carbon `RegisterEventHotKey` needs no extra permission;

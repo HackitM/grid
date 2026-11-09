@@ -31,6 +31,7 @@ fi
 # License notices for bundled third-party code (MIT requires shipping the notice).
 mkdir -p "$APP/Contents/Resources/Licenses"
 cp .build/checkouts/SwiftTerm/LICENSE "$APP/Contents/Resources/Licenses/SwiftTerm-LICENSE.txt"
+cp ThirdParty/readability/LICENSE.md "$APP/Contents/Resources/Licenses/Readability-LICENSE.md"
 
 if [[ -n "${SIGN_ID:-}" ]]; then
   codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP/Contents/MacOS/GridWidgetHost"

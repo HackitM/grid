@@ -20,7 +20,7 @@ struct RootView: View {
                         case .terminal: TerminalPanel()
                         case .files: FilesPanel()
                         case .apps: AppsPanel()
-                        case .web: WebPanel()
+                        case .web: BrowserPanel()
                         case .settings: SettingsPanel()
                         }
                     }

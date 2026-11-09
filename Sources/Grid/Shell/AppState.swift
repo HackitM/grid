@@ -86,6 +86,7 @@ final class AppState {
     let shortcuts = ShortcutStore()
     let widgets = WidgetStore()
     let widgetLibrary = WidgetLibrary()
+    let browser = BrowserModel()
     var paletteOpen = false
     var confirmation: Confirmation?
     /// Pending "Allow this widget?" review (Settings › Widgets, gallery, or a card).
@@ -113,6 +114,7 @@ final class AppState {
         }
         fileOps.app = self
         widgets.onRemove = { [weak self] keep in self?.widgetLibrary.pruneRuntimes(keeping: keep) }
+        browser.attach(self)
         configureDocking()
         // Restore the last Files folder if it still exists; remember it as the user navigates.
         if let last = UserDefaults.standard.string(forKey: "files.lastFolder"),
@@ -280,6 +282,10 @@ final class AppState {
             flash(.error, "Not a web address: \(raw)")
             return
         }
+        if browser.settings.openLinksInGRID {
+            browser.open(url)
+            return
+        }
         NSWorkspace.shared.open(url)
         flash(.info, "Opened \(url.host ?? url.absoluteString) in the default browser")
     }
@@ -296,5 +302,6 @@ final class AppState {
     func setTheme(_ t: ThemeID) {
         settings.theme = t
         terminals.applyAppearance()
+        browser.tabs.forEach { $0.applyAppearance(); $0.refreshThemeScripts() }
     }
 }

@@ -118,6 +118,15 @@ with the deck docked at the bottom) and wrap when the deck is too narrow. The de
 left or right. ⚙ flips a card to its settings, ↗ expands it, ⌃ collapses it, × removes it, and +
 opens the gallery. The layout persists.
 
+**Web (⌥⌘4):** an embedded WebKit browser in GRID's style. Tabs, address bar or search, find,
+zoom and history; downloads always ask first. **Reader view** (⇧⌘R) re-sets articles in GRID's
+monospaced layout. **Site themes** give GitHub, Hacker News, MDN, Wikipedia and Stack Overflow GRID's
+colours and type (per site, one click to the original). **Ad blocking** uses uBlock Origin's default
+filter lists through Safari's native content blocker, with a per-site off switch. **Extensions**
+(Chrome/Safari WebExtensions, macOS 15.4+) install from a folder or .zip after a permission review;
+their buttons appear as GRID glyphs only when installed. Pages can't reach your terminal, files or
+apps. Requires macOS 15.
+
 **Milestone 1:**
 Real PTY terminal with tabs, busy and finished-job indicators, safe quit and close, kernel-based
 working-directory tracking, and safe drag-to-insert paths. File browser with breadcrumbs, editable

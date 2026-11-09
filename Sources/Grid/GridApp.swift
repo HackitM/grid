@@ -129,11 +129,15 @@ struct GridCommands: Commands {
                 t.active?.hasFocus, t.active?.find.visible, t.activeTab?.panes.count, t.tabs.count,
                 t.sessions.isEmpty, t.activeTabID, t.activeID,
                 app.files.canGoBack, app.files.canGoForward, app.files.canGoUp, app.files.showHidden,
-                app.settings.theme, GridCommand.allCases.map { app.shortcuts.binding($0) }]
+                app.settings.theme, GridCommand.allCases.map { app.shortcuts.binding($0) },
+                app.browser.activeID, app.browser.tabs.count, app.browser.active?.canGoBack, app.browser.active?.canGoForward,
+                app.browser.active?.reader != nil, app.browser.findVisible]
     }
 
     private var terminalFocused: Bool { app.panel == .terminal && (app.terminals.active?.hasFocus ?? false) }
     private var filesVisible: Bool { app.panel == .files || (app.panel == .terminal && app.filesSidebar) }
+    /// The Web page is showing: tab, close, find, back/forward and ⌘L act on the browser.
+    private var web: Bool { app.panel == .web }
     /// Configured shortcut for a command (Settings › Keyboard); nil when unassigned.
     private func key(_ c: GridCommand) -> KeyboardShortcut? { app.shortcuts.shortcut(c) }
 
@@ -143,7 +147,10 @@ struct GridCommands: Commands {
             Button("Settings…") { app.show(.settings) }.keyboardShortcut(key(.settings))
         }
         CommandGroup(replacing: .newItem) {
-            Button("New Tab") { app.newTerminal() }.keyboardShortcut(key(.newTab))
+            Button("New Tab") {
+                if web { app.browser.newTab(); app.browser.focusAddressToken += 1 } else { app.newTerminal() }
+            }
+            .keyboardShortcut(key(.newTab))
             Button("New Tab in Files Folder") { app.openTerminalHere() }.keyboardShortcut(key(.terminalHere))
             Button("New Folder") {
                 if !filesVisible { app.show(.files) }
@@ -155,9 +162,10 @@ struct GridCommands: Commands {
             // The close command never quits GRID by accident: it closes the focused pane (or the tab
             // when it has one pane) in the Terminal panel; on other panels it returns to the terminal.
             // Only with no sessions left does it close the window (which quits the single-window app).
-            Button(app.panel != .terminal && !app.terminals.sessions.isEmpty ? "Back to Terminal"
+            Button(web && app.browser.active != nil ? "Close Browser Tab" : app.panel != .terminal && !app.terminals.sessions.isEmpty ? "Back to Terminal"
                    : ((app.terminals.activeTab?.panes.count ?? 0) > 1 ? "Close Pane" : "Close Tab")) {
                 if app.confirmation != nil { NSSound.beep(); return }
+                if web, let t = app.browser.active { app.browser.close(t.id); return }
                 if app.panel != .terminal && !app.terminals.sessions.isEmpty {
                     app.show(.terminal)
                     app.focusTerminal()
@@ -176,6 +184,7 @@ struct GridCommands: Commands {
         }
         CommandGroup(after: .textEditing) {
             Button("Find") {
+                if web { if app.browser.active != nil { app.browser.findVisible = true }; return }
                 if app.panel == .terminal, let s = app.terminals.active, terminalFocused || s.find.visible {
                     s.find.open()
                 } else {
@@ -192,15 +201,16 @@ struct GridCommands: Commands {
                 .disabled(!(app.terminals.active?.find.visible ?? false))
         }
         CommandMenu("Go") {
-            Button("Back") { app.files.goBack() }.keyboardShortcut(key(.goBack))
-                .disabled(!filesVisible || terminalFocused || !app.files.canGoBack)
-            Button("Forward") { app.files.goForward() }.keyboardShortcut(key(.goForward))
-                .disabled(!filesVisible || terminalFocused || !app.files.canGoForward)
+            Button("Back") { if web { app.browser.active?.goBack() } else { app.files.goBack() } }.keyboardShortcut(key(.goBack))
+                .disabled(web ? !(app.browser.active?.canGoBack ?? false) : (!filesVisible || terminalFocused || !app.files.canGoBack))
+            Button("Forward") { if web { app.browser.active?.goForward() } else { app.files.goForward() } }.keyboardShortcut(key(.goForward))
+                .disabled(web ? !(app.browser.active?.canGoForward ?? false) : (!filesVisible || terminalFocused || !app.files.canGoForward))
             Button("Enclosing Folder") { app.files.goUp() }.keyboardShortcut(key(.goUp))
                 .disabled(!filesVisible || terminalFocused || !app.files.canGoUp)
             Button("Home") { app.files.navigate(to: FileManager.default.homeDirectoryForCurrentUser); if !filesVisible { app.show(.files) } }
                 .keyboardShortcut(key(.goHome))
-            Button("Go to Folder…") {
+            Button(web ? "Open Location…" : "Go to Folder…") {
+                if web { app.browser.focusAddressToken += 1; return }
                 if !filesVisible { app.show(.files) }
                 NotificationCenter.default.post(name: .gridFocusPathField, object: nil)
             }
@@ -247,6 +257,19 @@ struct GridCommands: Commands {
             }
             Divider()
         }
+        CommandMenu("Browser") {
+            Button("Reload Page") { app.browser.active?.reload() }
+                .keyboardShortcut("r", modifiers: .command).disabled(!web || app.browser.active == nil)
+            Button(app.browser.active?.reader != nil ? "Exit Reader View" : "Reader View") { Task { await app.browser.toggleReader() } }
+                .keyboardShortcut("r", modifiers: [.command, .shift]).disabled(!web || app.browser.active == nil)
+            Divider()
+            Button("Zoom In") { app.browser.active?.zoom(0.1) }.keyboardShortcut("=", modifiers: .command).disabled(!web)
+            Button("Zoom Out") { app.browser.active?.zoom(-0.1) }.keyboardShortcut("-", modifiers: .command).disabled(!web)
+            Button("Actual Size") { app.browser.active?.zoom(nil) }.keyboardShortcut("0", modifiers: .command).disabled(!web)
+            Divider()
+            Button("Open Page in Default Browser") { if let u = app.browser.active?.url { NSWorkspace.shared.open(u) } }
+                .disabled(app.browser.active?.url == nil)
+        }
         CommandMenu("Session") {
             Button("Split Right") { app.split(.horizontal) }.keyboardShortcut(key(.splitRight))
             Button("Split Down") { app.split(.vertical) }.keyboardShortcut(key(.splitDown))
@@ -257,9 +280,9 @@ struct GridCommands: Commands {
                 .keyboardShortcut(key(.previousPane))
                 .disabled((app.terminals.activeTab?.panes.count ?? 0) < 2)
             Divider()
-            Button("Previous Tab") { app.terminals.cycle(-1); app.show(.terminal) }
+            Button("Previous Tab") { if web { app.browser.cycle(-1) } else { app.terminals.cycle(-1); app.show(.terminal) } }
                 .keyboardShortcut(key(.previousTab))
-            Button("Next Tab") { app.terminals.cycle(1); app.show(.terminal) }
+            Button("Next Tab") { if web { app.browser.cycle(1) } else { app.terminals.cycle(1); app.show(.terminal) } }
                 .keyboardShortcut(key(.nextTab))
             Divider()
             ForEach(1...9, id: \.self) { n in

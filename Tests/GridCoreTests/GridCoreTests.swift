@@ -1573,3 +1573,711 @@ final class DeckRowsTests: XCTestCase {
         XCTAssertEqual(DeckRows.lines(count: 0, width: 450, minWidth: 200, spacing: 8), [])
     }
 }
+
+final class BrowserCoreTests: XCTestCase {
+    func testAddressInterpretation() {
+        let e = SearchEngine.duckduckgo
+        XCTAssertEqual(BrowserAddress.interpret("github.com", engine: e), .open(URL(string: "https://github.com")!))
+        XCTAssertEqual(BrowserAddress.interpret("http://localhost:3000", engine: e), .open(URL(string: "http://localhost:3000")!))
+        if case .search(let u) = BrowserAddress.interpret("swift concurrency docs", engine: e) {
+            XCTAssertEqual(u.host, "duckduckgo.com"); XCTAssertTrue(u.absoluteString.contains("q=swift%20concurrency%20docs"))
+        } else { XCTFail() }
+        if case .refused = BrowserAddress.interpret("javascript:alert(1)", engine: e) {} else { XCTFail("javascript must be refused") }
+        if case .refused = BrowserAddress.interpret("file:///etc/passwd", engine: e) {} else { XCTFail() }
+        if case .search = BrowserAddress.interpret("what is 2:30 in seconds", engine: e) {} else { XCTFail("spaces → search") }
+        XCTAssertEqual(BrowserAddress.display(URL(string: "https://github.com/")), "github.com")
+        XCTAssertEqual(BrowserAddress.display(URL(string: "http://x.org/a")), "http://x.org/a")
+    }
+
+    func testNavigationPolicy() {
+        func d(_ s: String, main: Bool = true, user: Bool = true) -> BrowserNavigationDecision {
+            BrowserNavigationPolicy.decide(URL(string: s)!, isMainFrame: main, userInitiated: user)
+        }
+        XCTAssertEqual(d("https://a.com"), .allow)
+        XCTAssertEqual(d("about:blank"), .allow)
+        if case .refuse = d("data:text/html,<script>1</script>") {} else { XCTFail("top-level data: refused") }
+        XCTAssertEqual(d("data:image/png;base64,AA", main: false), .allow)
+        if case .refuse = d("file:///etc/hosts") {} else { XCTFail() }
+        if case .refuse = d("javascript:void(0)") {} else { XCTFail() }
+        XCTAssertEqual(d("mailto:a@b.c"), .askToOpenExternally(scheme: "mailto"))
+        if case .refuse = d("mailto:a@b.c", user: false) {} else { XCTFail("no external apps without a click") }
+        if case .refuse = d("weird-app://x") {} else { XCTFail() }
+    }
+
+    func testSiteKeysAndThemes() {
+        XCTAssertEqual(SiteKey.of(URL(string: "https://www.GitHub.com/x")), "github.com")
+        XCTAssertEqual(SiteThemeCatalog.entry(for: URL(string: "https://github.com/apple/swift"))?.id, "github")
+        XCTAssertEqual(SiteThemeCatalog.entry(for: URL(string: "https://en.wikipedia.org/wiki/Tron"))?.id, "wikipedia")
+        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://notgithub.com/")))
+        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://evilwikipedia.org/")))
+    }
+}
+
+final class DownloadNamingTests: XCTestCase {
+    func testSanitizing() {
+        XCTAssertEqual(FileNaming.sanitizedDownloadName("../../etc/passwd"), "passwd")
+        XCTAssertEqual(FileNaming.sanitizedDownloadName(".hidden.sh"), "hidden.sh")
+        XCTAssertEqual(FileNaming.sanitizedDownloadName("invoice\u{202E}fdp.app"), "invoicefdp.app")
+        XCTAssertEqual(FileNaming.sanitizedDownloadName("a\nb.txt"), "ab.txt")
+        XCTAssertEqual(FileNaming.sanitizedDownloadName(""), "download")
+        XCTAssertEqual(FileNaming.sanitizedDownloadName(String(repeating: "x", count: 300) + ".zip").count, 200)
+        XCTAssertTrue(FileNaming.sanitizedDownloadName(String(repeating: "x", count: 300) + ".zip").hasSuffix(".zip"))
+        // A 300-character "extension" used to trap (negative prefix) before the download prompt.
+        XCTAssertEqual(FileNaming.sanitizedDownloadName("a." + String(repeating: "b", count: 300)).count, 200)
+    }
+}
+
+// MARK: - Content blocker
+
+final class ContentBlockerTests: XCTestCase {
+    // MARK: Helpers
+
+    private func compile(_ text: String, maxRulesPerList: Int = 50_000) -> ContentBlockerOutput {
+        ContentBlockerCompiler.compile([FilterList(name: "test", text: text)], maxRulesPerList: maxRulesPerList)
+    }
+
+    private func rules(_ output: ContentBlockerOutput, kind: ContentRuleChunk.Kind = .network) -> [[String: Any]] {
+        output.ruleLists.filter { $0.kind == kind }.flatMap { chunk -> [[String: Any]] in
+            let parsed = try! JSONSerialization.jsonObject(with: Data(chunk.json.utf8))
+            return parsed as! [[String: Any]]
+        }
+    }
+
+    private func trigger(_ rule: [String: Any]) -> [String: Any] { rule["trigger"] as! [String: Any] }
+    private func action(_ rule: [String: Any]) -> [String: Any] { rule["action"] as! [String: Any] }
+    private func urlFilter(_ rule: [String: Any]) -> String { trigger(rule)["url-filter"] as! String }
+    private func actionType(_ rule: [String: Any]) -> String { action(rule)["type"] as! String }
+
+    /// The one network rule a single filter produces.
+    private func networkRule(_ filter: String, file: StaticString = #filePath, line: UInt = #line) -> [String: Any]? {
+        let all = rules(compile(filter))
+        XCTAssertEqual(all.count, 1, "expected exactly one rule for \(filter), got \(all)", file: file, line: line)
+        return all.first
+    }
+
+    private func skipReasons(_ filter: String) -> [ContentBlockerSkipReason: Int] {
+        compile(filter).stats.skipped
+    }
+
+    private func assertSkipped(_ filter: String, _ reason: ContentBlockerSkipReason, file: StaticString = #filePath, line: UInt = #line) {
+        let output = compile(filter)
+        XCTAssertEqual(output.stats.skipped[reason], 1, "expected \(reason) for \(filter), got \(output.stats.skipped)", file: file, line: line)
+        XCTAssertTrue(output.ruleLists.isEmpty, "expected no rules for \(filter)", file: file, line: line)
+    }
+
+    /// Mirrors WebKit's regex restrictions independently of the converter's own validator.
+    private func isWebKitSafeRegex(_ pattern: String) -> Bool {
+        if pattern.isEmpty || !pattern.utf8.allSatisfy({ $0 >= 0x20 && $0 < 0x7F }) { return false }
+        let chars = Array(pattern)
+        var i = 0
+        var depth = 0
+        var inClass = false
+        var previousAtom = false
+        while i < chars.count {
+            let c = chars[i]
+            if inClass {
+                if c == "\\" { i += 2; continue }
+                if c == "]" { inClass = false }
+                i += 1
+                continue
+            }
+            switch c {
+            case "\\":
+                guard i + 1 < chars.count else { return false }
+                if chars[i + 1].isLetter || chars[i + 1].isNumber { return false } // \d \w \s \b \1 …
+                i += 1
+                previousAtom = true
+            case "|", "{", "}": return false
+            case "^": if i != 0 { return false }; previousAtom = false
+            case "$": if i != chars.count - 1 { return false }
+            case "(":
+                if i + 1 < chars.count, chars[i + 1] == "?" { return false }
+                depth += 1
+                previousAtom = false
+            case ")": depth -= 1; previousAtom = true
+            case "[": inClass = true; previousAtom = true
+            case "*", "+":
+                if !previousAtom { return false }
+                if i + 1 < chars.count, chars[i + 1] == "*" || chars[i + 1] == "+" { return false }
+                previousAtom = false
+            case "?":
+                if !previousAtom, i == 0 || !"*+".contains(chars[i - 1]) { return false }
+                previousAtom = false
+            default: previousAtom = true
+            }
+            i += 1
+        }
+        return depth == 0 && !inClass
+    }
+
+    // MARK: Parsing basics
+
+    func testCommentsHeadersAndBlankLinesAreIgnored() {
+        let output = compile("""
+        [Adblock Plus 2.0]
+        ! Title: test
+        # hosts-style comment
+
+           ! indented comment
+        """)
+        XCTAssertEqual(output.stats.parsed, 0)
+        XCTAssertTrue(output.ruleLists.isEmpty)
+        XCTAssertEqual(output.summary, "0 rules from 1 list · 0 skipped")
+    }
+
+    func testHostAnchoredDomainBlock() {
+        let rule = networkRule("||example.com^")!
+        XCTAssertEqual(urlFilter(rule), "^[^:]+://+([^:/]+\\.)?example\\.com[/:]")
+        XCTAssertEqual(actionType(rule), "block")
+        XCTAssertNil(trigger(rule)["resource-type"], "untyped filters match every resource type")
+        XCTAssertNil(trigger(rule)["url-filter-is-case-sensitive"])
+    }
+
+    func testHostsFileLinesAndBareHostnamesBecomeDomainBlocks() {
+        let output = compile("""
+        0.0.0.0 ads.example.com
+        127.0.0.1 tracker.example.net # trailing comment
+        127.0.0.1 localhost
+        0.0.0.0 a.example.org b.example.org
+        bare-host.example.com
+        """)
+        let filters = rules(output).map(urlFilter)
+        XCTAssertEqual(filters, [
+            "^[^:]+://+([^:/]+\\.)?ads\\.example\\.com[/:]",
+            "^[^:]+://+([^:/]+\\.)?tracker\\.example\\.net[/:]",
+            "^[^:]+://+([^:/]+\\.)?a\\.example\\.org[/:]",
+            "^[^:]+://+([^:/]+\\.)?b\\.example\\.org[/:]",
+            "^[^:]+://+([^:/]+\\.)?bare-host\\.example\\.com[/:]",
+        ])
+        XCTAssertEqual(output.stats.skipped[.unparsable], 1, "the localhost line yields nothing")
+    }
+
+    func testStartAnchorEndAnchorWildcardAndSeparator() {
+        XCTAssertEqual(urlFilter(networkRule("|https://cdn.example.com/*/ad.js|")!), "^https://cdn\\.example\\.com/.*/ad\\.js$")
+        XCTAssertEqual(urlFilter(networkRule("/banner/*/img^")!), "/banner/.*/img([^-_.%a-zA-Z0-9].*)?$", "trailing ^ after a path is separator-or-end")
+        XCTAssertEqual(urlFilter(networkRule("||example.com/path^")!), "^[^:]+://+([^:/]+\\.)?example\\.com/path([^-_.%a-zA-Z0-9].*)?$")
+        XCTAssertEqual(urlFilter(networkRule("||example.com^ads^")!), "^[^:]+://+([^:/]+\\.)?example\\.com[^-_.%a-zA-Z0-9]ads([^-_.%a-zA-Z0-9].*)?$")
+        XCTAssertEqual(urlFilter(networkRule("-ad-300x250.")!), "-ad-300x250\\.")
+        XCTAssertEqual(urlFilter(networkRule("*ads/*banner*")!), "ads/.*banner", "leading and trailing wildcards are redundant")
+        XCTAssertEqual(urlFilter(networkRule("ad**ad")!), "ad.*ad", "runs of * collapse (WebKit rejects **)")
+        XCTAssertEqual(urlFilter(networkRule("/ad.php?x=1&y=(2)")!), "/ad\\.php\\?x=1&y=\\(2\\)", "regex metacharacters are escaped")
+        XCTAssertEqual(urlFilter(networkRule("||Example.COM/Ad.JS")!), "^[^:]+://+([^:/]+\\.)?example\\.com/ad\\.js", "patterns are lowercased")
+        XCTAssertEqual(urlFilter(networkRule("||example.com^|")!), "^[^:]+://+([^:/]+\\.)?example\\.com[^-_.%a-zA-Z0-9]$")
+    }
+
+    func testExceptionsBecomeIgnorePreviousRules() {
+        let output = compile("""
+        ||ads.example.com^
+        @@||ads.example.com/allowed.js
+        """)
+        let all = rules(output)
+        XCTAssertEqual(all.map(actionType), ["block", "ignore-previous-rules"])
+        XCTAssertEqual(urlFilter(all[1]), "^[^:]+://+([^:/]+\\.)?ads\\.example\\.com/allowed\\.js")
+    }
+
+    // MARK: Options
+
+    func testThirdPartyOptions() {
+        XCTAssertEqual(trigger(networkRule("||example.com^$third-party")!)["load-type"] as? [String], ["third-party"])
+        XCTAssertEqual(trigger(networkRule("||example.com^$3p")!)["load-type"] as? [String], ["third-party"])
+        XCTAssertEqual(trigger(networkRule("||example.com^$~third-party")!)["load-type"] as? [String], ["first-party"])
+        XCTAssertEqual(trigger(networkRule("||example.com^$1p")!)["load-type"] as? [String], ["first-party"])
+        XCTAssertEqual(trigger(networkRule("||example.com^$~first-party")!)["load-type"] as? [String], ["third-party"])
+        assertSkipped("||example.com^$third-party,~third-party", .conflictingOptions)
+        assertSkipped("||example.com^$1p,3p", .conflictingOptions)
+    }
+
+    func testResourceTypeMapping() {
+        func types(_ filter: String) -> [String]? { trigger(networkRule(filter)!)["resource-type"] as? [String] }
+        XCTAssertEqual(types("||example.com^$script"), ["script"])
+        XCTAssertEqual(types("||example.com^$image"), ["image"])
+        XCTAssertEqual(types("||example.com^$stylesheet"), ["style-sheet"])
+        XCTAssertEqual(types("||example.com^$css"), ["style-sheet"])
+        XCTAssertEqual(types("||example.com^$xmlhttprequest"), ["fetch"])
+        XCTAssertEqual(types("||example.com^$xhr"), ["fetch"])
+        XCTAssertEqual(types("||example.com^$subdocument"), ["child-document"])
+        XCTAssertEqual(types("||example.com^$frame"), ["child-document"])
+        XCTAssertEqual(types("||example.com^$document"), ["top-document"])
+        XCTAssertEqual(types("||example.com^$doc"), ["top-document"])
+        XCTAssertEqual(types("||example.com^$media"), ["media"])
+        XCTAssertEqual(types("||example.com^$font"), ["font"])
+        XCTAssertEqual(types("||example.com^$websocket"), ["websocket"])
+        XCTAssertEqual(types("||example.com^$other"), ["other"])
+        XCTAssertEqual(types("||example.com^$ping"), ["ping"])
+        XCTAssertEqual(types("||example.com^$beacon"), ["ping"])
+        XCTAssertEqual(types("||example.com^$popup"), ["popup"])
+        XCTAssertEqual(types("||example.com^$script,image,xhr"), ["image", "script", "fetch"], "canonical order, independent of the filter's order")
+        XCTAssertEqual(types("||example.com^$xhr,image,script"), ["image", "script", "fetch"])
+        XCTAssertNil(types("||example.com^$all"), "$all matches every type, like an untyped filter")
+        XCTAssertEqual(types("||example.com^$script,object"), ["script"], "inexpressible types are dropped from a set")
+        assertSkipped("||example.com^$object", .unsupportedOption)
+        assertSkipped("||example.com^$webrtc", .unsupportedOption)
+    }
+
+    func testNegatedResourceTypesComplementTheRegularSet() {
+        let types = trigger(networkRule("||example.com^$~image,~script")!)["resource-type"] as! [String]
+        XCTAssertEqual(types, ["child-document", "style-sheet", "font", "media", "ping", "fetch", "websocket", "other", "svg-document"])
+        XCTAssertFalse(types.contains("top-document"), "negated types never cover root documents")
+        XCTAssertFalse(types.contains("popup"))
+        XCTAssertEqual(trigger(networkRule("||example.com^$script,image,~image")!)["resource-type"] as? [String], ["script"])
+        assertSkipped("||example.com^$script,~script", .conflictingOptions)
+    }
+
+    func testDomainOption() {
+        let include = networkRule("||example.com^$domain=b.com|a.com|a.com")!
+        XCTAssertEqual(trigger(include)["if-domain"] as? [String], ["*a.com", "*b.com"], "sorted, de-duplicated, subdomain-matching")
+        XCTAssertNil(trigger(include)["unless-domain"])
+        let exclude = networkRule("||example.com^$domain=~a.com|~B.com")!
+        XCTAssertEqual(trigger(exclude)["unless-domain"] as? [String], ["*a.com", "*b.com"])
+        XCTAssertEqual(trigger(networkRule("||example.com^$from=a.com")!)["if-domain"] as? [String], ["*a.com"], "$from is an alias of $domain")
+        assertSkipped("||example.com^$domain=a.com|~sub.a.com", .mixedDomains)
+        XCTAssertEqual(trigger(networkRule("||example.com^$domain=a.com|google.*")!)["if-domain"] as? [String], ["*a.com"], "an unsupported inclusion narrows the filter")
+        assertSkipped("||example.com^$domain=google.*", .unsupportedDomain)
+        assertSkipped("||example.com^$domain=bücher.de", .unsupportedDomain)
+        assertSkipped("||example.com^$domain=a.com|~google.*", .unsupportedDomain)
+        assertSkipped("||example.com^$domain=", .unparsable)
+    }
+
+    func testMatchCase() {
+        let rule = networkRule("||example.com/AdBanner$match-case")!
+        XCTAssertEqual(trigger(rule)["url-filter-is-case-sensitive"] as? Bool, true)
+        XCTAssertEqual(urlFilter(rule), "^[^:]+://+([^:/]+\\.)?example\\.com/AdBanner", "case is preserved for $match-case")
+    }
+
+    func testUnsupportedOptionsAreSkipped() {
+        for option in ["redirect=noopjs", "redirect-rule=noopjs", "removeparam=utm_source", "csp=script-src 'self'", "header=set-cookie",
+                       "permissions=geolocation=()", "replace=/a/b/", "denyallow=a.com", "to=a.com", "method=get", "popunder",
+                       "inline-script", "cname", "strict3p", "nonsense"] {
+            assertSkipped("||example.com^$\(option)", .unsupportedOption)
+        }
+        assertSkipped("||example.com^$elemhide", .unsupportedOption)
+        assertSkipped("||example.com^$generichide", .unsupportedOption)
+    }
+
+    func testImportantRulesFollowExceptions() {
+        let output = compile("""
+        ||a.example.com^$important
+        ||b.example.com^
+        @@||example.com^
+        """)
+        let all = rules(output)
+        XCTAssertEqual(all.map(actionType), ["block", "ignore-previous-rules", "block"])
+        XCTAssertTrue(urlFilter(all[0]).contains("b\\.example"), "normal blocks come first")
+        XCTAssertTrue(urlFilter(all[2]).contains("a\\.example"), "$important blocks come after exceptions so exceptions cannot cancel them")
+    }
+
+    func testBadfilterRemovesMatchingFilter() {
+        let output = compile("""
+        ||a.example.com^$script
+        ||a.example.com^$script,badfilter
+        ||b.example.com^
+        ||c.example.com^$badfilter
+        ||c.example.com^$image
+        """)
+        let filters = rules(output).map(urlFilter)
+        XCTAssertEqual(filters.count, 2)
+        XCTAssertTrue(filters[0].contains("b\\.example"))
+        XCTAssertTrue(filters[1].contains("c\\.example"), "a $badfilter only removes the filter with identical options")
+        XCTAssertEqual(output.stats.skipped[.badfilter], 1)
+    }
+
+    func testBadfilterAppliesAcrossLists() {
+        let output = ContentBlockerCompiler.compile([
+            FilterList(name: "a", text: "||ads.example.com^"),
+            FilterList(name: "b", text: "||ads.example.com^$badfilter"),
+        ])
+        XCTAssertTrue(output.ruleLists.isEmpty)
+        XCTAssertEqual(output.stats.lists[0].skipped[.badfilter], 1)
+    }
+
+    // MARK: Whole-site and cosmetic exceptions
+
+    func testDocumentExceptionWhitelistsSiteInEveryList() {
+        let output = compile("""
+        ||ads.example.com^
+        ##.ad
+        site.com##.banner
+        @@||trusted.com^$document
+        """)
+        let network = rules(output)
+        XCTAssertEqual(network.count, 2)
+        XCTAssertEqual(actionType(network[1]), "ignore-previous-rules")
+        XCTAssertEqual(urlFilter(network[1]), ".*")
+        XCTAssertEqual(trigger(network[1])["if-domain"] as? [String], ["*trusted.com"])
+        for kind in [ContentRuleChunk.Kind.cosmeticGeneric, .cosmeticSpecific] {
+            let cosmetic = rules(output, kind: kind)
+            XCTAssertEqual(cosmetic.count, 2, "\(kind)")
+            XCTAssertEqual(actionType(cosmetic[1]), "ignore-previous-rules", "\(kind)")
+            XCTAssertEqual(trigger(cosmetic[1])["if-domain"] as? [String], ["*trusted.com"], "\(kind)")
+        }
+    }
+
+    func testDocumentExceptionWithPathUsesIfTopURL() {
+        let output = compile("""
+        ||ads.example.com^
+        @@||trusted.com/article/$document
+        """)
+        let network = rules(output)
+        XCTAssertEqual(network.count, 2)
+        XCTAssertEqual(urlFilter(network[1]), ".*")
+        XCTAssertEqual(trigger(network[1])["if-top-url"] as? [String], ["^[^:]+://+([^:/]+\\.)?trusted\\.com/article/"])
+        XCTAssertNil(trigger(network[1])["resource-type"])
+    }
+
+    func testGenerichideSpecifichideAndElemhideScopeCosmeticLists() {
+        let output = compile("""
+        ##.ad
+        site.com##.banner
+        @@||generic.com^$generichide
+        @@||specific.com^$specifichide
+        @@||both.com^$elemhide
+        @@||ghide.com^$ghide
+        """)
+        let generic = rules(output, kind: .cosmeticGeneric)
+        XCTAssertEqual(generic.map(actionType), ["css-display-none", "ignore-previous-rules"])
+        XCTAssertEqual(trigger(generic[1])["if-domain"] as? [String], ["*both.com", "*generic.com", "*ghide.com"])
+        let specific = rules(output, kind: .cosmeticSpecific)
+        XCTAssertEqual(specific.map(actionType), ["css-display-none", "ignore-previous-rules"])
+        XCTAssertEqual(trigger(specific[1])["if-domain"] as? [String], ["*both.com", "*specific.com"])
+        XCTAssertTrue(rules(output, kind: .network).isEmpty)
+        assertSkipped("@@||site.com/path$generichide", .unsupportedOption)
+        assertSkipped("@@||site.com^$generichide,script", .unsupportedOption)
+    }
+
+    // MARK: Cosmetic filters
+
+    func testGenericAndSpecificCosmeticRules() {
+        let output = compile("""
+        ##.ad-banner
+        ##div[id^="google_ads_"]
+        example.com,~sub.example.com##.mixed
+        a.com,b.com##.promo
+        b.com,a.com##.sponsored
+        ~news.com##.generic-except
+        """)
+        let generic = rules(output, kind: .cosmeticGeneric)
+        XCTAssertEqual(generic.count, 2)
+        XCTAssertEqual(action(generic[0])["selector"] as? String, ".ad-banner, div[id^=\"google_ads_\"]")
+        XCTAssertEqual(urlFilter(generic[0]), ".*")
+        XCTAssertNil(trigger(generic[0])["unless-domain"])
+        XCTAssertEqual(action(generic[1])["selector"] as? String, ".generic-except")
+        XCTAssertEqual(trigger(generic[1])["unless-domain"] as? [String], ["*news.com"])
+
+        let specific = rules(output, kind: .cosmeticSpecific)
+        XCTAssertEqual(specific.count, 1, "selectors sharing a domain set are grouped")
+        XCTAssertEqual(action(specific[0])["selector"] as? String, ".promo, .sponsored")
+        XCTAssertEqual(trigger(specific[0])["if-domain"] as? [String], ["*a.com", "*b.com"])
+        XCTAssertEqual(output.stats.skipped[.mixedDomains], 1)
+        XCTAssertEqual(output.stats.cosmeticSelectors, 5)
+        XCTAssertEqual(output.stats.cosmeticRules, 3)
+    }
+
+    func testCosmeticExceptions() {
+        let output = compile("""
+        ##.everywhere
+        ##.not-on-a
+        a.com#@#.not-on-a
+        a.com,b.com##.specific
+        a.com#@#.specific
+        sub.c.com##.sub
+        c.com#@#.sub
+        d.com##.gone
+        #@#.gone
+        #@#.everywhere
+        """)
+        let generic = rules(output, kind: .cosmeticGeneric)
+        XCTAssertEqual(generic.count, 1)
+        XCTAssertEqual(action(generic[0])["selector"] as? String, ".not-on-a")
+        XCTAssertEqual(trigger(generic[0])["unless-domain"] as? [String], ["*a.com"])
+        let specific = rules(output, kind: .cosmeticSpecific)
+        XCTAssertEqual(specific.count, 1)
+        XCTAssertEqual(action(specific[0])["selector"] as? String, ".specific")
+        XCTAssertEqual(trigger(specific[0])["if-domain"] as? [String], ["*b.com"])
+        XCTAssertEqual(output.stats.skipped[.cosmeticException], 3, ".everywhere, sub.c.com##.sub and d.com##.gone")
+    }
+
+    func testCosmeticGrouping() {
+        var lines: [String] = []
+        for i in 0..<600 { lines.append("##.plain-\(i)") }
+        for i in 0..<30 { lines.append("##div:not(.keep-\(i))") }
+        let output = compile(lines.joined(separator: "\n"))
+        let generic = rules(output, kind: .cosmeticGeneric)
+        let sizes = generic.map { (action($0)["selector"] as! String).components(separatedBy: ", ").count }
+        XCTAssertEqual(sizes, [250, 250, 100, 25, 5], "plain selectors in groups of 250, functional pseudo-class selectors in groups of 25")
+        XCTAssertEqual(output.stats.cosmeticSelectors, 630)
+        for rule in generic { XCTAssertEqual(actionType(rule), "css-display-none") }
+    }
+
+    func testCosmeticSelectorsAreValidated() {
+        for selector in ["div:has-text(Ad)", "div:-abp-has(a)", ":xpath(//div)", "div:upward(1)", "div:remove()", ".a:style(color:red)",
+                         "div:matches-css(color: red)", "div:min-text-length(5)", "div:watch-attr(x)", "div:others()", "div:if(.x)",
+                         "div:if-not(.x)", "div:nth-ancestor(2)", "div:matches-path(/x/)", "div:matches-attr(x)", "div:matches-media(x)",
+                         "div:spath(x)", "div:remove-attr(x)", "div:remove-class(x)", "div:contains(x)"] {
+            assertSkipped("##\(selector)", .proceduralCosmetic)
+        }
+        assertSkipped("example.com#?#div:has(> .x)", .proceduralCosmetic)
+        assertSkipped("example.com#@?#div", .proceduralCosmetic)
+        assertSkipped("example.com##+js(nowebrtc)", .scriptlet)
+        assertSkipped("example.com#$#.ad { display: none !important }", .scriptlet)
+        assertSkipped("example.com#%#//scriptlet('x')", .scriptlet)
+        assertSkipped("example.com##^script:has-text(ads)", .htmlFilter)
+        assertSkipped("example.com$$script[tag-content=\"ads\"]", .htmlFilter)
+        for selector in ["div[", "div..ad", "> .ad", ".ad >", "#1ad", "div::before.x", "div:not()", "svg|a", "div:has(:has(a))",
+                         "div { display: none }", "div:unknown-pseudo", "a[href=http://x/]", "div:has-text", "div,", ".a:nth-child(2n+)"] {
+            let output = compile("##\(selector)")
+            XCTAssertEqual(output.stats.skipped[.invalidSelector], 1, "expected invalidSelector for ##\(selector), got \(output.stats.skipped)")
+        }
+        assertSkipped("example.com##", .unparsable)
+        for selector in ["div:has(> a[href^=\"https://x\"])", "div:not(:has(a))", "a[href*=\"AD\" i]", "div:nth-child(2n+1)", "div:nth-child(odd)",
+                         "li:nth-child(2 of .ad)", "div:lang(en)", ".a, .b > .c + .d ~ .e", "#a\\:b", "my-ad-element", ".реклама",
+                         "div::before", ":root", "a[href^=foo-bar]", ":is(.a,.b) .c, :where(.d)", "DIV.Ad", "[data-ad]"] {
+            let output = compile("##\(selector)")
+            XCTAssertEqual(output.stats.converted, 1, "expected \(selector) to be accepted, got \(output.stats.skipped)")
+        }
+    }
+
+    func testCosmeticDomainsAreValidated() {
+        assertSkipped("bücher.de##.ad", .unsupportedDomain)
+        assertSkipped("google.*##.ad", .unsupportedDomain)
+        assertSkipped("~google.*##.ad", .unsupportedDomain)
+        let output = compile("a.com,google.*##.ad")
+        XCTAssertEqual(trigger(rules(output, kind: .cosmeticSpecific)[0])["if-domain"] as? [String], ["*a.com"], "an unsupported inclusion narrows the filter")
+        XCTAssertEqual(trigger(rules(compile("A.com##.ad"), kind: .cosmeticSpecific)[0])["if-domain"] as? [String], ["*a.com"], "domains are lowercased")
+    }
+
+    // MARK: Regex filters
+
+    func testRegexFilters() {
+        XCTAssertEqual(urlFilter(networkRule("/ads[0-9]+\\.js/")!), "ads[0-9]+\\.js")
+        XCTAssertEqual(urlFilter(networkRule("/^https?://[^/]+/ad\\.php$/$script")!), "^https?://[^/]+/ad\\.php$")
+        XCTAssertEqual(trigger(networkRule("/banner.*\\.gif/$image")!)["resource-type"] as? [String], ["image"])
+        XCTAssertEqual(urlFilter(networkRule("/ad$/")!), "ad$", "a $ anchor at the end of a regex is not an option separator")
+        for regex in ["/(a|b)/", "/a(?=b)/", "/(a)\\1/", "/\\bad/", "/a^b/", "/a$b/", "/a**/", "/*a/", "/[a-/", "/(a/", "/a)/", "/[z-a]/", "/\\s+/", "/a{2,1}/", "/a{100}/", "/a{2}?/", "/{2}/"] {
+            assertSkipped(regex, .unsupportedRegex)
+        }
+        assertSkipped("/bücher/", .nonASCII)
+    }
+
+    func testRegexNormalizationExpandsCommonConstructs() {
+        XCTAssertEqual(urlFilter(networkRule("/_dating\\d\\/index\\.html/")!), "_dating[0-9]\\/index\\.html")
+        XCTAssertEqual(urlFilter(networkRule("/^https?:\\/\\/[a-z]{2,3}\\d\\.biz\\/go\\/[0-9a-z]{3}$/")!), "^https?:\\/\\/[a-z][a-z][a-z]?[0-9]\\.biz\\/go\\/[0-9a-z][0-9a-z][0-9a-z]$")
+        XCTAssertEqual(urlFilter(networkRule("/(?:www\\d\\.)?x\\.com/")!), "(www[0-9]\\.)?x\\.com")
+        XCTAssertEqual(urlFilter(networkRule("/[\\w-]+\\.js/")!), "[0-9A-Za-z_-]+\\.js")
+        XCTAssertEqual(urlFilter(networkRule("/a{2,}b{0,}c{0,2}d{0}e/")!), "aa+b*c?c?e")
+        XCTAssertEqual(urlFilter(networkRule("/(ab){2}c\\W\\D/")!), "(ab)(ab)c[^0-9A-Za-z_][^0-9]")
+        XCTAssertEqual(WebKitRegex.normalize("[\\d]"), "[0-9]")
+        XCTAssertEqual(WebKitRegex.normalize("\\.{3}"), "\\.\\.\\.")
+        XCTAssertNil(WebKitRegex.normalize("[\\W]"), "negated shorthand inside a class cannot be expanded")
+        XCTAssertNil(WebKitRegex.normalize("(?<=a)b"))
+        XCTAssertNil(WebKitRegex.normalize("a{1,2}?"))
+        for filter in ["/_dating\\d\\/index\\.html/", "/^https?:\\/\\/[a-z]{2,3}\\d\\.biz$/", "/(?:www\\d\\.)?x\\.com/", "/[\\w-]+\\.js/"] {
+            XCTAssertTrue(isWebKitSafeRegex(urlFilter(networkRule(filter)!)), filter)
+        }
+    }
+
+    // MARK: Safety
+
+    func testOverlyGenericFiltersAreSkipped() {
+        assertSkipped("*", .tooGeneric)
+        assertSkipped("||^", .tooGeneric)
+        assertSkipped("*$third-party", .tooGeneric)
+        assertSkipped("@@*", .tooGeneric)
+        XCTAssertEqual(trigger(networkRule("*$script,domain=example.com")!)["if-domain"] as? [String], ["*example.com"])
+        XCTAssertEqual(urlFilter(networkRule("*$script,domain=example.com")!), ".*")
+        XCTAssertEqual(urlFilter(networkRule("$ping")!), ".*")
+        XCTAssertEqual(trigger(networkRule("$ping")!)["resource-type"] as? [String], ["ping"])
+    }
+
+    func testNonASCIIAndWhitespacePatternsAreSkipped() {
+        assertSkipped("||bücher.de^", .nonASCII)
+        assertSkipped("||example.com^ $script", .unparsable)
+    }
+
+    func testEveryURLFilterUsesWebKitSupportedConstructs() {
+        let text = """
+        ||example.com^
+        ||example.com^$third-party,script
+        |https://x.y/*/z|
+        /ads[0-9]+\\.js/
+        /^https?://[^/]+/ad\\.php$/
+        a^b^c
+        ||example.com/path^
+        -ad-(300x250).gif?x=1&y[]=2{3}|
+        @@||allowed.com^$document
+        @@||allowed.com/x$document
+        ||a.com^$~image,domain=~b.com
+        *$image,domain=c.com
+        """
+        let output = compile(text)
+        XCTAssertEqual(output.stats.skippedTotal, 0, "\(output.stats.skipped)")
+        var checked = 0
+        for chunk in output.ruleLists {
+            for rule in rules(output, kind: chunk.kind) {
+                let filter = urlFilter(rule)
+                XCTAssertTrue(isWebKitSafeRegex(filter), "unsafe url-filter: \(filter)")
+                XCTAssertTrue(WebKitRegex.isSupported(filter), "converter's validator disagrees with test validator: \(filter)")
+                if let top = trigger(rule)["if-top-url"] as? [String] { for t in top { XCTAssertTrue(isWebKitSafeRegex(t), t) } }
+                checked += 1
+            }
+        }
+        XCTAssertGreaterThan(checked, 10)
+    }
+
+    func testWebKitRegexValidator() {
+        for ok in ["^[^:]+://+([^:/]+\\.)?example\\.com[/:]", "ads([^-_.%a-zA-Z0-9].*)?$", ".*", "a+b?c*", "ads.*?x", "(ab)+c", "[a-z-]", "[\\]\\-]", "[|]", "a\\|b", "[^a-z]", "x$", "^x"] {
+            XCTAssertTrue(WebKitRegex.isSupported(ok), ok)
+        }
+        for bad in ["", "a|b", "(a|b)", "a{2}", "\\d", "\\w", "\\s", "[\\d]", "a(?=b)", "(?:a)", "\\bx", "a^b", "a$b", "(a$)", "a**", "*a", "+a", "a???", "[a-", "(a", "a)", "[]", "[z-a]", "bücher", "a\\1", "[a-[b]]"] {
+            XCTAssertFalse(WebKitRegex.isSupported(bad), bad)
+        }
+    }
+
+    // MARK: Output shape, chunking, determinism
+
+    func testJSONShapeAndIdentifiers() {
+        let output = compile("""
+        ||ads.example.com^$script
+        @@||ads.example.com/ok.js
+        ##.ad
+        site.com##.banner
+        """)
+        XCTAssertEqual(output.ruleLists.map(\.identifier), ["network-0", "cosmetic-generic-0", "cosmetic-specific-0"])
+        XCTAssertEqual(output.ruleLists.map(\.kind), [.network, .cosmeticGeneric, .cosmeticSpecific])
+        for chunk in output.ruleLists {
+            XCTAssertTrue(chunk.identifier.allSatisfy { $0.isLowercase || $0.isNumber || $0 == "-" })
+            let parsed = try! JSONSerialization.jsonObject(with: Data(chunk.json.utf8), options: [])
+            let array = parsed as! [[String: Any]]
+            XCTAssertEqual(array.count, chunk.ruleCount)
+            for rule in array {
+                XCTAssertEqual(Set(rule.keys), ["trigger", "action"])
+                let trigger = rule["trigger"] as! [String: Any]
+                XCTAssertTrue(trigger["url-filter"] is String)
+                XCTAssertTrue(Set(trigger.keys).isSubset(of: ["url-filter", "url-filter-is-case-sensitive", "resource-type", "load-type", "if-domain", "unless-domain", "if-top-url"]))
+                XCTAssertFalse(trigger["if-domain"] != nil && trigger["unless-domain"] != nil, "WebKit allows only one domain condition")
+                let action = rule["action"] as! [String: Any]
+                let type = action["type"] as! String
+                XCTAssertTrue(["block", "ignore-previous-rules", "css-display-none"].contains(type))
+                XCTAssertEqual(action["selector"] != nil, type == "css-display-none")
+                for key in ["if-domain", "unless-domain"] {
+                    for domain in (trigger[key] as? [String]) ?? [] {
+                        XCTAssertTrue(domain.hasPrefix("*"))
+                        XCTAssertEqual(domain, domain.lowercased())
+                        XCTAssertTrue(domain.utf8.allSatisfy { $0 < 0x80 })
+                    }
+                }
+            }
+        }
+        XCTAssertEqual(output.summary, "4 rules from 1 list · 0 skipped")
+        XCTAssertEqual(output.stats.totalRules, 4)
+    }
+
+    func testJSONEscaping() {
+        let output = compile("##a[title=\"quote\\\"d\"]\n||x.com/a\\b")
+        for chunk in output.ruleLists {
+            XCTAssertNoThrow(try JSONSerialization.jsonObject(with: Data(chunk.json.utf8)))
+        }
+        XCTAssertEqual(action(rules(output, kind: .cosmeticGeneric)[0])["selector"] as? String, "a[title=\"quote\\\"d\"]")
+        XCTAssertEqual(urlFilter(rules(output)[0]), "^[^:]+://+([^:/]+\\.)?x\\.com/a\\\\b")
+    }
+
+    func testChunkingRepeatsExceptionsAndRespectsLimit() {
+        var lines: [String] = []
+        for i in 0..<95 { lines.append("||block\(i).example.com^") }
+        for i in 0..<5 { lines.append("@@||allow\(i).example.com^") }
+        for i in 0..<3 { lines.append("||important\(i).example.com^$important") }
+        let output = compile(lines.joined(separator: "\n"), maxRulesPerList: 40)
+        let network = output.ruleLists.filter { $0.kind == .network }
+        XCTAssertEqual(network.map(\.identifier), ["network-0", "network-1", "network-2"])
+        for chunk in network {
+            XCTAssertLessThanOrEqual(chunk.ruleCount, 40)
+            let parsed = try! JSONSerialization.jsonObject(with: Data(chunk.json.utf8)) as! [[String: Any]]
+            XCTAssertEqual(parsed.count, chunk.ruleCount)
+            let types = parsed.map { ($0["action"] as! [String: Any])["type"] as! String }
+            XCTAssertEqual(types.filter { $0 == "ignore-previous-rules" }.count, 5, "every chunk carries every exception")
+            // Blocks, then exceptions, then $important blocks: no block may follow an exception unless it is important.
+            if let firstException = types.firstIndex(of: "ignore-previous-rules") {
+                let tail = parsed[(firstException + 5)...]
+                for rule in tail {
+                    XCTAssertTrue(((rule["trigger"] as! [String: Any])["url-filter"] as! String).contains("important"))
+                }
+            }
+        }
+        XCTAssertEqual(network.map(\.ruleCount), [40, 40, 33])
+        let allFilters = network.flatMap { chunk in (try! JSONSerialization.jsonObject(with: Data(chunk.json.utf8)) as! [[String: Any]]).map(urlFilter) }
+        XCTAssertEqual(Set(allFilters).count, 103, "no block is lost or duplicated across chunks")
+        XCTAssertEqual(output.stats.skipped[.ruleBudget], nil)
+    }
+
+    func testChunkSizeIsClampedToWebKitLimit() {
+        let output = compile("||a.com^", maxRulesPerList: 1_000_000)
+        XCTAssertEqual(output.ruleLists.count, 1)
+        XCTAssertNotEqual(ContentBlockerCompiler.digest(of: [FilterList(name: "t", text: "||a.com^")], maxRulesPerList: 1_000_000),
+                          ContentBlockerCompiler.digest(of: [FilterList(name: "t", text: "||a.com^")]))
+    }
+
+    func testDuplicateRulesAcrossListsAreEmittedOnce() {
+        let output = ContentBlockerCompiler.compile([
+            FilterList(name: "a", text: "||ads.example.com^\n##.ad"),
+            FilterList(name: "b", text: "||ads.example.com^\n##.ad"),
+        ])
+        XCTAssertEqual(rules(output).count, 1)
+        XCTAssertEqual(rules(output, kind: .cosmeticGeneric).count, 1)
+        XCTAssertEqual(output.stats.duplicates, 1)
+        XCTAssertEqual(output.stats.converted, 4)
+        XCTAssertEqual(output.stats.lists.map(\.name), ["a", "b"])
+    }
+
+    func testDeterminismAndDigest() {
+        let lists = [
+            FilterList(name: "one", text: "||ads.example.com^\nb.com,a.com##.x\n##.y\n@@||ok.com^$document\n~z.com##.w"),
+            FilterList(name: "two", text: "||tracker.example.net^$third-party\na.com,b.com##.x"),
+        ]
+        let first = ContentBlockerCompiler.compile(lists)
+        let second = ContentBlockerCompiler.compile(lists)
+        XCTAssertEqual(first.digest, second.digest)
+        XCTAssertEqual(first.digest.count, 64)
+        XCTAssertTrue(first.digest.allSatisfy { $0.isHexDigit })
+        XCTAssertEqual(first.ruleLists, second.ruleLists)
+        XCTAssertEqual(first.digest, ContentBlockerCompiler.digest(of: lists))
+        XCTAssertNotEqual(first.digest, ContentBlockerCompiler.digest(of: lists.reversed()), "order matters")
+        XCTAssertNotEqual(first.digest, ContentBlockerCompiler.digest(of: [FilterList(name: "one", text: lists[0].text + "\n||x.com^"), lists[1]]))
+        XCTAssertNotEqual(first.digest, ContentBlockerCompiler.digest(of: [FilterList(name: "renamed", text: lists[0].text), lists[1]]))
+        XCTAssertEqual(ContentBlockerCompiler.digest(of: []), ContentBlockerCompiler.digest(of: []))
+    }
+
+    func testStatsAccounting() {
+        let output = compile("""
+        ||a.com^
+        ||b.com^$redirect=noop
+        ##.ad
+        ##div:has-text(x)
+        ! comment
+        """)
+        XCTAssertEqual(output.stats.parsed, 4)
+        XCTAssertEqual(output.stats.converted, 2)
+        XCTAssertEqual(output.stats.skipped, [.unsupportedOption: 1, .proceduralCosmetic: 1])
+        XCTAssertEqual(output.stats.converted + output.stats.skippedTotal, output.stats.parsed)
+        XCTAssertEqual(output.stats.lists.count, 1)
+        XCTAssertEqual(output.stats.lists[0].parsed, 4)
+        XCTAssertEqual(output.stats.networkBlockRules, 1)
+        XCTAssertEqual(output.stats.cosmeticRules, 1)
+        XCTAssertEqual(output.summary, "2 rules from 1 list · 2 skipped")
+    }
+
+    func testEmptyInput() {
+        let output = ContentBlockerCompiler.compile([])
+        XCTAssertTrue(output.ruleLists.isEmpty)
+        XCTAssertEqual(output.stats.parsed, 0)
+        XCTAssertEqual(output.summary, "0 rules from 0 lists · 0 skipped")
+    }
+}
+
+
+final class ContentBlockerHardeningTests: XCTestCase {
+    func testNestedCountedRepeatsDontExplode() {
+        // ~64^6 bytes if unrolled; must be rejected quickly instead of exhausting memory.
+        let evil = FilterList(name: "evil", text: "/((((((a{64}){64}){64}){64}){64}){64})/\n||ads.example^")
+        let out = ContentBlockerCompiler.compile([evil])
+        XCTAssertTrue(out.ruleLists.contains { $0.json.contains("ads\\\\.example") || $0.json.contains("ads\\.example") })
+    }
+}

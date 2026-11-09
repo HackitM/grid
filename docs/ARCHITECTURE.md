@@ -189,24 +189,55 @@ configurable to ⌘K or ⇧⌘Space.
 A global `grid` CLI is **deferred**: any IPC channel that lets local processes drive GRID needs an
 authentication design (e.g. a per-user socket with peer-credential checks) first.
 
-### Web (Milestone 3 — research summary)
-- M1 ships **external open only**: http(s) addresses go to the default browser; other schemes are
-  refused.
-- **Text/reader mode (planned)**: load the page in a non-persistent, JavaScript-enabled WKWebView
-  that is never shown, run Mozilla Readability (Apache-2.0) in an isolated `WKContentWorld`, take the
-  extracted article HTML, sanitize it (SwiftSoup, MIT), and render it natively in a monospaced
-  layout with numbered links. Chosen over wrapping w3m/lynx (no JS, licensing/packaging friction)
-  and browsh/carbonyl (headless Firefox / stale Chromium). Limitations to state in the UI: no forms,
-  logins, media, or web apps — “Open in browser” always available.
-- **Embedded browsing (evaluate after reader mode)**: WKWebView with a non-persistent or dedicated
-  data store, no `WKScriptMessageHandler` and no `userContentController` bridges for remote content,
-  navigation policy restricted to http(s), downloads require confirmation, themed chrome only
-  (tabs, address bar, progress) — page styles are never globally overridden.
+### Web (embedded browser, Milestone 3)
+Engine choice: **WebKit (`WKWebView`)** — part of macOS (no bundle growth, OS-delivered security
+updates), the lightest memory/energy profile, Safari-level compatibility. Chromium (CEF) was
+rejected (~170 MB, own update burden, C++ glue); Gecko has no embeddable macOS build. The app's
+minimum is macOS 15; extensions use WebKit's `WKWebExtension` API and need 15.4.
+
+- `GridCore/BrowserCore.swift` (tested): address/search interpretation, the navigation policy
+  (http(s)/blob/about load inside; `file:` and `javascript:` refused; top-level `data:` refused;
+  mailto/tel/zoom… only after a click and a GRID confirmation; everything else refused), site keys,
+  the site-theme catalog, download-name sanitizing (no path parts, control or bidi characters).
+- `Web/BrowserModel.swift`: tabs (a page's web view is created only when the tab is first shown;
+  restored tabs load lazily), a dedicated persistent `WKWebsiteDataStore` separate from everything
+  else (Settings › Browser › Clear Browsing Data), per-tab `WKUserContentController`. The
+  coordinator decides navigations, turns non-renderable responses and `Content-Disposition:
+  attachment` into downloads (always confirmed, saved to Downloads with a unique name,
+  `com.apple.quarantine` + where-from set), draws page `alert/confirm` as GRID dialogs labelled
+  with the page's host (rate-limited), supports file upload via an open panel, and leaves camera
+  and microphone to WebKit's prompt. **No script message handlers exist**: pages have no channel
+  into GRID.
+- `Web/Reader.swift`: Mozilla Readability (vendored, Apache-2.0, `scripts/embed-readability.sh`)
+  runs in the `grid.reader` content world on a clone of the document; the article renders in a
+  second web view with JavaScript off, a deny-all CSP (images allowed), a sanitizer, an ephemeral
+  data store and GRID typography (numbered links via CSS counters).
+- `Web/SiteThemes.swift` + `SiteThemePacks.swift`: per-site CSS packs that remap each site's own
+  design tokens (read from its live stylesheets) to GRID's palette, injected by a user script in the
+  `grid.themes` content world as a constructed stylesheet (`adoptedStyleSheets`, not blocked by
+  strict `style-src`), toggled live per site and re-coloured when GRID's theme changes.
+- `Web/AdBlocker.swift` + `GridCore/ContentBlocker.swift` (tested, verified against WebKit's
+  compiler with the real lists): uBlock Origin's default lists are downloaded at runtime (nothing
+  bundled), converted to `WKContentRuleList` JSON (network rules with exceptions/important ordering
+  per chunk, cosmetic `css-display-none` groups), compiled once and cached by a digest of the list
+  contents. Per-site off removes every list from that tab's next load. Scriptlets, redirects and
+  procedural cosmetics have no WebKit equivalent and are skipped (counted in Settings).
+- `Web/BrowserExtensions.swift` (macOS 15.4+): install from a folder/.zip/.crx after a review of
+  the requested permissions and hosts; the approved set is stored and re-granted at each launch
+  (later requests are prompted by GRID). Toolbar buttons render as monochrome template glyphs in
+  GRID's colours, collapse into an `EXT n` menu past three, and are absent with no extensions.
+- UI (`Web/BrowserPanel.swift`): GRID tab strip, address bar (`TLS ▸` / `HTTP ▸` security
+  prompt), 1 px progress line (no idle animation), find bar, new-tab page with local history, and
+  header toggles for theme / reader / blocking. ⌘T ⌘W ⌘F ⌘[ ⌘] ⌘L and ⇧⌘[ ⇧⌘] act on the browser
+  while the Web page is showing; a Browser menu adds Reload, Reader View and zoom.
 
 ## 5. Security & privacy
 - No telemetry, accounts, network services, or AI features. Settings live in UserDefaults; terminal
   contents are never logged or persisted.
-- Remote web content cannot reach terminal/filesystem/app-launch code (no bridge exists).
+- Remote web content cannot reach terminal/filesystem/app-launch code: the embedded browser has no
+  script message handlers or custom schemes, GRID's own page scripts run in isolated content
+  worlds, non-web schemes need a click plus confirmation, downloads are confirmed and quarantined,
+  and browsing data lives in a separate store.
 - Structured APIs everywhere (NSWorkspace, FileManager, libproc); the only strings that ever reach a
   shell are those the user types or explicitly inserts (quoted paths).
 - The QA automation hook (`DebugHooks.swift`, `QASocketServer.swift`) can type into a shell, so it
