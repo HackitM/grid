@@ -55,10 +55,12 @@ final class MapsDeFlockTests: XCTestCase {
 
     // MARK: index
 
-    private func indexData(_ pts: [(lat: Int32, lon: Int32, brand: UInt8)], version: UInt32 = 1, magic: String = "FHIX", count: UInt32? = nil) -> Data {
+    private func indexData(_ pts: [(lat: Int32, lon: Int32, brand: UInt8)], version: UInt32 = 1, magic: String = "FHIX", count: UInt32? = nil,
+                           reserved: Bool = false) -> Data {
         var d = Data(magic.utf8)
         func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
         u32(version); u32(count ?? UInt32(pts.count))
+        if reserved { u32(0) }
         for p in pts { u32(UInt32(bitPattern: p.lat)) }
         for p in pts { u32(UInt32(bitPattern: p.lon)) }
         for p in pts { d.append(p.brand) }
@@ -99,6 +101,18 @@ final class MapsDeFlockTests: XCTestCase {
         let tiny = GeoPolygon.rectangle(BBox(west: -71.5, south: 41.9, east: -71.45, north: 41.95))
         XCTAssertTrue(idx.nonEmptyTiles(z: 11, in: tiny).isEmpty)
         XCTAssertTrue(idx.nonEmptyTiles(z: 99, in: ri).isEmpty)
+    }
+
+    func testIndexLiveSixteenByteHeader() throws {
+        // The live files carry a reserved u32 after the count (16-byte header).
+        let pts = [pt(-71.4, 41.8), pt(-71.5, 41.7), pt(-100, 40)]
+        let idx = try DeFlockIndex(indexData(pts, reserved: true))
+        XCTAssertEqual(idx.count, 3)
+        let ri = GeoPolygon.rectangle(BBox(west: -72, south: 41, east: -71, north: 42.1))
+        XCTAssertEqual(idx.count(in: ri), 2)
+        // One byte more or less than either layout is rejected.
+        var d = indexData(pts, reserved: true); d.append(0)
+        XCTAssertThrowsError(try DeFlockIndex(d))
     }
 
     func testIndexRejects() {

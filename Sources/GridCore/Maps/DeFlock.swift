@@ -72,8 +72,9 @@ public struct DeFlockBuild: Sendable, Equatable {
 
 // MARK: - National index (FHIX)
 
-/// `"FHIX"`, u32 LE version = 1, u32 LE count, then lat int32 ×1e-6 (count), lon int32 ×1e-6
-/// (count), brandId u8 (count). Total length is exactly 12 + 9·count.
+/// `"FHIX"`, u32 LE version = 1, u32 LE count, u32 reserved (0), then lat int32 ×1e-6 (count),
+/// lon int32 ×1e-6 (count), brandId u8 (count). Total length is exactly 16 + 9·count (the live
+/// files, checked 2026-11-09); a 12-byte header without the reserved field is also accepted.
 public struct DeFlockIndex: Sendable {
     private let lat: [Int32]
     private let lon: [Int32]
@@ -88,11 +89,14 @@ public struct DeFlockIndex: Sendable {
         func u32(_ o: Int) -> UInt32 { UInt32(bytes[o]) | UInt32(bytes[o + 1]) << 8 | UInt32(bytes[o + 2]) << 16 | UInt32(bytes[o + 3]) << 24 }
         guard u32(4) == 1 else { throw ALPRParseError.malformed("version") }
         let n = Int(u32(8))
-        // n < 2^32, so 12 + 9n cannot overflow Int (64-bit).
-        guard bytes.count == 12 + 9 * n else { throw ALPRParseError.malformed("length") }
+        // n < 2^32, so 16 + 9n cannot overflow Int (64-bit).
+        let header: Int
+        if bytes.count == 16 + 9 * n { header = 16 } else if bytes.count == 12 + 9 * n { header = 12 } else {
+            throw ALPRParseError.malformed("length")
+        }
         var lat = [Int32](repeating: 0, count: n), lon = lat
         var brand = [UInt8](repeating: 0, count: n)
-        let latBase = 12, lonBase = 12 + 4 * n, brandBase = 12 + 8 * n
+        let latBase = header, lonBase = header + 4 * n, brandBase = header + 8 * n
         for i in 0..<n {
             let a = Int32(bitPattern: u32(latBase + 4 * i)), o = Int32(bitPattern: u32(lonBase + 4 * i))
             guard abs(Int(a)) <= 90_000_000, abs(Int(o)) <= 180_000_000 else { throw ALPRParseError.malformed("coordinate") }

@@ -347,3 +347,18 @@ final class ALPRStore {
 extension ALPRStore.Status {
     var isBusy: Bool { if case .downloading = self { true } else { self == .checking } }
 }
+
+extension ALPRParseError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .tooLarge: "The camera data was larger than expected."
+        case .truncated: "The camera data was cut short."
+        case .malformed(let what): "The camera data couldn't be read (\(what))."
+        case .serverRemark(let r): "The Overpass server reported a problem: \(r.prefix(160))"
+        }
+    }
+}
+
+extension TileSourceError: LocalizedError {
+    public var errorDescription: String? { "The map tile source couldn't be used (\(self))." }
+}

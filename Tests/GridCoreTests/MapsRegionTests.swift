@@ -228,3 +228,11 @@ final class MapsRegionTests: XCTestCase {
         XCTAssertEqual(ALPRSourcePlanner.sources(for: nil, polygon: rect(BBox(west: -105, south: 35, east: -100, north: 38)), us: nil, ca: nil), [.overpass])
     }
 }
+
+final class RegionNameTests: XCTestCase {
+    func testDisplayNameFromID() {
+        XCTAssertEqual(RegionCatalog.displayName(fromID: "us/rhode-island"), "Rhode Island")
+        XCTAssertEqual(RegionCatalog.displayName(fromID: "us/district-of-columbia"), "District Of Columbia")
+        XCTAssertEqual(RegionCatalog.displayName(fromID: "canada"), "Canada")
+    }
+}

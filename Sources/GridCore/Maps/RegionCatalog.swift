@@ -4,6 +4,12 @@ import Foundation
 /// Feature geometry may be a Polygon or MultiPolygon in lon/lat. Features with bad geometry stay
 /// in the list without a polygon.
 public struct RegionCatalog: Sendable {
+    /// "us/rhode-island" → "Rhode Island"; "norcal" → "Norcal".
+    public static func displayName(fromID id: String) -> String {
+        let last = id.split(separator: "/").last.map(String.init) ?? id
+        return last.split(separator: "-").map { w in w.prefix(1).uppercased() + w.dropFirst() }.joined(separator: " ")
+    }
+
     public let regions: [RegionDescriptor]
     private let polygons: [String: GeoPolygon]
 
@@ -22,7 +28,9 @@ public struct RegionCatalog: Sendable {
             guard let feat = f as? [String: Any], let props = feat["properties"] as? [String: Any],
                   let id = props["id"] as? String, validID(id), !seen.contains(id) else { continue }
             seen.insert(id)
-            let name = OSMSurveillance.cap(props["name"] as? String) ?? id
+            var name = OSMSurveillance.cap(props["name"] as? String) ?? id
+            // Geofabrik names US states by their id ("us/rhode-island"): show "Rhode Island".
+            if name == id || name.contains("/") { name = RegionCatalog.displayName(fromID: name) }
             let parent = (props["parent"] as? String).flatMap { validID($0) ? $0 : nil }
             regions.append(RegionDescriptor(id: id, name: name, parent: parent,
                                             iso3166_1: codes(props["iso3166-1:alpha2"]),
