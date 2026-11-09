@@ -275,6 +275,10 @@ private struct AddressBar: View {
     @Environment(\.theme) private var theme
     let tab: BrowserTab?
     @State private var text = ""
+    /// The user has typed into the field since it last showed the page's address. Only then is
+    /// the text kept when the page navigates; otherwise it always shows where the page really is
+    /// (even while focused, e.g. a link opened from the terminal into a fresh tab).
+    @State private var edited = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -287,14 +291,15 @@ private struct AddressBar: View {
             HStack(spacing: 6) {
                 Text(prompt).font(GridFont.label).tracking(1).foregroundStyle(promptColor)
                     .help(promptHelp)
-                TextField("", text: $text, prompt: Text("search or address").foregroundStyle(theme.textMute))
+                TextField("", text: Binding(get: { text }, set: { if $0 != text { text = $0; edited = true } }), prompt: Text("search or address").foregroundStyle(theme.textMute))
                     .textFieldStyle(.plain).font(GridFont.body).foregroundStyle(theme.text)
                     .focused($focused)
                     .onSubmit {
                         browser.go(text)
+                        edited = false
                         focused = false
                     }
-                    .onExitCommand { focused = false; text = BrowserAddress.display(tab?.url) }
+                    .onExitCommand { focused = false; showAddress(tab?.url) }
                 if tab?.reader != nil { Tag("reader") }
             }
             .padding(.horizontal, 8)
@@ -304,15 +309,20 @@ private struct AddressBar: View {
         }
         .padding(.horizontal, 8).padding(.vertical, 6)
         .background(theme.bg1)
-        .onAppear { text = BrowserAddress.display(tab?.url); if tab == nil { focused = true } }
-        .onChange(of: tab?.url) { _, u in if !focused { text = BrowserAddress.display(u) } }
-        .onChange(of: tab?.failedURL) { _, u in if !focused, let u { text = BrowserAddress.display(u) } }
-        .onChange(of: tab?.id) { _, _ in text = BrowserAddress.display(tab?.url) }
+        .onAppear { showAddress(tab?.url); if tab == nil { focused = true } }
+        .onChange(of: tab?.url) { _, u in if !edited { showAddress(u) } }
+        .onChange(of: tab?.failedURL) { _, u in if !edited, let u { showAddress(u) } }
+        .onChange(of: tab?.id) { _, _ in showAddress(tab?.url) }
         .onChange(of: browser.focusAddressToken) { _, _ in
-            text = BrowserAddress.display(tab?.url)
+            showAddress(tab?.url)
             focused = true
         }
-        .onChange(of: focused) { _, f in if !f { text = BrowserAddress.display(tab?.url) } }
+        .onChange(of: focused) { _, f in if !f { showAddress(tab?.url) } }
+    }
+
+    private func showAddress(_ u: URL?) {
+        text = BrowserAddress.display(u)
+        edited = false
     }
 
     private var prompt: String {

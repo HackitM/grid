@@ -201,7 +201,7 @@ private struct StatusBar: View {
                 .accessibilityLabel((n.tone == .error ? "Error: " : "") + n.text)
             }
             #if DEBUG
-            if DebugHooks.enabled {
+            if DebugHooks.enabled && !CommandLine.arguments.contains("--qa-quiet") {
                 Text("△ QA HOOKS").font(GridFont.label).foregroundStyle(theme.warn)
                     .padding(.horizontal, 10).help("Debug build launched with --qa: local automation socket is open")
             }
