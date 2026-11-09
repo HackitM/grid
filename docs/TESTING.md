@@ -118,3 +118,6 @@ display is awake.
 - [ ] Narrow the terminal panel: header collapses to `01 TERMINAL ⋯ ×` with a working menu
 - [ ] Switch pages, open the palette, open a folder: build-on / cascade feel quick, not in the way
 - [ ] Settings › Effects › Motion off (and macOS Reduce Motion): all animation stops
+- [ ] Updates: a fresh install asks in the status bar; "Not now" makes no request (check with Little Snitch or `nettop`)
+- [ ] Updates: GRID › Check for Updates… on the latest version says "up to date"; on an older build shows the notice, Settings › Updates shows the notes
+- [ ] Updates: Download & Verify → confirm → zip and GRID-x.y.z/GRID.app in Downloads, both quarantined (`xattr -l`), Finder reveals the app; Skip and Later hide the notice

@@ -650,6 +650,11 @@ enum DebugHooks {
                                "position": app.nowPlaying.position(at: Date()) ?? -1],
                 "floating": app.floatingWidgets.debugFrames(),
                 "filesGrid": app.settings.filesGrid,
+                "updates": ["current": app.updates.current.description, "latest": app.updates.latest?.tagName ?? "",
+                            "available": app.updates.available?.tagName ?? "", "notice": app.updates.showsNotice,
+                            "consent": app.updates.needsConsent ? "ask" : (app.updates.checksDaily ? "daily" : "off"),
+                            "status": "\(app.updates.status)", "download": "\(app.updates.download)",
+                            "lastCheck": app.updates.lastCheck.map { ISO8601DateFormatter().string(from: $0) } ?? ""],
             ]
             if let data = try? JSONSerialization.data(withJSONObject: st, options: [.prettyPrinted, .sortedKeys]) {
                 try? data.write(to: URL(fileURLWithPath: path))
@@ -667,6 +672,16 @@ enum DebugHooks {
             GridMotion.debugSlow = (c["factor"] as? Double) ?? 1
         case "replayStartup":
             NotificationCenter.default.post(name: .gridQAReplayStartup, object: nil)
+        case "updates":
+            // {"cmd":"updates","current":"0.4.0","feed":"<json path>"|"","reset":true,"check":true,"consent":true|false,"download":true}
+            let u = app.updates
+            if (c["reset"] as? Bool) == true { u.debugReset() }
+            if let v = c["current"] as? String { u.debugSetCurrent(v) }
+            if let f = c["feed"] as? String { u.debugFeed = f.isEmpty ? nil : URL(fileURLWithPath: f) }
+            if let on = c["consent"] as? Bool { u.setCheckDaily(on) }
+            if (c["check"] as? Bool) == true { Task { await u.check(manual: true) } }
+            if (c["download"] as? Bool) == true { UpdateDownloader.run(u) }
+            if (c["view"] as? Bool) == true { app.settingsSection = "updates"; app.show(.settings) }
         case "floatShot":
             // {"cmd":"floatShot","path":"<dir>"}: one PNG per floating widget window (rendered layer tree).
             if let dir = c["path"] as? String { app.floatingWidgets.debugSnapshot(dir: dir) }

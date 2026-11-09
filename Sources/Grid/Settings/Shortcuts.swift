@@ -8,7 +8,8 @@ enum GridCommand: String, CaseIterable, Identifiable, Codable {
     case palette, newTab, closePane, closeTab, splitRight, splitDown, nextPane, previousPane, nextTab, previousTab,
          clearScrollback, find, findNext, findPrevious,
          showTerminal, showFiles, showApps, showWeb, settings, toggleSidebar, toggleInspector, toggleDeck, toggleTerminalPanel,
-         terminalHere, revealTerminalDirectory, newFolder, goBack, goForward, goUp, goHome, goToFolder, toggleHidden
+         terminalHere, revealTerminalDirectory, newFolder, goBack, goForward, goUp, goHome, goToFolder, toggleHidden,
+         checkForUpdates
 
     var id: String { rawValue }
 
@@ -25,12 +26,14 @@ enum GridCommand: String, CaseIterable, Identifiable, Codable {
         case .terminalHere: "New Tab in Files Folder"; case .revealTerminalDirectory: "Show Terminal Directory in Files"
         case .newFolder: "New Folder"; case .goBack: "Back"; case .goForward: "Forward"; case .goUp: "Enclosing Folder"
         case .goHome: "Home Folder"; case .goToFolder: "Go to Folder…"; case .toggleHidden: "Show Hidden Files"
+        case .checkForUpdates: "Check for Updates…"
         }
     }
 
     var group: String {
         switch self {
-        case .palette, .showTerminal, .showFiles, .showApps, .showWeb, .settings, .toggleSidebar, .toggleInspector, .toggleDeck, .toggleTerminalPanel: "Workspace"
+        case .palette, .showTerminal, .showFiles, .showApps, .showWeb, .settings, .toggleSidebar, .toggleInspector, .toggleDeck, .toggleTerminalPanel,
+             .checkForUpdates: "Workspace"
         case .newTab, .closePane, .closeTab, .splitRight, .splitDown, .nextPane, .previousPane, .nextTab, .previousTab,
              .clearScrollback, .find, .findNext, .findPrevious: "Terminal"
         default: "Files"
@@ -71,6 +74,7 @@ enum GridCommand: String, CaseIterable, Identifiable, Codable {
         case .goHome: KeyBinding("h", [.command, .shift])
         case .goToFolder: KeyBinding("l", [.command])
         case .toggleHidden: KeyBinding(".", [.command, .shift])
+        case .checkForUpdates: nil
         }
     }
 }

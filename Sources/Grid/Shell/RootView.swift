@@ -225,6 +225,7 @@ private struct StatusBar: View {
                 cell("NO SESSION", grow: true)
             }
             Spacer(minLength: 0)
+            UpdateStatusCell()
             if app.showsNowPlayingInStatusBar { NowPlayingStatusCell() }
             if let n = app.notice {
                 HStack(spacing: 6) {

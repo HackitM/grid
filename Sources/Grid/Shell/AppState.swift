@@ -88,6 +88,9 @@ final class AppState {
     let widgetLibrary = WidgetLibrary()
     let nowPlaying = NowPlaying()
     let floatingWidgets = FloatingWidgets()
+    let updates = UpdateChecker()
+    /// A Settings section to scroll to when the Settings page next shows (e.g. "updates").
+    var settingsSection: String?
     let browser = BrowserModel()
     var paletteOpen = false
     var confirmation: Confirmation?
@@ -119,9 +122,10 @@ final class AppState {
         GridTerminalView.contextMenu = { [weak self] view in self?.terminalMenu(for: view) ?? [] }
         widgets.onRemove = { [weak self] keep in self?.widgetLibrary.pruneRuntimes(keeping: keep) }
         floatingWidgets.app = self
+        updates.app = self
         widgets.onChange = { [weak self] in self?.widgetsChanged() }
         // Floating widgets reopen once the app has finished launching.
-        DispatchQueue.main.async { [weak self] in self?.widgetsChanged() }
+        DispatchQueue.main.async { [weak self] in self?.widgetsChanged(); self?.updates.start() }
         browser.attach(self)
         configureDocking()
         // Restore the last Files folder if it still exists; remember it as the user navigates.

@@ -262,6 +262,17 @@ minimum is macOS 15; extensions use WebKit's `WKWebExtension` API and need 15.4.
   Downloads, removable/network volumes, or another app via Apple Events, macOS asks, attributing
   the request to GRID. Full Disk Access is optional and only granted by the user.
 - **Distribution**: Developer ID signing + hardened runtime + notarization (see README).
+- **Update checks** (`Updates/`, `GridCore/Updates/`): off until the user agrees; then at most one
+  conditional request a day to `api.github.com` (`User-Agent: GRID`, no version, token or IDs),
+  scheduled with `NSBackgroundActivityScheduler`. Release data is remote and untrusted: page and
+  download links must point at `https://github.com/HackitM/grid/…` or the release is ignored;
+  release notes are drawn as plain GRID text (inline Markdown only, no images, links opened only
+  on click and only for https). Nothing installs: "Download & Verify" asks first, saves the zip to
+  Downloads with quarantine and where-from (like browser downloads), checks it against the
+  release's `.sha256` (integrity, not authenticity), unzips it with `ditto` run without a shell,
+  checks the result is exactly `GRID.app` with GRID's bundle ID and the expected version, keeps it
+  quarantined and reveals it. Self-install (tier 3) waits for Developer ID signing and
+  notarization (docs/MAPS-PLAN.md §12).
 
 ## 6. Uncertainties that needed testing (and results)
 | Question | Result |

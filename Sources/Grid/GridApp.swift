@@ -147,6 +147,9 @@ struct GridCommands: Commands {
         CommandGroup(replacing: .appSettings) {
             Button("Settings…") { app.show(.settings) }.keyboardShortcut(key(.settings))
         }
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") { app.updates.checkNowAndReport() }.keyboardShortcut(key(.checkForUpdates))
+        }
         CommandGroup(replacing: .newItem) {
             Button("New Tab") {
                 if web { app.browser.newTab(); app.browser.focusAddressToken += 1 } else { app.newTerminal() }
