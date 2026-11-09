@@ -294,11 +294,7 @@ struct GridCommands: Commands {
             Divider()
             Button("Clear Scrollback") {
                 guard let s = app.terminals.active else { return }
-                // Erase screen + scrollback in the emulator (ED 2 / ED 3); this is display-only.
-                s.view.feed(text: "\u{1b}[H\u{1b}[2J\u{1b}[3J")
-                // Ask an idle shell to redraw its prompt (Ctrl-L). Never sent while a program runs.
-                s.refresh()
-                if !s.isBusy && !s.exited { s.view.send(txt: "\u{0C}") }
+                app.clearScrollback(s)
             }
             .keyboardShortcut(key(.clearScrollback))
         }

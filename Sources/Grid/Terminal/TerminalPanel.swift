@@ -119,14 +119,14 @@ private struct TerminalSessionsPanel: View {
             }
         } overflow: {
             // Same actions as the toolbar, for a header too narrow to show the buttons.
-            Button("New Tab" + app.shortcuts.hint(.newTab)) { app.newTerminal() }
-            Button("Split Right" + app.shortcuts.hint(.splitRight)) { app.split(.horizontal) }.disabled(!canSplit)
-            Button("Split Down" + app.shortcuts.hint(.splitDown)) { app.split(.vertical) }.disabled(!canSplit)
-            Divider()
-            Button((app.filesSidebar ? "Hide" : "Show") + " Files Panel" + app.shortcuts.hint(.toggleSidebar)) { app.filesSidebar.toggle() }
-            Button("Show Terminal Directory in Files" + app.shortcuts.hint(.revealTerminalDirectory)) { app.revealTerminalDirectoryInFiles() }
-                .disabled(tm.active == nil)
-            Button((app.deckVisible ? "Hide" : "Show") + " Widget Deck" + app.shortcuts.hint(.toggleDeck)) { app.deckVisible.toggle() }
+            GridMenuItem.action("New Tab", shortcut: app.shortcuts.display(.newTab)) { app.newTerminal() }
+            GridMenuItem.action("Split Right", shortcut: app.shortcuts.display(.splitRight), enabled: canSplit) { app.split(.horizontal) }
+            GridMenuItem.action("Split Down", shortcut: app.shortcuts.display(.splitDown), enabled: canSplit) { app.split(.vertical) }
+            GridMenuItem.divider
+            GridMenuItem.action((app.filesSidebar ? "Hide" : "Show") + " Files Panel", shortcut: app.shortcuts.display(.toggleSidebar)) { app.filesSidebar.toggle() }
+            GridMenuItem.action("Show Terminal Directory in Files", shortcut: app.shortcuts.display(.revealTerminalDirectory),
+                                enabled: tm.active != nil) { app.revealTerminalDirectoryInFiles() }
+            GridMenuItem.action((app.deckVisible ? "Hide" : "Show") + " Widget Deck", shortcut: app.shortcuts.display(.toggleDeck)) { app.deckVisible.toggle() }
         } content: {
             VStack(spacing: 0) {
                 TabStrip()
@@ -318,11 +318,11 @@ private struct TabItem: View {
         .dockDragSource(.tab(tab.id), label: "Tab · " + tab.title)
         // A tab dropped here goes before this one; a pane dropped here moves into this tab.
         .dockTarget(.tab(tab.id))
-        .contextMenu {
-            Button("Rename Tab…") { beginRename() }
-            if tab.customTitle != nil { Button("Use Automatic Name") { tab.customTitle = nil } }
-            Divider()
-            Button("Close Tab") { app.requestCloseTab(tab.id) }
+        .gridContextMenu(title: "tab") {
+            GridMenuItem.action("Rename Tab…") { beginRename() }
+            if tab.customTitle != nil { GridMenuItem.action("Use Automatic Name") { tab.customTitle = nil } }
+            GridMenuItem.divider
+            GridMenuItem.action("Close Tab", shortcut: app.shortcuts.display(.closeTab)) { app.requestCloseTab(tab.id) }
         }
         .help((tab.focused?.cwd).map { PathResolver.abbreviate($0) } ?? "")
         .accessibilityElement(children: .combine)

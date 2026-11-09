@@ -83,6 +83,8 @@ Palette commands are GRID commands. They are never sent to your shell.
 
 Three themes: **Legacy** (cyan), **Ares** (red) and **ENCOM** (amber). Glow, motion and the grid backdrop can each be turned off, and GRID respects Reduce Motion.
 
+Right-click and "⋯" menus are drawn in the same style, including web page menus and a terminal menu (Copy, Paste, Split…). You can switch back to standard macOS menus in **Settings › Effects**, and VoiceOver always gets standard menus.
+
 <br clear="right">
 
 ## Install

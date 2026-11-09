@@ -7,6 +7,8 @@ import SwiftTerm
 final class GridTerminalView: LocalProcessTerminalView {
     var onFocusChange: ((Bool) -> Void)?
     var onBell: (() -> Void)?
+    /// Builds the right-click menu for this pane (set by AppState).
+    static var contextMenu: ((GridTerminalView) -> [GridMenuItem])?
 
     override init(frame: CGRect, font: NSFont?, options: TerminalOptions) {
         super.init(frame: frame, font: font, options: options)
@@ -23,6 +25,27 @@ final class GridTerminalView: LocalProcessTerminalView {
     nonisolated override func bell(source: Terminal) {
         super.bell(source: source)
         DispatchQueue.main.async { [weak self] in self?.onBell?() }
+    }
+
+    // MARK: Context menu
+
+    /// Right-click shows GRID's menu unless the running program asked for mouse reports (vim,
+    /// htop, tmux…), in which case the click goes to the program as before. Shift+right-click
+    /// always shows the menu, matching SwiftTerm's Shift bypass for mouse reporting.
+    override func rightMouseDown(with event: NSEvent) {
+        let programWantsMouse = allowMouseReporting && currentMouseMode != .off
+            && !event.modifierFlags.contains(.shift)
+        guard !programWantsMouse, let items = Self.contextMenu?(self) else {
+            super.rightMouseDown(with: event)
+            return
+        }
+        window?.makeFirstResponder(self)
+        GridMenu.shared.show(items, title: "terminal", anchor: .point(GridMenu.screenLocation(of: event)), window: window)
+    }
+
+    override func rightMouseUp(with event: NSEvent) {
+        if GridMenu.shared.isOpen { return }
+        super.rightMouseUp(with: event)
     }
 
     // MARK: Theme

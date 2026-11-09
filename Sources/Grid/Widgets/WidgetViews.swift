@@ -470,9 +470,9 @@ private struct RecentFilesWidget: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .contextMenu {
-                    Button("Reveal in Finder") { app.files.reveal([e.url]) }
-                    Button("Insert Path in Terminal") { app.insertPathsIntoTerminal([e.url]) }
+                .gridContextMenu(title: "file") {
+                    GridMenuItem.action("Reveal in Finder") { app.files.reveal([e.url]) }
+                    GridMenuItem.action("Insert Path in Terminal") { app.insertPathsIntoTerminal([e.url]) }
                 }
             }
             WidgetFootnote(text: (widget.string("path", "").isEmpty ? "files panel · " : "") + PathResolver.abbreviate(folder.path))

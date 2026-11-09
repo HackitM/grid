@@ -113,6 +113,8 @@ final class AppState {
             return self.panel == .terminal && self.workspace.contains(.terminal) && NSApp.isActive
         }
         fileOps.app = self
+        GridMenu.shared.app = self
+        GridTerminalView.contextMenu = { [weak self] view in self?.terminalMenu(for: view) ?? [] }
         widgets.onRemove = { [weak self] keep in self?.widgetLibrary.pruneRuntimes(keeping: keep) }
         browser.attach(self)
         configureDocking()
@@ -247,6 +249,39 @@ final class AppState {
                 onConfirm: { [weak self] in self?.terminals.close(id) }))
         } else {
             terminals.close(id)
+        }
+    }
+
+    /// Clears the screen and scrollback of a session (display only) and asks an idle shell to
+    /// redraw its prompt.
+    func clearScrollback(_ s: TerminalSession) {
+        // Erase screen + scrollback in the emulator (ED 2 / ED 3); this is display-only.
+        s.view.feed(text: "\u{1b}[H\u{1b}[2J\u{1b}[3J")
+        // Ask an idle shell to redraw its prompt (Ctrl-L). Never sent while a program runs.
+        s.refresh()
+        if !s.isBusy && !s.exited { s.view.send(txt: "\u{0C}") }
+    }
+
+    /// Right-click menu for a terminal pane.
+    @GridMenuBuilder
+    func terminalMenu(for view: GridTerminalView) -> [GridMenuItem] {
+        if let s = terminals.sessions.first(where: { $0.view === view }) {
+            let canSplit = (terminals.activeTab?.panes.count ?? 0) < TerminalManager.maxPanesPerTab
+            GridMenuItem.action("Copy", shortcut: "⌘C", enabled: view.selectionActive) { view.copy(view) }
+            GridMenuItem.action("Paste", shortcut: "⌘V",
+                                enabled: NSPasteboard.general.string(forType: .string) != nil) { view.paste(view) }
+            GridMenuItem.action("Select All", shortcut: "⌘A") { view.selectAll(view) }
+            GridMenuItem.action("Clear Scrollback", shortcut: shortcuts.display(.clearScrollback)) { [weak self] in self?.clearScrollback(s) }
+            GridMenuItem.divider
+            GridMenuItem.action("Split Right", shortcut: shortcuts.display(.splitRight), enabled: canSplit) { [weak self] in self?.split(.horizontal) }
+            GridMenuItem.action("Split Down", shortcut: shortcuts.display(.splitDown), enabled: canSplit) { [weak self] in self?.split(.vertical) }
+            GridMenuItem.divider
+            GridMenuItem.action("Show Directory in Files", shortcut: shortcuts.display(.revealTerminalDirectory)) { [weak self] in
+                self?.revealTerminalDirectoryInFiles()
+            }
+            GridMenuItem.action("Find…", shortcut: shortcuts.display(.find)) { s.find.open() }
+            GridMenuItem.divider
+            GridMenuItem.action("Close Pane", shortcut: shortcuts.display(.closePane)) { [weak self] in self?.requestCloseTerminal(s.id) }
         }
     }
 

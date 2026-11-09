@@ -303,7 +303,7 @@ private struct FileList: View {
                                 }
                             })
                             .onDrag { dragProvider(for: e, m) }
-                            .contextMenu { FileContextMenu(entry: e) }
+                            .gridContextMenu(title: FileContextMenu.title(app, e)) { FileContextMenu.items(app, e) }
                         } else {
                             TreePlaceholderRow(row: row).id(row.id)
                         }
@@ -580,64 +580,64 @@ private struct RenameField: View {
     }
 }
 
-struct FileContextMenu: View {
-    @Environment(AppState.self) private var app
-    let entry: FileEntry
+/// Right-click menu for Files rows. Right-clicking inside the selection acts on all of it;
+/// outside, on just that item.
+@MainActor
+enum FileContextMenu {
+    static func title(_ app: AppState, _ entry: FileEntry) -> String {
+        let n = targets(app, entry).count
+        return n > 1 ? "\(n) items" : (entry.isNavigableFolder ? "folder" : "file")
+    }
 
-    /// Right-clicking inside the selection acts on all of it; outside, on just this item.
-    private var targets: [FileEntry] {
+    private static func targets(_ app: AppState, _ entry: FileEntry) -> [FileEntry] {
         app.files.selectedIDs.contains(entry.id) ? app.files.selectedEntries : [entry]
     }
 
-    var body: some View {
-        let urls = targets.map(\.url)
+    @GridMenuBuilder
+    static func items(_ app: AppState, _ entry: FileEntry) -> [GridMenuItem] {
+        let urls = targets(app, entry).map(\.url)
         let multi = urls.count > 1
-        Button(entry.isNavigableFolder ? "Open Folder" : "Open") { app.files.activate(entry) }
-        if !entry.isNavigableFolder && !multi { OpenWithMenu(url: entry.url) }
+        GridMenuItem.action(entry.isNavigableFolder ? "Open Folder" : "Open") { app.files.activate(entry) }
+        if !entry.isNavigableFolder && !multi { openWith(app, entry.url) }
         if FileTree.isExpandable(entry) && !multi {
             let open = app.files.isExpanded(entry.id)
-            Button(open ? "Collapse" : "Expand") { app.files.toggleExpanded(entry.id) }
-            if !open { Button("Expand All Levels") { app.files.expand(entry.id, recursive: true) } }
+            GridMenuItem.action(open ? "Collapse" : "Expand") { app.files.toggleExpanded(entry.id) }
+            if !open { GridMenuItem.action("Expand All Levels") { app.files.expand(entry.id, recursive: true) } }
         }
-        Button("Quick Look") { QuickLook.shared.show(urls) }
-        Divider()
+        GridMenuItem.action("Quick Look", shortcut: "Space") { QuickLook.shared.show(urls) }
+        GridMenuItem.divider
         if entry.isNavigableFolder {
-            Button("Open Terminal Here") { app.openTerminalHere(entry.url) }
+            GridMenuItem.action("Open Terminal Here") { app.openTerminalHere(entry.url) }
         } else {
-            Button("Open Terminal in Enclosing Folder") { app.openTerminalHere(entry.url.deletingLastPathComponent()) }
+            GridMenuItem.action("Open Terminal in Enclosing Folder") { app.openTerminalHere(entry.url.deletingLastPathComponent()) }
         }
-        Button(multi ? "Insert \(urls.count) Paths in Terminal" : "Insert Path in Terminal") { app.insertPathsIntoTerminal(urls) }
-        Divider()
-        if !multi { Button("Rename") { app.files.selectionID = entry.id; app.files.renamingID = entry.id } }
-        Button("Duplicate") { app.fileOps.duplicate(urls) }
-        Button("Copy") { app.fileOps.copyToPasteboard(urls) }
-        Button("Paste Into Current Folder") { app.fileOps.pasteFromPasteboard(into: app.files.currentURL, move: false) }
+        GridMenuItem.action(multi ? "Insert \(urls.count) Paths in Terminal" : "Insert Path in Terminal") { app.insertPathsIntoTerminal(urls) }
+        GridMenuItem.divider
+        if !multi { GridMenuItem.action("Rename") { app.files.selectionID = entry.id; app.files.renamingID = entry.id } }
+        GridMenuItem.action("Duplicate") { app.fileOps.duplicate(urls) }
+        GridMenuItem.action("Copy", shortcut: "⌘C") { app.fileOps.copyToPasteboard(urls) }
+        GridMenuItem.action("Paste Into Current Folder", shortcut: "⌘V") { app.fileOps.pasteFromPasteboard(into: app.files.currentURL, move: false) }
         if entry.isNavigableFolder && !multi {
-            Button("Paste Into “\(entry.name)”") { app.fileOps.pasteFromPasteboard(into: entry.url, move: false) }
+            GridMenuItem.action("Paste Into “\(entry.name)”") { app.fileOps.pasteFromPasteboard(into: entry.url, move: false) }
         }
-        Button("Copy Path\(multi ? "s" : "")") { app.files.copyPaths(urls); app.flash(.info, "Copied path\(multi ? "s" : "")") }
-        Button("Reveal in Finder") { app.files.reveal(urls) }
-        Divider()
-        Button("Move to Trash") { app.fileOps.trash(urls) }
-        Button("Delete Immediately…") { app.fileOps.requestDeleteImmediately(urls) }
+        GridMenuItem.action("Copy Path\(multi ? "s" : "")") { app.files.copyPaths(urls); app.flash(.info, "Copied path\(multi ? "s" : "")") }
+        GridMenuItem.action("Reveal in Finder") { app.files.reveal(urls) }
+        GridMenuItem.divider
+        GridMenuItem.action("Move to Trash", shortcut: "⌘⌫", destructive: true) { app.fileOps.trash(urls) }
+        GridMenuItem.action("Delete Immediately…", destructive: true) { app.fileOps.requestDeleteImmediately(urls) }
     }
-}
 
-/// "Open With ▸" listing the apps LaunchServices says can open the file.
-struct OpenWithMenu: View {
-    @Environment(AppState.self) private var app
-    let url: URL
-
-    var body: some View {
+    /// "Open With ▸" listing the apps LaunchServices says can open the file.
+    private static func openWith(_ app: AppState, _ url: URL) -> GridMenuItem {
         let appsForFile = NSWorkspace.shared.urlsForApplications(toOpen: url)
         let defaultApp = app.files.defaultApp(for: url)
-        Menu("Open With") {
-            ForEach(appsForFile, id: \.self) { appURL in
-                Button(appURL.deletingPathExtension().lastPathComponent + (appURL == defaultApp ? " (default)" : "")) {
+        let names = appsForFile.map { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") }
+        return GridMenuItem.submenu("Open With") {
+            for (appURL, name) in zip(appsForFile, names) {
+                GridMenuItem.action(name + (appURL == defaultApp ? " (default)" : ""), checked: appURL == defaultApp) {
                     app.files.open(url, with: appURL)
                 }
             }
-            if appsForFile.isEmpty { Text("No applications found") }
         }
     }
 }

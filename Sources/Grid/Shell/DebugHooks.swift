@@ -162,6 +162,7 @@ enum DebugHooks {
             case "grid": app.settings.gridBackdrop = on
             case "glow": app.settings.glow = on
             case "motion": app.settings.motion = on
+            case "systemMenus": app.settings.systemMenus = on
             default: break
             }
         case "click":
@@ -315,6 +316,85 @@ enum DebugHooks {
             case "sideBySide": app.widgets.arrangeSideBySide()
             case "stack": app.widgets.arrangeStacked()
             case "set": app.widgets.set(w.id, c["key"] as? String ?? "", c["value"] as? String)
+            default: break
+            }
+        case "menu":
+            // GRID menus. {"op":"rightClick","x":..,"y":..,"shift":bool} (window points, top-left origin)
+            // | {"op":"hover"|"click","sx":..,"sy":..} (screen points) | {"op":"key","key":"down|up|left|right|return|esc"|"char":"x"}
+            // | {"op":"state","path":..} | {"op":"shot","path":"<dir>"} (one PNG per open level) | {"op":"dismiss"}
+            let menu = GridMenu.shared
+            func post(_ type: NSEvent.EventType, screen p: NSPoint, in w: NSWindow, flags: NSEvent.ModifierFlags = []) {
+                let local = w.convertPoint(fromScreen: p)
+                if let e = NSEvent.mouseEvent(with: type, location: local, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                    NSApp.postEvent(e, atStart: false)
+                }
+            }
+            func windowAt(_ p: NSPoint) -> NSWindow? {
+                NSApp.windows.filter { $0.isVisible && $0.frame.contains(p) }.max { $0.level.rawValue < $1.level.rawValue } ?? window
+            }
+            switch c["op"] as? String {
+            case "rightClick":
+                guard let w = window, let x = c["x"] as? Double, let y = c["y"] as? Double else { break }
+                let p = w.convertPoint(toScreen: NSPoint(x: x, y: w.frame.height - y))
+                let flags: NSEvent.ModifierFlags = (c["shift"] as? Bool) == true ? [.shift] : []
+                post(.rightMouseDown, screen: p, in: w, flags: flags)
+                post(.rightMouseUp, screen: p, in: w, flags: flags)
+            case "hover", "click":
+                guard let x = c["sx"] as? Double, let y = c["sy"] as? Double else { break }
+                let p = NSPoint(x: x, y: y)
+                guard let w = windowAt(p) else { break }
+                if c["op"] as? String == "hover" {
+                    post(.mouseMoved, screen: p, in: w)
+                } else {
+                    post(.leftMouseDown, screen: p, in: w)
+                    post(.leftMouseUp, screen: p, in: w)
+                }
+            case "key":
+                let codes: [String: UInt16] = ["down": 125, "up": 126, "left": 123, "right": 124, "return": 36, "esc": 53]
+                let ch = c["char"] as? String ?? ""
+                let code = codes[c["key"] as? String ?? ""] ?? 0
+                if let w = window, let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                            windowNumber: w.windowNumber, context: nil, characters: ch, charactersIgnoringModifiers: ch,
+                                                            isARepeat: false, keyCode: code) {
+                    NSApp.postEvent(e, atStart: false)
+                }
+            case "dismiss":
+                menu.dismiss()
+            case "state":
+                guard let path else { break }
+                func kind(_ i: GridMenuItem) -> String {
+                    switch i.kind { case .action: "action"; case .submenu: "submenu"; case .separator: "separator"; case .header: "header" }
+                }
+                let st: [String: Any] = [
+                    "open": menu.isOpen,
+                    "window": window.map { [$0.frame.minX, $0.frame.minY, $0.frame.width, $0.frame.height] } ?? [],
+                    "levels": menu.debugLevels.map { l in [
+                        "title": l.title ?? "", "highlighted": l.highlighted ?? -1,
+                        "frame": [l.frame.minX, l.frame.minY, l.frame.width, l.frame.height],
+                        "items": l.items.map { ["title": $0.title, "kind": kind($0), "enabled": $0.enabled, "shortcut": $0.shortcut,
+                                                "destructive": $0.destructive, "checked": $0.checked] },
+                    ] as [String: Any] },
+                ]
+                if let data = try? JSONSerialization.data(withJSONObject: st, options: [.prettyPrinted]) {
+                    try? data.write(to: URL(fileURLWithPath: path))
+                }
+            case "shot":
+                guard let path else { break }
+                // Renders each menu panel's views (works while the screen is locked or asleep).
+                for (i, l) in menu.debugLevels.enumerated() {
+                    guard let w = NSApp.window(withWindowNumber: l.windowNumber), let v = w.contentView, let layer = v.layer else { continue }
+                    let scale = w.backingScaleFactor
+                    guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(v.bounds.width * scale), pixelsHigh: Int(v.bounds.height * scale),
+                                                     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+                          let ctx = NSGraphicsContext(bitmapImageRep: rep) else { continue }
+                    let cg = ctx.cgContext
+                    cg.scaleBy(x: scale, y: scale)
+                    cg.translateBy(x: 0, y: v.bounds.height); cg.scaleBy(x: 1, y: -1)
+                    layer.render(in: cg)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path + "/level-\(i).png"))
+                }
             default: break
             }
         case "browser":

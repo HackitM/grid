@@ -269,7 +269,7 @@ final class BrowserTab: Identifiable {
         let model = model!
         let config = model.makeConfiguration(base: configuration)
         configuration = nil
-        let w = WKWebView(frame: .zero, configuration: config)
+        let w = GridWebView(frame: .zero, configuration: config)
         w.allowsBackForwardNavigationGestures = true
         w.allowsMagnification = true
         w.isInspectable = model.settings.developerTools

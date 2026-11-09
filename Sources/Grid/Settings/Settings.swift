@@ -19,6 +19,8 @@ final class Settings {
     var confirmCloseBusy: Bool { didSet { d.set(confirmCloseBusy, forKey: "term.confirmBusy") } }
     var shellOverride: String { didSet { d.set(shellOverride, forKey: "term.shell") } }
     var showHiddenFiles: Bool { didSet { d.set(showHiddenFiles, forKey: "files.hidden") } }
+    /// Show context and "⋯" menus as standard macOS menus instead of GRID-styled ones.
+    var systemMenus: Bool { didSet { d.set(systemMenus, forKey: "ui.systemMenus") } }
 
     /// System "Reduce motion" wins over the in-app toggle.
     var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -28,7 +30,7 @@ final class Settings {
             "theme": ThemeID.legacy.rawValue, "fx.glow": true, "fx.motion": true, "fx.grid": false,
             "term.font": "", "term.size": 13.0, "term.optionMeta": true, "term.scrollback": 10_000,
             "term.confirmBusy": true, "term.shell": "",
-            "files.hidden": false,
+            "files.hidden": false, "ui.systemMenus": false,
         ])
         theme = ThemeID(rawValue: d.string(forKey: "theme") ?? "") ?? .legacy
         glow = d.bool(forKey: "fx.glow")
@@ -41,6 +43,7 @@ final class Settings {
         confirmCloseBusy = d.bool(forKey: "term.confirmBusy")
         shellOverride = d.string(forKey: "term.shell") ?? ""
         showHiddenFiles = d.bool(forKey: "files.hidden")
+        systemMenus = d.bool(forKey: "ui.systemMenus")
 
         NotificationCenter.default.addObserver(forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
                                                object: nil, queue: .main) { [weak self] _ in
