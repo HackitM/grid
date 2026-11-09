@@ -28,6 +28,7 @@ and print them as a **cue sheet** so the laptop can stay home. It keeps GRID's c
 | Location | **CoreLocation "when in use"**, requested only when you click **⌖ LOCATE**. Never "Always". The position is never stored or sent. | The tiles you load around you still show roughly where you are (see §5). |
 | Placement | **A new rail page `05 MAP`** (Settings moves to `06`). A small **Perimeter** deck widget comes later. | One more rail item. |
 | Routing | **Routes that avoid mapped ALPR cameras** through a **FlockHopper-compatible engine**: self-hosted (recommended) or the public FlockHopper API if its maintainers agree. A downloadable **on-device FlockHopper "routing pack"** (GraphHopper in a sandboxed helper, a state or custom area, no Docker) keeps start and end points on the Mac (§7.5). A Valhalla engine comes second. **GRID re-scores every route against its own camera data** (§7). | Start and end points go to the engine you choose. "Out of view" can only mean "away from *mapped* cameras". |
+| Updates | **An opt-in daily GitHub release check** (open the release page, or download, verify and reveal; one-click install once notarized) **plus freshness checks for map data**: ALPR snapshot, routing areas, engine pins (§12). | One more opt-in network request; no automatic install until releases are notarized. |
 | Export | **A printable PDF cue sheet** (vector overview map, large-type turn list, cameras you can't avoid, attribution and a safety line) plus **GPX 1.1** for a GPS unit or an offline phone navigator (§8). | Printed directions can't re-route around closures. |
 
 ---
@@ -1142,7 +1143,164 @@ This isn't GRID's memory, but it is the Mac's if the user runs the engine locall
 - The **routing pack (§7.5)** uses the same engine without Docker. Its build RAM follows the
   FlockHopper figures above, and serving needs about 0.5–1.5 GB, only while routing.
 
-## 12. Out of scope (unless requested)
+## 12. Update checker: GRID releases and map data
+
+There are two parts, both under one **Settings › Updates** section:
+1. **GRID releases** from GitHub. This doesn't depend on Maps and **can ship first** (Phase U1).
+2. **Map data:** ALPR cameras, routing areas, the routing engine and the base tiles. These checks
+   ship with the phases that add each kind of data.
+
+### 12.1 Rules
+
+- **Nothing checks until you say so.**
+  - The first launch of the version that adds this shows a one-time `StateBlock` choice:
+    *"Check GitHub for new GRID versions once a day? GRID sends a plain request to api.github.com
+    with no identifiers."* `[Check daily] [Not now]`.
+  - **GRID › Check for Updates…** and the palette command `update` always work on demand.
+- **Map-data checks** run only when Maps has been enabled (§6, `MAP-NET`). They happen while the
+  Map page is in use, never from a background timer.
+- **Background checks are energy-friendly.**
+  - App checks run at launch and then about every 24 h, through `NSBackgroundActivityScheduler`.
+  - Requests are conditional (ETag), so "no change" costs a few hundred bytes.
+- **Nothing installs silently.**
+  - Every download is confirmed.
+  - Every replacement of GRID itself goes through the normal quit confirmation, because quitting
+    ends terminal sessions (§12.2).
+- **What GitHub learns:** your IP address and a generic `User-Agent: GRID`, without the version
+  number, to reduce fingerprinting. No token, no account, no install ID.
+
+### 12.2 GRID releases
+
+**Source:** `GET https://api.github.com/repos/HackitM/grid/releases/latest`.
+- That endpoint skips drafts and pre-releases. A "Include pre-releases" option uses
+  `/releases?per_page=10` instead.
+- Headers: `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28` and
+  `If-None-Match` with the stored ETag.
+- Unauthenticated calls are limited to 60 an hour per IP. A daily check is far below that, and
+  conditional requests answered with 304 should not count against it (**verify**).
+- **Fields used:** `tag_name` (`v0.5.0`), `name`, `html_url`, `published_at`, `body` (the release
+  notes) and `assets[]` (`name`, `size`, `browser_download_url`).
+- **Assets come from `scripts/release.sh`:** `GRID-<version>-macOS.zip` plus
+  `GRID-<version>-macOS.zip.sha256`. The checker matches those names exactly.
+  - Checked today: the latest release is **v0.5.0**, with a 5.3 MB zip and an 87-byte `.sha256`.
+- **Version comparison:** `tag_name` without its `v`, compared as a semantic version with
+  `CFBundleShortVersionString`. Pre-release suffixes like `-beta.1` sort below the release.
+
+**How it shows up:**
+
+```
+status bar   ◆ GRID 0.5.0 AVAILABLE · VIEW                       (Ares text band, once per version)
+
+┌SETTINGS › UPDATES──────────────────────────────────────────────┐
+│GRID          0.4.0 → 0.5.0   released 2026-11-09   ◆ AVAILABLE │
+│              checked 2 h ago · [■] check daily · [ ] pre-releases│
+│ ── WHAT'S NEW ───────────────────────────────────────────────■ │
+│ (release notes from GitHub, plain GRID type, links not followed │
+│  until clicked)                                                 │
+│ [VIEW ON GITHUB ↗] [DOWNLOAD & VERIFY] [SKIP 0.5.0] [LATER]     │
+├─────────────────────────────────────────────────────────────────┤
+│ALPR CAMERAS  snapshot 2 d old · 146,410 cameras      ✓ CURRENT  │
+│BASE MAP      OpenFreeMap planet 2026-11-01            ✓ CURRENT  │
+│ROUTING ENGINE GraphHopper 11.1 · JRE 25.0.5           △ 25.0.6 IN GRID 0.5.1 │
+│AREA COLORADO built 41 d ago                [UPDATE · 388 MB · ~5 min] │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- **Release notes** come from remote content. They are rendered as plain styled text
+  (`AttributedString(markdown:)`, links shown but opened only on click) and never in a web view.
+- **VIEW ON GITHUB** opens `html_url` in GRID's browser, or in the default browser if you choose
+  that in Settings.
+- **SKIP** hides that version until a newer one appears. **LATER** snoozes for 7 days.
+
+**Installing comes in three tiers, shipped in this order:**
+
+| Tier | What GRID does | Trust check | Gatekeeper |
+|---|---|---|---|
+| **1. Open the release page** (Phase U1) | Opens `html_url`; you download and replace the app as in the README | Yours | Unchanged |
+| **2. Download & verify** (Phase U1) | Downloads the zip through the browser's existing download path (confirmed, saved to Downloads, **quarantined**, where-from set). Checks its SHA-256 against the release's `.sha256`. Unzips next to it and **reveals it in Finder** with the steps: quit GRID, replace it in Applications, open it. | SHA-256 catches corruption or truncation. It is **not** proof of authenticity, because both files come from the same release. | Quarantine is **kept on purpose**. Until GRID is notarized, macOS asks for *Open Anyway* again after each update. GRID never strips quarantine, since that would bypass a macOS protection. |
+| **3. Install & Relaunch** (Phase U3, **only once releases are Developer-ID signed and notarized**) | Download as in tier 2, verify, then quit through the normal confirmation (or **"Install when I next quit"**, so running terminal sessions aren't cut short). A small relaunch helper waits for GRID to exit, moves the old app to the Trash, moves the new one into place and opens it. | **Authenticity.** (a) The code signature must satisfy a requirement pinned in the running app: the same Developer ID Team ID (`SecStaticCodeCheckValidity`). (b) The notarization check must pass (`SecAssessment`). (c) Optionally, an **Ed25519 signature** of the zip (`.sig` asset, made by `release.sh` with a key kept off GitHub) is verified with CryptoKit against a public key compiled into GRID. A compromised GitHub account alone then can't push an update. | A notarized app opens without prompts |
+
+- **If the app's folder isn't writable** (for example `/Applications` needing an admin), tier 3
+  falls back to tier 2. It never asks for admin rights.
+- **Ad-hoc-signed builds** (today's) have no stable identity to verify, so tier 3 stays off for them.
+- **Sparkle 2** (MIT, EdDSA-signed appcasts, about 3 MB) is the standard alternative for tier 3.
+  The plan prefers about 400 lines of our own, because tiers 1–2 already exist and it keeps GRID's
+  single-dependency stance. Revisit if installer edge cases pile up.
+
+### 12.3 Map data
+
+| Data | Check | Network | How often | Shown as | Update action |
+|---|---|---|---|---|---|
+| **ALPR snapshot** (§4.2) | Conditional GET on `cameras.geojson.gz` (`If-None-Match` / `If-Modified-Since`); 304 = current | FlockHopper's data host: that you use the snapshot. **No area.** | At most daily, when the Map or a route is used | `ALPR … snapshot 2 d old` in the status bar and Settings. △ at 7+ days old if a refresh failed | Automatic (small check). The 39 MB download only happens when it changed. |
+| **Overpass cells** (§4.4) | 24 h TTL | Overpass: the cell | On view | Cell age in the inspector | Automatic, or ⟳ refresh area |
+| **Base map tiles** | Re-read OpenFreeMap's TileJSON when the Map opens. A new planet version means new tile URLs, so the old cache ages out. | OpenFreeMap: nothing beyond normal use | Each Map open | Planet date in Settings | Automatic |
+| **Routing areas** (§7.5) | `HEAD` on the area's Geofabrik `.osm.pbf` (`Last-Modified`). Geofabrik rebuilds extracts daily. | Geofabrik: **which region** (as when it was installed) | At most weekly. **Off** if the pack isn't installed. | `AREA COLORADO built 41 d ago` | **Never automatic** (it costs RAM and time). An offer appears after 30 days: `[UPDATE · 388 MB · ~5 min]`. |
+| **Routing engine** (JRE + GraphHopper) | None of its own. Versions are pinned in GRID's source, so a GRID update can bring newer pins (security fixes). | — | After GRID updates | `△ 25.0.6 IN GRID 0.5.1` / `△ UPDATE ENGINE (56 MB)` | Offer after a GRID update, with the same SHA-256 and signature checks as the install |
+| **Remote routing engines** | `GET /api/v1/health` before the first route of a session (FlockHopper reports `version` and its camera data's `maxAgeHours`) | That engine | Per session | Engine version and its camera data age in the route panel | — |
+
+**Freshness affects routing:**
+- If the ALPR snapshot is more than 7 days old and can't be refreshed, routes still compute, with
+  △ `CAMERA DATA 9 DAYS OLD` in the route panel and on the printout.
+- If a remote engine's camera data is older than GRID's, the route panel says so, because GRID
+  re-scores against its own data anyway (§7.2).
+
+### 12.4 Privacy wording (README)
+
+The "Network requests GRID makes on its own" bullet becomes:
+
+> **Network requests GRID makes on its own:** downloading the ad-blocking filter lists from their
+> publishers (only while ad blocking is on), Safari's standard fraudulent-site check in the browser,
+> **checking GitHub for a new GRID version once a day (only if you turned it on; no identifiers are
+> sent)**, and, once you've enabled Maps, refreshing map data while you use the Map (§5.2).
+> Everything else happens because you asked for it.
+
+### 12.5 Files and phases
+
+**Phase U1 — App update checker, tiers 1–2 (about 1 week; can ship before any Maps work)**
+- `Sources/GridCore/Updates/`
+  - `SemanticVersion.swift`: parse, compare, pre-release ordering.
+  - `GitHubRelease.swift`: Codable, plus asset matching by `release.sh` names.
+  - `UpdatePolicy.swift`: interval, skip, snooze, pre-release opt-in.
+  - `ChecksumFile.swift`: parse `shasum -a 256` output.
+  - Tests: version edge cases, malformed JSON, missing assets, wrong checksum, 304 handling.
+- `Sources/Grid/Updates/`
+  - `UpdateChecker.swift`: `NSBackgroundActivityScheduler`, an ephemeral `URLSession`, the stored
+    ETag.
+  - `UpdateSettingsSection.swift`
+  - `UpdateNotice.swift`: status-bar text band.
+  - `UpdateDownloader.swift`: reuses the browser's confirmed, quarantined download path, then
+    verifies the SHA-256.
+- `Settings/Shortcuts.swift` gets `GridCommand.checkForUpdates`, added to the GRID app menu and the
+  palette (`update`).
+- **Debug-only QA hook:** point the checker at a local JSON fixture (in `#if DEBUG` under `--qa`,
+  like the other hooks). Release builds can only reach the real repo.
+- **Docs:** README privacy bullet (§12.4), ARCHITECTURE security model, TESTING checklist.
+
+**Map-data checks** are built into Phase 3 (`ALPRStore`), Phase 1 (`TileSource`) and Phase 7b
+(`RoutingPackInstaller`). They report to the same Updates section through an `UpdateSource`
+protocol (`id`, `status`, `lastChecked`, `check()`, `update()`).
+
+**Phase U3 — Install & Relaunch (after notarization)**
+- `scripts/release.sh`: sign with Developer ID and notarize, and optionally write the Ed25519 `.sig`
+  asset (key in the release machine's Keychain).
+- `Sources/Grid/Updates/Installer.swift`: requirement and notarization checks, "install when I next
+  quit".
+- `GridUpdateHelper`: a tiny executable target that waits for the PID to exit, swaps the bundles and
+  relaunches.
+
+### 12.6 Risks
+
+| Risk | Mitigation |
+|---|---|
+| A fake or tampered release (compromised GitHub account) | Tiers 1–2 only inform and verify integrity. Tier 3 requires a matching Developer ID **and** notarization, and optionally an Ed25519 key that never touches GitHub. |
+| A user replaces the app while terminal jobs are running | Always goes through the existing quit confirmation, with "install when I next quit" |
+| GitHub API rate limits or changes | Daily, conditional checks; a failure shows ✕ `UPD-ERR` in Settings and never nags |
+| Update checks seen as tracking | Off until opted in, a generic User-Agent, no IDs, documented in the README |
+| Stale camera data used for routing | Age shown everywhere it matters; a warning after 7 days |
+
+---
+
+## 13. Out of scope (unless requested)
 - Live turn-by-turn voice navigation in GRID. A laptop shouldn't be used while driving; §8's
   exports cover the trip instead.
 - Apple Maps data (traffic, routes, search) on GRID's map. Apple's licence forbids it (§2.1).
