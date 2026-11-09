@@ -91,7 +91,8 @@ undo. Multi-select, Quick Look (Space), Open With, multi-path drag into the term
 panel dividers and persisted layout (widths, visibility, last folder). App icon. WCAG-AA label
 contrast. Cached file listing.
 
-**Widget deck (⌘J):** ten widgets that show real data or perform real actions:
+**Widget deck (⌘J):** eleven built-in widgets that show real data or perform real actions, plus
+your own:
 - **Clock:** extra time zones.
 - **System:** CPU, memory, load and uptime, measured.
 - **Network:** live rates and IP.
@@ -100,9 +101,22 @@ contrast. Cached file listing.
 - **Pinned Apps:** a launch strip.
 - **Git:** status of the terminal's folder or a fixed repo.
 - **Notes** and **Recent Files.**
+- **File Inspector:** the Files selection before you drag it into the terminal: the exact quoted
+  text it will insert, executable/interpreter and "downloaded from" warnings, line count,
+  encoding, line endings, image size, a preview, folder totals on request, and Insert / Copy /
+  Quick Look / Terminal actions. Drag its icon into the terminal to insert the path.
+- **Custom widgets:** folders with a `manifest.json` and JavaScript. **New Widget…** scaffolds one
+  that hot-reloads as you edit; **Install…** reviews and copies someone else's. They run in a
+  sandboxed helper process, can only use what you approve (shown in plain words with exact
+  commands, paths and hosts), and are drawn with GRID's own components. See
+  [docs/WIDGETS.md](docs/WIDGETS.md) and [widgets/examples](widgets/examples).
 
-Drag cards to reorder (or use Move Up/Down). ⚙ flips a card to its settings, ↗ expands it, ⌃
-collapses it, × removes it, and + opens the gallery. The deck layout persists.
+Drag a card by its title bar onto another card's edge, like docking a panel: left or right puts it
+beside that card, top or bottom gives it its own row. Rows show their cards side by side (handy
+with the deck docked at the bottom) and wrap when the deck is too narrow. The deck's ⋯ menu has
+**Place All Side by Side** and **Stack All Vertically**, and each card's ⋯ menu moves it up, down,
+left or right. ⚙ flips a card to its settings, ↗ expands it, ⌃ collapses it, × removes it, and +
+opens the gallery. The layout persists.
 
 **Milestone 1:**
 Real PTY terminal with tabs, busy and finished-job indicators, safe quit and close, kernel-based

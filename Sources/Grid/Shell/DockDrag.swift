@@ -38,12 +38,12 @@ enum DockTarget: Hashable {
     case pane(UUID)              // dock beside a terminal pane (edge)
     case tab(UUID)               // move a pane into / a tab before this tab
     case tabBar                  // detach a pane into its own tab / move a tab last
-    case widget(UUID)            // move a widget card before this card
+    case widget(UUID)            // place a widget card beside (left/right) or above/below this card
     case widgetEnd               // move a widget card to the end
 
     /// Edge targets split themselves into halves; the others are simple drop zones.
     var usesEdges: Bool {
-        switch self { case .panel, .pane: true; default: false }
+        switch self { case .panel, .pane, .widget: true; default: false }
     }
 }
 
@@ -178,20 +178,56 @@ final class DockDrag {
 
 // MARK: - View modifiers
 
-extension View {
-    /// Registers this view's on-screen frame as a drop target.
-    func dockTarget(_ t: DockTarget) -> some View {
-        background(
+/// The visible area (window coordinates) drop targets inside a scroll view are limited to.
+private struct DockClipKey: EnvironmentKey { static let defaultValue: CGRect? = nil }
+extension EnvironmentValues {
+    var dockClip: CGRect? {
+        get { self[DockClipKey.self] }
+        set { self[DockClipKey.self] = newValue }
+    }
+}
+
+/// Registers the view's frame as a drop target, cut to the enclosing scroll view's visible area so
+/// a card scrolled partly out of sight can't catch drops (or draw highlights) outside its panel.
+private struct DockTargetModifier: ViewModifier {
+    @Environment(\.dockClip) private var clip
+    let target: DockTarget
+
+    func body(content: Content) -> some View {
+        content.background(
             GeometryReader { g in
-                let f = g.frame(in: .global)
+                let f = clip.map { g.frame(in: .global).intersection($0) } ?? g.frame(in: .global)
                 Color.clear
-                    .onAppear { DockDrag.shared.register(t, frame: f) }
-                    .onChange(of: f) { _, nf in DockDrag.shared.register(t, frame: nf) }
-                    .onDisappear { DockDrag.shared.unregister(t) }
+                    .onAppear { DockDrag.shared.register(target, frame: f) }
+                    .onChange(of: f) { _, nf in DockDrag.shared.register(target, frame: nf) }
+                    .onDisappear { DockDrag.shared.unregister(target) }
             }
         )
     }
+}
 
+extension View {
+    /// Registers this view's on-screen frame as a drop target.
+    func dockTarget(_ t: DockTarget) -> some View { modifier(DockTargetModifier(target: t)) }
+
+    /// Limits drop targets inside this (scroll) view to its visible frame.
+    func dockClipToBounds() -> some View { modifier(DockClipModifier()) }
+}
+
+private struct DockClipModifier: ViewModifier {
+    @State private var frame: CGRect?
+    func body(content: Content) -> some View {
+        content
+            .environment(\.dockClip, frame)
+            .background(GeometryReader { g in
+                Color.clear
+                    .onAppear { frame = g.frame(in: .global) }
+                    .onChange(of: g.frame(in: .global)) { _, f in frame = f }
+            })
+    }
+}
+
+extension View {
     /// Makes this view a drag source for `payload` (a plain mouse drag; taps still work).
     func dockDragSource(_ payload: DragPayload, label: String) -> some View {
         gesture(
@@ -224,7 +260,10 @@ struct DockDragOverlay: View {
                     HStack(spacing: 6) {
                         Image(systemName: "line.3.horizontal").font(.system(size: 8, weight: .semibold))
                         Text(drag.label.uppercased()).font(GridFont.label).tracking(1.4)
-                        if drag.hover == nil { Text("· drop on a panel edge").font(GridFont.small).foregroundStyle(theme.textMute) }
+                        if drag.hover == nil {
+                            Text(drag.payload.map { if case .widget = $0 { return "· drop on a card edge" } else { return "· drop on a panel edge" } } ?? "")
+                                .font(GridFont.small).foregroundStyle(theme.textMute)
+                        }
                     }
                     .foregroundStyle(theme.accent)
                     .padding(.horizontal, 8).padding(.vertical, 5)
@@ -259,7 +298,7 @@ struct DockHighlight: View {
                     Rectangle().fill(theme.accent.opacity(0.12))
                     ScanSweep(vertical: !horizontal, period: 0.8)
                     Rectangle().stroke(theme.accent.opacity(0.8), lineWidth: 1.5)
-                    Text(Self.label(edge)).font(GridFont.label).tracking(1.6).foregroundStyle(theme.accent)
+                    Text(Self.label(edge, target: target)).font(GridFont.label).tracking(1.6).foregroundStyle(theme.accent)
                         .padding(.horizontal, 8).padding(.vertical, 4).background(theme.bg0.opacity(0.85))
                 }
                 .frame(width: w, height: h)
@@ -278,7 +317,10 @@ struct DockHighlight: View {
         }
     }
 
-    static func label(_ e: DropEdge) -> String {
-        switch e { case .left: "◂ DOCK LEFT"; case .right: "DOCK RIGHT ▸"; case .top: "▴ DOCK TOP"; case .bottom: "DOCK BOTTOM ▾" }
+    static func label(_ e: DropEdge, target: DockTarget) -> String {
+        if case .widget = target {
+            switch e { case .left: return "◂ BESIDE"; case .right: return "BESIDE ▸"; case .top: return "▴ ROW ABOVE"; case .bottom: return "ROW BELOW ▾" }
+        }
+        switch e { case .left: return "◂ DOCK LEFT"; case .right: return "DOCK RIGHT ▸"; case .top: return "▴ DOCK TOP"; case .bottom: return "DOCK BOTTOM ▾" }
     }
 }

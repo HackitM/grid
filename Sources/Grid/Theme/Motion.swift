@@ -29,6 +29,9 @@ struct BuildOn: ViewModifier {
     /// Re-run the build-on when this changes (e.g. a panel moved to a new dock position).
     var trigger: AnyHashable? = nil
     @State private var p: CGFloat = 1
+    /// The trace overlay exists only while the build-on runs. Left in place (even invisible), its
+    /// glow shadow made SwiftUI re-blur the whole panel whenever anything inside it changed.
+    @State private var active = false
 
     func body(content: Content) -> some View {
         let shape = ClippedRect(cut: cut, topRight: topRight, bottomLeft: bottomLeft)
@@ -36,8 +39,9 @@ struct BuildOn: ViewModifier {
             .opacity(Double(min(1, 0.15 + p * 1.4)))
             .scaleEffect(0.975 + 0.025 * p, anchor: .center)
             .overlay {
-                // Always present; visibility is driven only by animatable values. (A `p < 1`
-                // condition would read the animation's *final* value and never draw.)
+                // Present for the whole animation (`active`, not `p < 1`: the latter reads the
+                // animation's final value and would never draw); visuals follow animatable `p`.
+                if active {
                 ZStack(alignment: .topLeading) {
                     // Ares flash: accent fill that resolves as the plate builds.
                     shape.fill(theme.accent.opacity(0.13 * Double(1 - p)))
@@ -57,15 +61,17 @@ struct BuildOn: ViewModifier {
                 }
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
+                }
             }
             .onAppear { run() }
             .onChange(of: trigger) { _, _ in run() }
     }
 
     private func run() {
-        guard effects.motion else { p = 1; return }
+        guard effects.motion else { p = 1; active = false; return }
+        active = true
         p = 0
-        withAnimation(GridMotion.build) { p = 1 }
+        withAnimation(GridMotion.build, completionCriteria: .logicallyComplete) { p = 1 } completion: { active = false }
     }
 }
 

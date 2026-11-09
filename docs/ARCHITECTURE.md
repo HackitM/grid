@@ -150,6 +150,34 @@ while a widget that needs it is on screen (reference-counted). The Git widget ru
 with structured arguments, `-c core.fsmonitor=false`, `--no-optional-locks`, no terminal prompts,
 and a 3 s timeout. It first checks that developer tools exist (`xcode-select -p`), so a periodic
 refresh can never trigger the "install tools" dialog. Results for a stale folder are discarded.
+The File Inspector widget reads `FileFacts` (GridCore) off the main thread, debounced: executable
+bit, shebang, `com.apple.quarantine` origin, `kMDItemWhereFroms`, text stats from the first
+256 KiB (regular files only, `O_NOFOLLOW|O_NONBLOCK`), image size; folder totals only on request,
+cancellable and capped.
+
+Deck arrangement: `DeckRows` (GridCore, tested) keeps cards as an ordered list with a per-card
+"beside the previous card" flag, so rows round-trip through the saved deck. Dropping a card on
+another card's edge (`DockTarget.widget` uses edges) places it beside (left/right) or on a new row
+(top/bottom); `DeckRowLayout` draws each row as equal-width, equal-height cards and wraps them
+when cards would get narrower than 190 pt. Drop targets inside the deck's scroll view are clipped
+to its visible area (`dockClipToBounds`).
+
+### Widget packages (third-party / your own)
+Spec and guardrails: [WIDGETS.md](WIDGETS.md). Pieces:
+- `GridCore/WidgetSecurity.swift` — manifest validation, exec templates (denylist by name and stem,
+  git hardening, risk tiers, placeholder matching, `sandbox-exec` profile for children),
+  `PathRule` (component globs, symlink-resolved, credential roots need explicit naming),
+  `NetRule` (https host patterns, private-address refusal, `{secret:key}` expansion), view-tree
+  parser with limits, token bucket. `WidgetPackage.swift` — package loading limits, SHA-256 digest,
+  plain-language permission text and combination warnings. All unit tested.
+- `GridWidgetHost` (separate executable) — JavaScriptCore with JIT off, rlimits, deny-default
+  `sandbox_init` before any widget code; JSON lines over stdin/stdout; a JS prelude provides the
+  `grid.*` builders and call bridge and diffs trees.
+- `Widgets/Platform/` — `WidgetLibrary` (scan, approvals pinned to digest or permissions, install
+  by copying validated bytes, Keychain secrets, storage, logs, FSEvents hot reload, scaffold);
+  `WidgetRuntime` (one per visible card: process lifecycle, debounced events, refresh scheduling,
+  JS-time/CPU/memory budgets with strikes and backoff, the broker that checks every call, click
+  actions); `WidgetNodeView` (native renderer); approval overlay and Settings › Widgets.
 
 ### Command palette
 Application commands only — never sent to a shell. Free text ranks commands, sessions, apps; input
@@ -186,6 +214,11 @@ authentication design (e.g. a per-user socket with peer-credential checks) first
   launched with `--qa` (status bar shows “△ QA HOOKS”); transport is a 0600 Unix socket inside the
   per-user 0700 temp directory with a peer-UID check. (An earlier version used distributed
   notifications, which any app in the login session can post; replaced after review.)
+- Third-party widgets: no ambient authority (sandboxed JavaScriptCore process, deny-default
+  profile); every capability is declared, shown in plain words, approved, and checked by the app;
+  approvals of installed packages are pinned to their SHA-256; commands run without a shell under
+  `sandbox-exec` (no network, writes, credentials, Keychain or Apple Events by default); secrets
+  live in the Keychain and never reach scripts; side effects only on clicks. See WIDGETS.md.
 - Opening a file that would *execute* (a native executable, or anything whose default app is a
   terminal, e.g. `.command`) requires confirmation; apps are launched normally.
 - Previews only read regular files, with `O_NONBLOCK`, so pipes and devices cannot hang the app.

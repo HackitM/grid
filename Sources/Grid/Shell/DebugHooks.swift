@@ -60,6 +60,9 @@ enum DebugHooks {
             return .tab(app.terminals.tabs[n - 1].id)
         case "tabBar": return .tabBar
         case "widgetEnd": return .widgetEnd
+        case "widget":    // by deck position (1-based)
+            guard parts.count == 2, let n = Int(parts[1]), app.widgets.widgets.indices.contains(n - 1) else { return nil }
+            return .widget(app.widgets.widgets[n - 1].id)
         default: return nil
         }
     }
@@ -297,9 +300,57 @@ enum DebugHooks {
             case "remove": app.widgets.remove(w.id)
             case "expand": app.widgets.update(w.id) { $0.expanded.toggle() }
             case "collapse": app.widgets.update(w.id) { $0.collapsed.toggle() }
-            case "moveToEnd": app.widgets.move(w.id, before: nil)
+            case "moveToEnd": app.widgets.place(w.id, at: nil, edge: nil)
+            case "sideBySide": app.widgets.arrangeSideBySide()
+            case "stack": app.widgets.arrangeStacked()
             case "set": app.widgets.set(w.id, c["key"] as? String ?? "", c["value"] as? String)
             default: break
+            }
+        case "addCustom":
+            if let r = c["ref"] as? String { _ = app.widgets.add(.custom, config: ["package": r]) }
+        case "approveWidget":
+            if let r = c["ref"] as? String { app.widgetLibrary.approve(r) }
+        case "approvePending":
+            if let r = app.widgetApproval { app.widgetApproval = nil; if (c["approve"] as? Bool) ?? true { r.onApprove() } }
+        case "reviewWidget":
+            if let r = c["ref"] as? String { WidgetApprovalRequest.review(r, app: app) }
+        case "widgetReload":
+            app.widgetLibrary.reload()
+        case "widgetPerform":
+            // {"cmd":"widgetPerform","index":<card>,"action":<n-th clickable action in its tree>}
+            let idx = (c["index"] as? Int) ?? 0
+            guard app.widgets.widgets.indices.contains(idx), let rt = WidgetRuntime.live[app.widgets.widgets[idx].id]?.value else { break }
+            let acts = rt.actionsForQA
+            let n = (c["action"] as? Int) ?? 0
+            if acts.indices.contains(n) { rt.perform(acts[n]) }
+        case "widgets":
+            guard let path else { break }
+            let lib = app.widgetLibrary
+            var cards: [[String: Any]] = []
+            for w in app.widgets.widgets {
+                var d: [String: Any] = ["kind": w.kind.rawValue]
+                if w.kind == .custom {
+                    let ref = w.string("package", "")
+                    d["ref"] = ref
+                    d["status"] = "\(lib.status(ref))"
+                    if let rt = WidgetRuntime.live[w.id]?.value {
+                        d["phase"] = "\(rt.phase)"
+                        d["tree"] = rt.tree.map { String(describing: $0).prefix(3000).description } ?? ""
+                        d["actions"] = rt.actionsForQA.map { "\($0.kind):\($0.value ?? "")" }
+                    }
+                }
+                cards.append(d)
+            }
+            let out: [String: Any] = [
+                "entries": lib.entries.map { ["ref": $0.ref, "error": $0.error ?? "", "status": "\(lib.status($0.ref))"] },
+                "cards": cards,
+                "logs": lib.logs.mapValues { $0.suffix(30).map { "[\($0.level)] \($0.text)" } },
+                "approvalPending": app.widgetApproval?.package.manifest.id ?? "",
+                "confirmation": app.confirmation?.title ?? "",
+                "notice": app.notice?.text ?? "",
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted, .sortedKeys]) {
+                try? data.write(to: URL(fileURLWithPath: path))
             }
         case "cancel":
             if let conf = app.confirmation { app.confirmation = nil; conf.onCancel() }
@@ -357,7 +408,8 @@ enum DebugHooks {
                 "apps": app.apps.records.count, "confirmation": app.confirmation?.code ?? "",
                 "tabs": app.terminals.tabs.map { t in ["id": t.id.uuidString, "panes": t.panes.map(\.number), "layout": DebugHooks.describe(t.layout, t),
                                                          "focused": t.focused?.number ?? 0, "title": t.title] },
-                "widgets": app.widgets.widgets.map { ["id": $0.id.uuidString, "kind": $0.kind.rawValue, "expanded": $0.expanded, "collapsed": $0.collapsed] },
+                "widgets": app.widgets.widgets.map { ["id": $0.id.uuidString, "kind": $0.kind.rawValue, "expanded": $0.expanded, "collapsed": $0.collapsed, "beside": $0.beside ?? false] },
+                "deckRows": app.widgets.rows.map { $0.map(\.kind.rawValue).joined(separator: " | ") },
                 "deck": app.deckVisible,
                 "workspace": app.workspace.tree.map { DebugHooks.describePanels($0) } ?? "(empty)",
                 "workspaceViewport": [app.workspace.viewport.width, app.workspace.viewport.height],

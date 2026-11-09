@@ -20,6 +20,8 @@ BIN="$(swift build -c "$CONFIG" --show-bin-path)/Grid"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Grid"
+# Sandboxed runner for third-party widgets (docs/WIDGETS.md); lives beside the main binary.
+cp "$(swift build -c "$CONFIG" --show-bin-path)/GridWidgetHost" "$APP/Contents/MacOS/GridWidgetHost"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 if [[ "$MODE" == "qa" ]]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier local.grid.workspace.qa" -c "Set :CFBundleName GRID QA" \
@@ -31,8 +33,10 @@ mkdir -p "$APP/Contents/Resources/Licenses"
 cp .build/checkouts/SwiftTerm/LICENSE "$APP/Contents/Resources/Licenses/SwiftTerm-LICENSE.txt"
 
 if [[ -n "${SIGN_ID:-}" ]]; then
+  codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP/Contents/MacOS/GridWidgetHost"
   codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP"
 else
+  codesign --force --sign - "$APP/Contents/MacOS/GridWidgetHost"
   codesign --force --sign - "$APP"   # ad-hoc: fine for local use, not for distribution
 fi
 

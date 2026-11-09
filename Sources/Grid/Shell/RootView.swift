@@ -44,6 +44,9 @@ struct RootView: View {
                     Spacer()
                 }
             }
+            if let r = app.widgetApproval {
+                WidgetApprovalOverlay(request: r)
+            }
             if let c = app.confirmation {
                 ConfirmationOverlay(confirmation: c)
             }

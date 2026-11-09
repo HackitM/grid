@@ -1,0 +1,17 @@
+{
+  "api": 1,
+  "id": "com.example.pomodoro",
+  "name": "Pomodoro",
+  "version": "1.1.0",
+  "description": "Focus / break timer with a daily tally. Needs no permissions.",
+  "author": "GRID examples",
+  "entry": "widget.js",
+  "refresh": 0,
+  "events": [],
+  "settings": [
+    { "key": "focus", "type": "number", "label": "Focus (min)", "default": 25, "min": 5, "max": 90 },
+    { "key": "shortBreak", "type": "number", "label": "Break (min)", "default": 5, "min": 1, "max": 30 },
+    { "key": "longBreak", "type": "number", "label": "Long break (min)", "default": 15, "min": 5, "max": 60 }
+  ],
+  "permissions": {}
+}

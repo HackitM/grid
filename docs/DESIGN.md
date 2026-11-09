@@ -84,9 +84,14 @@ and is skipped when Motion is off or macOS Reduce Motion is on.
 | Rail / tab selection | the active marker slides to the new item (Ares selector) | spring 260 ms |
 | Dock target while dragging | half-panel highlight with a scan band sweeping toward the edge | 800 ms loop, only while hovering |
 | DONE / BELL tags | pop in from 60% with a brief flash | spring 260 ms |
-| Widget readouts | numbers roll to new values | 300 ms |
+| Widget readouts | update in place (no animation) | – |
 
 No boot sequence, no idle animation, no flicker, no scanlines.
+
+Performance rule: never animate values that refresh on a timer (readouts, clocks, widget
+displays), and never leave a shadow or an animation overlay in the view tree once it's done. Any
+animated change inside a panel makes SwiftUI re-render that panel on the CPU every frame: rolling
+digits on a 2-second CPU readout cost ~40% of a core; without them the whole deck idles at ~1%.
 
 ## Layout
 ```

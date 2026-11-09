@@ -17,6 +17,9 @@ struct WidgetDeck: View {
                     showGallery.toggle()
                 }
                 Menu {
+                    Button("Place All Side by Side") { store.arrangeSideBySide() }
+                    Button("Stack All Vertically") { store.arrangeStacked() }
+                    Divider()
                     Button("Reset to Default Widgets") { store.resetToDefaults(); editing = [] }
                     Button("Hide Deck  ⌘J") { app.deckVisible = false }
                 } label: {
@@ -37,13 +40,19 @@ struct WidgetDeck: View {
                     }
                     if store.widgets.isEmpty && !showGallery {
                         StateBlock(code: "DECK.EMPTY", title: "No widgets",
-                                   message: "Add clocks, live system readouts, git status, notes, and more. Drag cards to reorder; use ⚙ to configure and × to remove.") {
+                                   message: "Add clocks, live system readouts, git status, notes, and more. Drag a card by its title onto another card's edge to place it beside or above/below; use ⚙ to configure and × to remove.") {
                             Button("Add Widget") { showGallery = true }
                         }
                     }
-                    ForEach(Array(store.widgets.enumerated()), id: \.element.id) { i, w in
-                        WidgetCard(widget: w, index: i, editing: editing.contains(w.id)) {
-                            if editing.contains(w.id) { editing.remove(w.id) } else { editing.insert(w.id) }
+                    // Rows of cards: side by side when there's room, wrapping when the deck is narrow.
+                    let number = Dictionary(uniqueKeysWithValues: store.widgets.enumerated().map { ($0.element.id, $0.offset) })
+                    ForEach(store.rows, id: \.first?.id) { row in
+                        DeckRowLayout {
+                            ForEach(row) { w in
+                                WidgetCard(widget: w, index: number[w.id] ?? 0, editing: editing.contains(w.id)) {
+                                    if editing.contains(w.id) { editing.remove(w.id) } else { editing.insert(w.id) }
+                                }
+                            }
                         }
                     }
                     if !store.widgets.isEmpty {
@@ -54,6 +63,7 @@ struct WidgetDeck: View {
                 }
                 .padding(8)
             }
+            .dockClipToBounds()
         }
     }
 }
@@ -69,9 +79,10 @@ private struct WidgetGallery: View {
                 TerminatedRule()
             }
             .padding(.bottom, 6)
-            ForEach(WidgetKind.allCases) { kind in
+            ForEach(WidgetKind.builtIn) { kind in
                 GalleryRow(kind: kind) { onAdd(kind) }
             }
+            CustomWidgetGallery()
         }
         .padding(8)
         .background(theme.bg3)
@@ -118,6 +129,17 @@ private struct WidgetCard: View {
     let toggleEditing: () -> Void
     @State private var hover = false
 
+    /// Built-in kinds use their own title; custom cards show the package's name.
+    private var title: String {
+        guard widget.kind == .custom else { return widget.kind.title }
+        return app.widgetLibrary.entry(widget.string("package", ""))?.name ?? "Missing widget"
+    }
+    /// DEV for your own packages, 3RD for installed ones (so a card can't pass itself off as GRID's).
+    private var origin: String? {
+        guard widget.kind == .custom else { return nil }
+        return widget.string("package", "").hasPrefix("dev:") ? "DEV" : "3RD"
+    }
+
     var body: some View {
         let store = app.widgets
         VStack(spacing: 0) {
@@ -144,6 +166,8 @@ private struct WidgetCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        // Cards in a row share the row's height (collapsed ones stay a header strip).
+        .frame(maxHeight: widget.collapsed ? nil : .infinity, alignment: .top)
         .background(theme.bg3)
         .clipShape(ClippedRect(cut: 6))
         .overlay(ClippedRect(cut: 6).stroke(editing ? theme.warn.opacity(0.6) : (hover ? theme.lineStrong.opacity(0.5) : theme.line), lineWidth: Metrics.hairline))
@@ -151,28 +175,31 @@ private struct WidgetCard: View {
         // A card dropped here moves before this one (GRID drag tracking; see DockDrag).
         .dockTarget(.widget(widget.id))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(widget.kind.title) widget")
+        .accessibilityLabel("\(title) widget")
     }
 
     private func header(_ store: WidgetStore, showSuffix: Bool, compact: Bool) -> some View {
         HStack(spacing: 6) {
-            // Drag handle: the card's ID travels as the drag payload.
-            Image(systemName: "line.3.horizontal")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(hover ? theme.textDim : theme.textMute)
-                .frame(width: 14, height: 16)
-                .contentShape(Rectangle())
-                .dockDragSource(.widget(widget.id), label: widget.kind.title)
-                .hoverCursor(.openHand)
-                .help("Drag to reorder")
-            Text(String(format: "W%02d", index + 1)).font(GridFont.label).foregroundStyle(editing ? theme.warn : theme.accent)
-            HStack(spacing: 0) {
-                Text(widget.kind.title.uppercased()).foregroundStyle(theme.text)
-                if showSuffix { Text(" ." + widget.kind.suffix.uppercased()).foregroundStyle(theme.textMute) }
+            // Title bar: drag it (handle, number or title) onto another card's edge, like a panel.
+            HStack(spacing: 6) {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(hover ? theme.textDim : theme.textMute)
+                    .frame(width: 14, height: 16)
+                Text(String(format: "W%02d", index + 1)).font(GridFont.label).foregroundStyle(editing ? theme.warn : theme.accent)
+                HStack(spacing: 0) {
+                    Text(title.uppercased()).foregroundStyle(theme.text)
+                    if showSuffix && origin == nil { Text(" ." + widget.kind.suffix.uppercased()).foregroundStyle(theme.textMute) }
+                }
+                .font(GridFont.label).tracking(1.2).lineLimit(1)
+                if let origin { Tag(origin, color: origin == "DEV" ? theme.warn : theme.textMute).help(origin == "DEV" ? "Your development widget" : "Third-party widget") }
+                Spacer(minLength: 4)
             }
-            .font(GridFont.label).tracking(1.2).lineLimit(1)
             .layoutPriority(compact ? 1 : 0)
-            Spacer(minLength: 4)
+            .contentShape(Rectangle())
+            .dockDragSource(.widget(widget.id), label: title)
+            .hoverCursor(.openHand)
+            .help("Drag onto another card's edge to place it beside, above or below")
             if !compact {
                 if !widget.collapsed && !editing {
                     smallButton(widget.expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
@@ -193,8 +220,10 @@ private struct WidgetCard: View {
                     Button(editing ? "Done Configuring" : "Configure…") { toggleEditing() }
                     Divider()
                 }
-                Button("Move Up") { store.shift(widget.id, by: -1) }.disabled(index == 0)
-                Button("Move Down") { store.shift(widget.id, by: 1) }.disabled(index == store.widgets.count - 1)
+                Button("Move Up") { store.nudge(widget.id, .top) }.disabled(!store.canNudge(widget.id, .top))
+                Button("Move Down") { store.nudge(widget.id, .bottom) }.disabled(!store.canNudge(widget.id, .bottom))
+                Button("Move Left") { store.nudge(widget.id, .left) }.disabled(!store.canNudge(widget.id, .left))
+                Button("Move Right") { store.nudge(widget.id, .right) }.disabled(!store.canNudge(widget.id, .right))
                 Divider()
                 Button("Remove Widget") { store.remove(widget.id) }
             } label: {
@@ -227,6 +256,8 @@ struct SegmentBar: View {
     let value: Double
     var segments = 24
     var warnAbove: Double = 0.85
+    /// Fixed fill color (overrides the accent / warn split).
+    var color: Color? = nil
 
     var body: some View {
         Canvas { ctx, size in
@@ -235,7 +266,8 @@ struct SegmentBar: View {
             let filled = Int((min(max(value, 0), 1) * Double(segments)).rounded())
             for i in 0..<segments {
                 let r = CGRect(x: CGFloat(i) * (w + gap), y: 0, width: w, height: size.height)
-                let color: Color = i < filled ? (value > warnAbove ? theme.warn : theme.accent) : theme.line
+                let fill: Color = color ?? (value > warnAbove ? theme.warn : theme.accent)
+                let color: Color = i < filled ? fill : theme.line
                 ctx.fill(Path(r), with: .color(color))
             }
         }
@@ -249,12 +281,14 @@ struct Sparkline: View {
     @Environment(\.theme) private var theme
     let values: [Double]
     var maxValue: Double? = 1
+    /// Horizontal slots (values fill from the right); defaults to the system monitor's history.
+    var slots: Int = SystemMonitor.historyLength
 
     var body: some View {
         Canvas { ctx, size in
             guard values.count > 1 else { return }
             let top = max(maxValue ?? (values.max() ?? 1), 0.0001)
-            let n = SystemMonitor.historyLength
+            let n = max(slots, values.count)
             let step = size.width / CGFloat(n - 1)
             let offset = CGFloat(n - values.count) * step
             var line = Path()
@@ -278,7 +312,6 @@ struct Sparkline: View {
 }
 
 struct Readout: View {
-    @Environment(\.effects) private var effects
     @Environment(\.theme) private var theme
     let label: String
     let value: String
@@ -286,10 +319,10 @@ struct Readout: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             SectionLabel(label).frame(width: 46, alignment: .leading)
-            // Measured values roll to their new number instead of jumping.
+            // Updates in place. (Rolling digits looked nice but every animation frame made SwiftUI
+            // re-rasterize the whole deck on the CPU: ~40% of a core for a value refreshed every 2 s.)
             Text(value).font(GridFont.mono(15, .medium)).foregroundStyle(theme.text).monospacedDigit()
-                .contentTransition(.numericText())
-                .animation(effects.motion ? .easeOut(duration: 0.3) : nil, value: value)
+                .lineLimit(1).fixedSize()
             if !detail.isEmpty { Text(detail).font(GridFont.small).foregroundStyle(theme.textDim).lineLimit(1) }
             Spacer(minLength: 0)
         }
@@ -303,5 +336,61 @@ struct WidgetFootnote: View {
     var body: some View {
         Text(text.uppercased()).font(.system(size: 8.5, weight: .medium, design: .monospaced)).tracking(1)
             .foregroundStyle(theme.textMute)
+    }
+}
+
+// MARK: - Row layout
+
+/// One deck row: cards side by side at equal widths and the row's height. When the deck is too
+/// narrow for them all (under `minWidth` each), the row wraps onto more lines.
+struct DeckRowLayout: Layout {
+    var spacing: CGFloat = 8
+    var minWidth: CGFloat = 190
+
+    struct Line { var range: Range<Int>; var cardWidth: CGFloat; var height: CGFloat }
+    struct Cache { var width: CGFloat = -1; var lines: [Line] = [] }
+
+    func makeCache(subviews: Subviews) -> Cache { Cache() }
+    func updateCache(_ cache: inout Cache, subviews: Subviews) { cache = Cache() }
+
+    /// Lines for a definite width, measured once per width.
+    private func lines(_ width: CGFloat, _ subviews: Subviews, _ cache: inout Cache) -> [Line] {
+        if cache.width == width { return cache.lines }
+        var out: [Line] = []
+        var i = 0
+        for n in DeckRows.lines(count: subviews.count, width: Double(width), minWidth: Double(minWidth), spacing: Double(spacing)) {
+            let w = max(0, (width - spacing * CGFloat(n - 1)) / CGFloat(n))
+            let h = subviews[i..<i + n].map { $0.sizeThatFits(ProposedViewSize(width: w, height: nil)).height }.max() ?? 0
+            out.append(Line(range: i..<i + n, cardWidth: w, height: h))
+            i += n
+        }
+        cache.width = width
+        cache.lines = out
+        return out
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
+        guard let width = proposal.width, width.isFinite, width > 0 else {
+            // Ideal size: like an HStack of the cards at their own ideal sizes (no made-up width,
+            // which would measure cards in a state they're never shown in).
+            let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+            return CGSize(width: sizes.map(\.width).reduce(0, +) + spacing * CGFloat(max(0, sizes.count - 1)),
+                          height: sizes.map(\.height).max() ?? 0)
+        }
+        let rows = lines(width, subviews, &cache)
+        return CGSize(width: width, height: rows.map(\.height).reduce(0, +) + spacing * CGFloat(max(0, rows.count - 1)))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
+        var y = bounds.minY
+        for line in lines(bounds.width, subviews, &cache) {
+            var x = bounds.minX
+            for i in line.range {
+                subviews[i].place(at: CGPoint(x: x, y: y), anchor: .topLeading,
+                                  proposal: ProposedViewSize(width: line.cardWidth, height: line.height))
+                x += line.cardWidth + spacing
+            }
+            y += line.height + spacing
+        }
     }
 }

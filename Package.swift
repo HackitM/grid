@@ -18,6 +18,14 @@ let package = Package(
             path: "Sources/GridCore",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // Runs one third-party widget's JavaScript in a sandboxed process with no ambient authority
+        // (docs/WIDGETS.md). Talks to GRID only over stdin/stdout.
+        .executableTarget(
+            name: "GridWidgetHost",
+            path: "Sources/GridWidgetHost",
+            swiftSettings: [.swiftLanguageMode(.v5)],
+            linkerSettings: [.linkedFramework("JavaScriptCore")]
+        ),
         .executableTarget(
             name: "Grid",
             dependencies: [

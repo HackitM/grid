@@ -65,7 +65,7 @@ private struct MultiSelectionSummary: View {
     }
 }
 
-private struct InspectorContent: View {
+struct InspectorContent: View {
     @Environment(AppState.self) private var app
     @Environment(\.theme) private var theme
     let entry: FileEntry

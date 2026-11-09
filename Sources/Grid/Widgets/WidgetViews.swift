@@ -16,6 +16,8 @@ struct WidgetContent: View {
         case .git: GitWidget(widget: widget)
         case .notes: NotesWidget(widget: widget)
         case .folder: RecentFilesWidget(widget: widget)
+        case .inspector: FileInspectorWidget(widget: widget)
+        case .custom: CustomWidgetView(widget: widget)
         }
     }
 }
@@ -539,6 +541,11 @@ struct WidgetSettings: View {
                 PathSetting(widget: widget, label: "Repository", empty: "Follow the active terminal's folder")
             case .folder:
                 PathSetting(widget: widget, label: "Folder", empty: "Follow the Files panel's folder")
+            case .inspector:
+                toggle("Preview when expanded", widget.bool("preview", true)) { store.set(widget.id, "preview", $0 ? "1" : "0") }
+                Text("Follows the Files selection. Folder totals are measured only when you ask.").font(GridFont.small).foregroundStyle(theme.textMute)
+            case .custom:
+                CustomWidgetSettings(widget: widget)
             case .system, .battery, .notes:
                 Text("No options. Use expand (↗) for more detail.").font(GridFont.small).foregroundStyle(theme.textMute)
             }

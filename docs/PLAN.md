@@ -71,6 +71,10 @@
 ## Widget deck ✅
 - [x] Deck panel (⌘J) with drag-reorder, settings face, expand/collapse, remove, gallery, persistence
 - [x] Clock, System, Network, Storage, Power, Sessions, Pinned Apps, Git, Notes, Recent Files
+- [x] File Inspector widget (quoted insertion preview, exec/quarantine warnings, text/image facts)
+- [x] Widget packages: manifest + JS in a sandboxed JavaScriptCore helper, approval with risk
+      tiers, digest pinning, Keychain secrets, sandboxed exec, budgets/strikes, hot-reloading Dev
+      widgets, Install…, Settings › Widgets with logs, 9 examples (docs/WIDGETS.md)
 - [ ] Ideas: calendar (EventKit needs a permission prompt), weather (network — out of scope
       unless requested), per-widget accent, a full-screen deck panel
 

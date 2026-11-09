@@ -1,0 +1,22 @@
+{
+  "api": 1,
+  "id": "com.example.brew-services",
+  "name": "Services",
+  "version": "1.1.0",
+  "description": "Homebrew services with start / stop / restart actions.",
+  "author": "GRID examples",
+  "entry": "widget.js",
+  "refresh": 30,
+  "events": [],
+  "settings": [
+    { "key": "confirmStop", "type": "bool", "label": "Confirm before stopping a service", "default": true }
+  ],
+  "permissions": {
+    "exec": [
+      { "command": ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"], "args": ["services", "list", "--json"], "timeout": 20 },
+      { "command": ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"], "args": ["services", "start", "--", "{token}"], "userInitiated": true, "writes": true, "timeout": 30 },
+      { "command": ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"], "args": ["services", "stop", "--", "{token}"], "userInitiated": true, "writes": true, "timeout": 30 },
+      { "command": ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"], "args": ["services", "restart", "--", "{token}"], "userInitiated": true, "writes": true, "timeout": 30 }
+    ]
+  }
+}

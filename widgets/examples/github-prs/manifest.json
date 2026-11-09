@@ -1,0 +1,27 @@
+{
+  "api": 1,
+  "id": "com.example.github-prs",
+  "name": "GitHub PRs",
+  "version": "1.1.0",
+  "description": "Pull requests for the repository in the active terminal, from the GitHub API.",
+  "author": "GRID examples",
+  "entry": "widget.js",
+  "scripts": ["lib/remote.js"],
+  "refresh": 120,
+  "events": ["terminal.cwd"],
+  "settings": [
+    { "key": "token", "type": "secret", "label": "GitHub token (fine-grained, Pull requests: read)", "hosts": ["api.github.com"] },
+    { "key": "state", "type": "choice", "label": "Show", "default": "open", "options": ["open", "closed", "all"] },
+    { "key": "mineOnly", "type": "bool", "label": "Only my PRs", "default": false },
+    { "key": "count", "type": "number", "label": "Rows", "default": 8, "min": 1, "max": 30 }
+  ],
+  "permissions": {
+    "terminal.cwd": true,
+    "clipboard.write": true,
+    "exec": [
+      { "command": "/usr/bin/git", "args": ["-C", "{cwd}", "remote", "get-url", "origin"] }
+    ],
+    "net": ["api.github.com"],
+    "openURL": ["github.com"]
+  }
+}
