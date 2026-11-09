@@ -398,8 +398,9 @@ struct ALPRCamera: Identifiable, Hashable, Sendable {   // GridCore
 - **Hardened runtime:** Developer ID builds signed with `--options runtime` need the
   `com.apple.security.personal-information.location` entitlement, or location is silently denied
   (**verify** in Phase 0).
-  - Add `Resources/GRID.entitlements` and pass `--entitlements` in `scripts/bundle.sh` for the
-    `SIGN_ID` path. Ad-hoc builds have no hardened runtime.
+  - Add the key to the existing `scripts/Grid.entitlements` (added in 0.5.0 for Apple Events and
+    already passed by `scripts/bundle.sh` on the `SIGN_ID` path). Ad-hoc builds have no hardened
+    runtime.
 
 ### 5.2 What is sent where
 
@@ -951,8 +952,8 @@ entry. Nothing ships to users before Phase 2.
 ### Phase 2 — Location (1 week)
 - `Sources/Grid/Maps/LocationProvider.swift`: CLLocationManager wrapper with the states from §5.1,
   one-shot and follow, stopping when hidden.
-- `Resources/Info.plist` (usage strings), `Resources/GRID.entitlements`, `scripts/bundle.sh`
-  (`--entitlements`).
+- `Resources/Info.plist` (usage strings) and `scripts/Grid.entitlements` (add the location key;
+  `bundle.sh` already passes the file).
 - QA: allow, deny, Location Services off, revoke while following, sleep and wake.
 
 ### Phase 3 — ALPR layer (2 weeks)
@@ -1076,7 +1077,7 @@ entry. Nothing ships to users before Phase 2.
 ## 11. App size, memory and disk budget
 
 **Baseline.** `GRID.app` 0.4.0 (release build, arm64) is **17 MB**: the `Grid` binary is 16.8 MB and
-`GridWidgetHost` is 94 KB. Idle RAM wasn't measured for this plan.
+`GridWidgetHost` is 94 KB. The 0.5.0 release zip is 5.3 MB. Idle RAM wasn't measured for this plan.
 
 Everything below is an **estimate** except where a source is given. Phase 0 replaces the estimates
 with measurements.
@@ -1192,7 +1193,7 @@ There are two parts, both under one **Settings › Updates** section:
 status bar   ◆ GRID 0.5.0 AVAILABLE · VIEW                       (Ares text band, once per version)
 
 ┌SETTINGS › UPDATES──────────────────────────────────────────────┐
-│GRID          0.4.0 → 0.5.0   released 2026-11-09   ◆ AVAILABLE │
+│GRID          0.5.0 → 0.6.0   released 2026-12-01   ◆ AVAILABLE │
 │              checked 2 h ago · [■] check daily · [ ] pre-releases│
 │ ── WHAT'S NEW ───────────────────────────────────────────────■ │
 │ (release notes from GitHub, plain GRID type, links not followed │
