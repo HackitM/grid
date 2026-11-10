@@ -16,6 +16,19 @@ publishers at runtime and keeps them in Application Support: uBlock filters (+ b
 unbreak, quick fixes) — GPLv3, uBlock Origin project; EasyList and EasyPrivacy — GPLv3 / CC BY-SA 3.0,
 The EasyList authors; Peter Lowe's list — see pgl.yoyo.org. GRID's converter is original code.
 
+**Map data is not bundled either.** It is fetched at runtime after you enable it, and cached in
+Application Support:
+- **Base map:** vector tiles from [OpenFreeMap](https://openfreemap.org) in the OpenMapTiles schema
+  (© OpenMapTiles, CC-BY 4.0). The data is © OpenStreetMap contributors (ODbL 1.0).
+- **Region boundaries:** Geofabrik's `index-v1.json` (© Geofabrik GmbH and OpenStreetMap
+  contributors, ODbL 1.0).
+- **ALPR cameras:** OpenStreetMap data (ODbL 1.0), as published by DeFlock / FlockHopper, or
+  queried from an Overpass server.
+
+The map always shows the attribution. GRID's earcut triangulation is a port of
+[mapbox/earcut](https://github.com/mapbox/earcut) (ISC, © Mapbox); the notice is kept in
+`Sources/GridCore/Maps/Earcut.swift`.
+
 Obligation: distribute SwiftTerm’s MIT notice (copyright Miguel de Icaza, xterm.js authors,
 SourceLair) with binary releases — e.g. copy `.build/checkouts/SwiftTerm/LICENSE` into the app’s
 Resources as part of the release script.

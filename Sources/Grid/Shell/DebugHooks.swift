@@ -54,6 +54,15 @@ enum DebugHooks {
         }
     }
 
+    /// The location state's name only: QA output never contains coordinates.
+    static func locationCase(_ s: LocationProvider.State) -> String {
+        switch s {
+        case .idle: "idle"; case .explaining: "explaining"; case .asking: "asking"; case .locating: "locating"
+        case .fix: "fix"; case .denied: "denied"; case .restricted: "restricted"; case .servicesOff: "servicesOff"
+        case .failed: "failed"
+        }
+    }
+
     static func describePanels(_ t: SplitTree) -> String {
         switch t {
         case .leaf(let id): return WorkspacePanel(nodeID: id)?.rawValue ?? "?"
@@ -192,6 +201,7 @@ enum DebugHooks {
             case "systemMenus": app.settings.systemMenus = on
             case "globeActive": GlobeView.debugForceActive = on
             case "globeNoLabels": GlobeRenderer.debugNoLabels = on
+            case "mapActive": MapRenderer.debugForceActive = on
             case "filesGrid": app.settings.filesGrid = on; CascadeClock.shared.start()
             case "startup": app.settings.startupAnimation = on
             default: break
@@ -650,6 +660,18 @@ enum DebugHooks {
                                "position": app.nowPlaying.position(at: Date()) ?? -1],
                 "floating": app.floatingWidgets.debugFrames(),
                 "filesGrid": app.settings.filesGrid,
+                "map": app.mapsIfLoaded.map { m -> [String: Any] in
+                    let ll = TileMath.unproject(m.camera.center)
+                    return ["enabled": m.enabled, "lon": ll.lon, "lat": ll.lat, "zoom": m.camera.zoom, "bearing": m.camera.bearing, "pitch": m.camera.pitch,
+                            "viewport": [m.viewport.x, m.viewport.y],
+                            "tilesLoaded": m.tiles.loadedCount, "tilesWanted": m.tiles.wantedCount, "tileErrors": m.tiles.errorCount,
+                            "generation": m.tiles.generation, "source": m.tiles.source?.version ?? "", "sourceError": m.tiles.sourceError ?? "",
+                            "cameras": m.alpr.index.cameras.count, "selected": m.selected ?? -1, "notice": m.notice ?? "", "alprError": m.alpr.lastError ?? "",
+                            "catalog": m.alpr.catalog?.regions.count ?? 0, "catalogState": m.alpr.catalogState ?? "",
+                            "regions": m.alpr.regions.map { ["id": $0.id, "name": $0.meta.descriptor.name, "count": $0.meta.cameraCount,
+                                                             "status": "\($0.status)", "sources": $0.meta.sources.map(\.rawValue), "requests": $0.meta.requests] },
+                            "location": Self.locationCase(m.location.state), "inView": m.camerasInViewCount()]
+                } ?? [:],
                 "updates": ["current": app.updates.current.description, "latest": app.updates.latest?.tagName ?? "",
                             "available": app.updates.available?.tagName ?? "", "notice": app.updates.showsNotice,
                             "consent": app.updates.needsConsent ? "ask" : (app.updates.checksDaily ? "daily" : "off"),
@@ -682,6 +704,45 @@ enum DebugHooks {
             if (c["check"] as? Bool) == true { Task { await u.check(manual: true) } }
             if (c["download"] as? Bool) == true { UpdateDownloader.run(u) }
             if (c["view"] as? Bool) == true { app.settingsSection = "updates"; app.show(.settings) }
+        case "map":
+            // {"cmd":"map","op":"enable"|"disable"|"camera"|"download"|"remove"|"select"|"clear"|"catalog"|"check"|"locate",
+            //  "lon","lat","zoom","bearing","pitch", "rect":[w,s,e,n], "region":"us/rhode-island", "index":n, "id":regionId}
+            let m = app.maps
+            switch c["op"] as? String {
+            case "enable": m.enabled = true; m.appeared()
+            case "disable": m.enabled = false
+            case "camera":
+                var cam = m.camera
+                if let lon = c["lon"] as? Double, let lat = c["lat"] as? Double { cam.center = TileMath.project(LonLat(lon: lon, lat: lat)) }
+                if let z = c["zoom"] as? Double { cam.zoom = z }
+                if let b = c["bearing"] as? Double { cam.bearing = b }
+                if let p = c["pitch"] as? Double { cam.pitch = p }
+                m.setCamera(cam)
+            case "download":
+                if let r = c["rect"] as? [Double], r.count == 4 {
+                    let box = BBox(west: r[0], south: r[1], east: r[2], north: r[3])
+                    let d = RegionDescriptor(id: "rect-qa-\(Int(r[0] * 100))", name: c["name"] as? String ?? "QA Area", parent: nil, iso3166_1: [], iso3166_2: [])
+                    m.requestDownload(d, polygon: .rectangle(box), isRectangle: true)
+                } else if let id = c["region"] as? String {
+                    Task {
+                        await m.alpr.loadCatalog()
+                        if let cat = m.alpr.catalog, let r = cat.regions.first(where: { $0.id == id }), let poly = cat.polygon(id) {
+                            m.requestDownload(r, polygon: poly, isRectangle: false)
+                        }
+                    }
+                }
+            case "remove": if let id = c["id"] as? String { m.alpr.remove(id) }
+            case "select": m.select(c["index"] as? Int)
+            case "clear": m.clearAllData()
+            case "catalog": Task { await m.alpr.loadCatalog() }
+            case "check": Task { await m.alpr.checkFreshness(manual: true) }
+            case "locate": m.locate()
+            case "layer":
+                if let k = c["key"] as? String, let on = c["value"] as? Bool {
+                    switch k { case "cameras": m.showCameras = on; case "regions": m.showRegions = on; case "buildings": m.showBuildings = on; case "grid": m.showGrid = on; default: break }
+                }
+            default: break
+            }
         case "floatShot":
             // {"cmd":"floatShot","path":"<dir>"}: one PNG per floating widget window (rendered layer tree).
             if let dir = c["path"] as? String { app.floatingWidgets.debugSnapshot(dir: dir) }

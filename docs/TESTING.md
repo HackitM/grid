@@ -118,6 +118,11 @@ display is awake.
 - [ ] Narrow the terminal panel: header collapses to `01 TERMINAL ⋯ ×` with a working menu
 - [ ] Switch pages, open the palette, open a folder: build-on / cascade feel quick, not in the way
 - [ ] Settings › Effects › Motion off (and macOS Reduce Motion): all animation stops
+- [ ] Map: before Enable Map Data, no requests (check with `nettop` or Little Snitch); after it, tiles load at z3/z10/z14/z17 and when tilted
+- [ ] Map: Add Region › United States › Rhode Island → confirmation names the host and the request count → cameras appear; zoom out → clusters; click a camera → inspector
+- [ ] Map: ⇧-drag an area in Draw Area mode → confirmation → cameras; remove the region; Clear Map Data empties the folder
+- [ ] Map: Locate → GRID's explanation → the macOS prompt → the map centres; deny → LOC-DENIED with Open Privacy Settings
+- [ ] Map: theme switch recolours instantly; Effects › Glow off removes the glow; with the window unfocused the map stops drawing (0% CPU)
 - [ ] Updates: a fresh install asks in the status bar; "Not now" makes no request (check with Little Snitch or `nettop`)
 - [ ] Updates: GRID › Check for Updates… on the latest version says "up to date"; on an older build shows the notice, Settings › Updates shows the notes
 - [ ] Updates: Download & Verify → confirm → zip and GRID-x.y.z/GRID.app in Downloads, both quarantined (`xattr -l`), Finder reveals the app; Skip and Later hide the notice

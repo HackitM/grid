@@ -40,6 +40,7 @@ struct UpdateSettingsSection: View {
             if let r = u.available {
                 ReleaseCard(release: r)
             }
+            MapDataUpdatesBlock()
         }
     }
 

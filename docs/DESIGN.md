@@ -88,6 +88,11 @@ and is skipped when Motion is off or macOS Reduce Motion is on.
 | DONE / BELL tags | pop in from 60% with a brief flash | spring 260 ms |
 | Widget readouts | update in place (no animation) | – |
 
+Map (page 05): the renderer draws only when the camera, data or theme changes (no idle animation).
+New areas scan in once with an accent band (450 ms, Motion only). Colours come from theme tokens
+(roads in accent, graded by class; water in bg3; buildings in bg1/bg2 with accent edges), and the
+glow follows Effects › Glow.
+
 One startup build-on that never delays typing; no idle animation, no flicker, no scanlines.
 
 Performance rule: never animate values that refresh on a timer (readouts, clocks, widget

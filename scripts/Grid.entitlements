@@ -6,5 +6,8 @@
 	     inherit GRID's TCC identity for osascript too). macOS still asks the user per target app. -->
 	<key>com.apple.security.automation.apple-events</key>
 	<true/>
+	<!-- The Map's Locate button (CoreLocation, when in use). macOS still asks the user. -->
+	<key>com.apple.security.personal-information.location</key>
+	<true/>
 </dict>
 </plist>

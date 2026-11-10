@@ -2,6 +2,7 @@
 # Publishes a GitHub Release of GRID.
 #
 #   scripts/release.sh 0.3.0            # notes from docs/releases/0.3.0.md
+#   PRERELEASE=1 scripts/release.sh 0.6.0   # as a GitHub pre-release
 #
 # Checks: clean tree, Info.plist version matches, notes exist. Builds the release app into dist/
 # (your build/GRID.app is left alone), zips it with ditto, writes a SHA-256, tags v<version> on the
@@ -26,5 +27,9 @@ ditto -c -k --sequesterRsrc --keepParent dist/GRID.app "$ZIP"
 (cd dist && shasum -a 256 "$(basename "$ZIP")" > "$(basename "$ZIP").sha256")
 cat "$ZIP.sha256"
 
+# PRERELEASE=1 publishes it as a pre-release (not "Latest"; the update checker offers it only to
+# people who turned on "Include pre-releases").
+PRE_FLAG=()
+[[ "${PRERELEASE:-0}" == "1" ]] && PRE_FLAG=(--prerelease)
 gh release create "v$VERSION" "$ZIP" "$ZIP.sha256" --target "$(git rev-parse HEAD)" \
-  --title "GRID $VERSION" --notes-file "$NOTES"
+  --title "GRID $VERSION${PRERELEASE:+ (pre-release)}" --notes-file "$NOTES" "${PRE_FLAG[@]}"
