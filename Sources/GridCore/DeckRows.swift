@@ -76,7 +76,9 @@ public enum DeckRows {
     /// never more than the row has. Returns the number of cards on each line.
     public static func lines(count: Int, width: Double, minWidth: Double, spacing: Double) -> [Int] {
         guard count > 0 else { return [] }
-        let fit = max(1, Int(((width + spacing) / (minWidth + spacing)).rounded(.down)))
+        // Layout can propose an infinite width; `Int(_:)` traps on a value it can't represent.
+        let ratio = (width + spacing) / (minWidth + spacing)
+        let fit = ratio.isFinite ? max(1, Int(min(ratio, Double(count)).rounded(.down))) : count
         let perLine = min(count, fit)
         var out: [Int] = []
         var left = count
