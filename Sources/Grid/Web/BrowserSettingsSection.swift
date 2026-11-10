@@ -73,7 +73,7 @@ struct BrowserSettingsSection: View {
                         .help("Removes downloaded theme updates")
                 }
                 .buttonStyle(GridButtonStyle(compact: true))
-                Text("Theme updates come from github.com/HackitM/grid (raw.githubusercontent.com, which learns your IP address). Themes are CSS only and checked before use: they can't run code or load anything from the internet.")
+                Text("Theme updates come from github.com/max-pasho/grid (raw.githubusercontent.com, which learns your IP address). Themes are CSS only and checked before use: they can't run code or load anything from the internet.")
                     .font(GridFont.small).foregroundStyle(theme.textMute).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     Text("Your own themes").font(GridFont.body).foregroundStyle(theme.textDim)

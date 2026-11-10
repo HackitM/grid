@@ -12,7 +12,7 @@ import Observation
 final class SiteThemeLibrary {
     /// GRID's public repository; the only host theme updates come from.
     nonisolated static let feedHost = "raw.githubusercontent.com"
-    nonisolated static let feedBase = URL(string: "https://raw.githubusercontent.com/HackitM/grid/master/site-themes/")!
+    nonisolated static let feedBase = URL(string: "https://raw.githubusercontent.com/max-pasho/grid/master/site-themes/")!
 
     enum UpdateState: Equatable {
         case idle

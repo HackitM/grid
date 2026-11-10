@@ -339,7 +339,7 @@ Per the OSM wiki and the Overpass "commons" page:
 - Cells are cached for 24 h; requests stop at about 50 a day per user.
 - On 429 or 406, back off 30 s, doubling up to 10 min.
 - `[timeout:25]`.
-- User-Agent `GRID/<version> (+https://github.com/HackitM/grid)`.
+- User-Agent `GRID/<version> (+https://github.com/max-pasho/grid)`.
 - The endpoint is user-switchable.
 
 ### 4.5 Model and display
@@ -1172,7 +1172,7 @@ There are two parts, both under one **Settings › Updates** section:
 
 ### 12.2 GRID releases
 
-**Source:** `GET https://api.github.com/repos/HackitM/grid/releases/latest`.
+**Source:** `GET https://api.github.com/repos/max-pasho/grid/releases/latest`.
 - That endpoint skips drafts and pre-releases. A "Include pre-releases" option uses
   `/releases?per_page=10` instead.
 - Headers: `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28` and

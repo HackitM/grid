@@ -32,7 +32,7 @@ final class GitHubReleaseTests: XCTestCase {
     let feed = UpdateFeed.grid
 
     func release(_ tag: String, prerelease: Bool = false, draft: Bool = false, host: String = "github.com",
-                 repo: String = "HackitM/grid", extraAssets: String = "") -> String {
+                 repo: String = "max-pasho/grid", extraAssets: String = "") -> String {
         let ver = SemanticVersion(tag)?.description ?? tag
         return """
         {"tag_name":"\(tag)","name":"GRID \(ver)","html_url":"https://\(host)/\(repo)/releases/tag/\(tag)",
@@ -69,18 +69,18 @@ final class GitHubReleaseTests: XCTestCase {
         let r = try XCTUnwrap(feed.newest(from: Data(release("v0.5.0", extraAssets: extra).utf8), includePrereleases: false))
         XCTAssertEqual(r.assets.count, 2)
         XCTAssertEqual(r.appAsset?.downloadURL.host, "github.com")
-        XCTAssertFalse(feed.isRepositoryURL(URL(string: "http://github.com/HackitM/grid/releases")!))
-        XCTAssertFalse(feed.isRepositoryURL(URL(string: "https://user@github.com/HackitM/grid/releases")!))
+        XCTAssertFalse(feed.isRepositoryURL(URL(string: "http://github.com/max-pasho/grid/releases")!))
+        XCTAssertFalse(feed.isRepositoryURL(URL(string: "https://user@github.com/max-pasho/grid/releases")!))
     }
 
     func testMissingAssetsAndMalformedJSON() throws {
-        let noAssets = #"{"tag_name":"v0.6.0","html_url":"https://github.com/HackitM/grid/releases/tag/v0.6.0","assets":[]}"#
+        let noAssets = #"{"tag_name":"v0.6.0","html_url":"https://github.com/max-pasho/grid/releases/tag/v0.6.0","assets":[]}"#
         let r = try XCTUnwrap(feed.newest(from: Data(noAssets.utf8), includePrereleases: false))
         XCTAssertNil(r.appAsset)
         XCTAssertNil(r.checksumAsset)
         XCTAssertThrowsError(try feed.newest(from: Data("{not json".utf8), includePrereleases: false))
         XCTAssertThrowsError(try feed.newest(from: Data(#"{"message":"API rate limit exceeded"}"#.utf8), includePrereleases: false))
-        let badTag = #"{"tag_name":"latest","html_url":"https://github.com/HackitM/grid/releases/tag/latest","assets":[]}"#
+        let badTag = #"{"tag_name":"latest","html_url":"https://github.com/max-pasho/grid/releases/tag/latest","assets":[]}"#
         XCTAssertNil(try feed.newest(from: Data(badTag.utf8), includePrereleases: false))
     }
 }
@@ -158,13 +158,13 @@ final class UpdatePolicyTests: XCTestCase {
 final class UpdateDownloadHostTests: XCTestCase {
     func testOnlyGitHubHTTPSHostsAreFollowed() {
         func ok(_ s: String) -> Bool { UpdateFeed.isTrustedDownloadHost(URL(string: s)!) }
-        XCTAssertTrue(ok("https://github.com/HackitM/grid/releases/download/v1.0.0/GRID-1.0.0-macOS.zip"))
+        XCTAssertTrue(ok("https://github.com/max-pasho/grid/releases/download/v1.0.0/GRID-1.0.0-macOS.zip"))
         XCTAssertTrue(ok("https://objects.githubusercontent.com/github-production-release-asset/1/abc?sig=x"))
         XCTAssertTrue(ok("https://release-assets.githubusercontent.com/github-production-release-asset/1/abc"))
         XCTAssertTrue(ok("https://GitHub.com/x"))
         XCTAssertTrue(ok("https://github.com:443/x"))
 
-        XCTAssertFalse(ok("http://github.com/HackitM/grid/releases/download/v1.0.0/a.zip"))       // not HTTPS
+        XCTAssertFalse(ok("http://github.com/max-pasho/grid/releases/download/v1.0.0/a.zip"))       // not HTTPS
         XCTAssertFalse(ok("https://github.com.evil.example/a.zip"))
         XCTAssertFalse(ok("https://evilgithub.com/a.zip"))
         XCTAssertFalse(ok("https://githubusercontent.com.evil.example/a.zip"))

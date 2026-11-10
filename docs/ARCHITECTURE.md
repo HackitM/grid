@@ -327,7 +327,7 @@ The authoritative plan is `docs/maps/IMPLEMENTATION.md`.
 - **Update checks** (`Updates/`, `GridCore/Updates/`): off until the user agrees; then at most one
   conditional request a day to `api.github.com` (`User-Agent: GRID`, no version, token or IDs),
   scheduled with `NSBackgroundActivityScheduler`. Release data is remote and untrusted: page and
-  download links must point at `https://github.com/HackitM/grid/…` or the release is ignored;
+  download links must point at `https://github.com/max-pasho/grid/…` or the release is ignored;
   release notes are drawn as plain GRID text (inline Markdown only, no images, links opened only
   on click and only for https). Nothing installs: "Download & Verify" asks first, saves the zip to
   Downloads with quarantine and where-from (like browser downloads), checks it against the
