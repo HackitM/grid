@@ -18,9 +18,7 @@ struct MapPanel: View {
                 Panel(index: "05", title: "Map", suffix: "geo") {
                     HStack(spacing: 2) {
                         IconButton(symbol: "location", label: "Locate (shows where you are; asks macOS once)", disabled: !m.enabled) { m.locate() }
-                        IconButton(symbol: m.camera.pitch > 1 ? "view.2d" : "view.3d", label: m.camera.pitch > 1 ? "Flat view" : "Tilted 3D view", disabled: !m.enabled) {
-                            m.camera.pitch = m.camera.pitch > 1 ? 0 : 40; m.refresh()
-                        }
+                        PitchButton(model: m)
                         IconButton(symbol: "location.north.line", label: "Reset north", disabled: !m.enabled) { m.handle(.key(.resetNorth)) }
                         IconButton(symbol: "rectangle.dashed", label: "Draw an area to download cameras (⇧-drag on the map)", active: m.drawingRegion, disabled: !m.enabled) {
                             m.drawingRegion.toggle()
@@ -70,6 +68,17 @@ struct MapPanel: View {
     }
 }
 
+/// Its own view, so a camera change re-renders this button rather than the whole page.
+private struct PitchButton: View {
+    let model: MapModel
+    var body: some View {
+        let tilted = model.camera.pitch > 1
+        IconButton(symbol: tilted ? "view.2d" : "view.3d", label: tilted ? "Flat view" : "Tilted 3D view", disabled: !model.enabled) {
+            model.camera.pitch = tilted ? 0 : 40; model.refresh()
+        }
+    }
+}
+
 /// The map and its overlays (readouts, attribution, notices, location explanation).
 private struct MapCanvas: View {
     @Environment(AppState.self) private var app
@@ -78,7 +87,7 @@ private struct MapCanvas: View {
 
     var body: some View {
         let fx = app.settings.effects
-        let frame = model.frame(palette: MapPalette.make(theme), glow: fx.glow)
+        let frame = model.frame(palette: MapPalette.cached(theme), glow: fx.glow)
         ZStack(alignment: .bottomLeading) {
             MapMetalView(frame: frame, onGesture: { model.handle($0) }, onViewport: { model.setViewport($0) },
                          interactive: app.confirmation == nil)

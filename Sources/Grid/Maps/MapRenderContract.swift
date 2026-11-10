@@ -15,6 +15,16 @@ struct MapPalette: Equatable {
     var accent, glow, line, lineStrong: SIMD4<Float>
     var warn, danger, ok: SIMD4<Float>
 
+    @MainActor private static var cache: (ThemeID, MapPalette)?
+
+    /// `make`, remembered per theme (the colour conversions are not free at 60 frames a second).
+    @MainActor static func cached(_ t: Theme) -> MapPalette {
+        if let (id, p) = cache, id == t.id { return p }
+        let p = make(t)
+        cache = (t.id, p)
+        return p
+    }
+
     @MainActor static func make(_ t: Theme) -> MapPalette {
         func c(_ color: Color) -> SIMD4<Float> {
             let ns = NSColor(color).usingColorSpace(.sRGB) ?? .black

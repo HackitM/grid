@@ -138,10 +138,19 @@ final class MapContainerView: NSView {
         if let old = frame_, old == f { return }
         let paletteChanged = frame_?.palette != f.palette
         frame_ = f
-        camera = f.camera
         if paletteChanged { labels.setPalette(f.palette) }
         renderer.setFrame(f)
+        // The model publishes gesture cameras at ≤ 30 Hz, so a frame can carry a camera a few
+        // events behind this view's own. Mid-gesture the view's camera wins (no snap-back);
+        // otherwise the model's is authoritative.
+        if let local = camera, Date().timeIntervalSince(lastGestureAt) < 0.25 {
+            renderer.setCamera(local)
+        } else {
+            camera = f.camera
+        }
     }
+
+    private var lastGestureAt = Date.distantPast
 
     private var viewportPoints: SIMD2<Double> { SIMD2(Double(max(1, bounds.width)), Double(max(1, bounds.height))) }
 
@@ -168,6 +177,9 @@ final class MapContainerView: NSView {
             case .click, .rectangle, .key:
                 break
             }
+            if case .pan = g { lastGestureAt = Date() }
+            if case .zoom = g { lastGestureAt = Date() }
+            if case .rotate = g { lastGestureAt = Date() }
             if cam != camera {
                 camera = cam
                 renderer.setCamera(cam)

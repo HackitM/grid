@@ -197,29 +197,49 @@ final class MapModel {
         refresh()
     }
 
+    /// Camera changed by gestures but not yet published to `camera`. The map view already shows
+    /// gestures at full frame rate from its own copy; the model (and SwiftUI) follows at ≤ 30 Hz.
+    @ObservationIgnored private var live: MapCamera?
+    @ObservationIgnored private var publishScheduled = false
+
+    private func setLive(_ c: MapCamera) {
+        live = c
+        guard !publishScheduled else { return }
+        publishScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 30) { [weak self] in
+            guard let self else { return }
+            self.publishScheduled = false
+            if let l = self.live { self.live = nil; self.camera = l; self.refresh() }
+        }
+    }
+
     func handle(_ g: MapGesture) {
-        let proj = MapProjection(camera: camera, viewport: viewport)
+        var cam = live ?? camera
+        let proj = MapProjection(camera: cam, viewport: viewport)
         let mid = viewport / 2
         switch g {
         case .pan(let delta):
             guard let a = proj.groundPoint(screen: mid), let b = proj.groundPoint(screen: mid - delta) else { return }
-            move(Mercator(x: camera.center.x + (b.x - a.x), y: camera.center.y + (b.y - a.y)))
+            cam.center = Self.wrap(Mercator(x: cam.center.x + (b.x - a.x), y: cam.center.y + (b.y - a.y)))
+            setLive(cam)
         case .zoom(let dz, let p):
             let before = proj.groundPoint(screen: p)
-            camera.zoom = min(MapCamera.maxZoom, max(MapCamera.minZoom, camera.zoom + dz))
-            if let before, let after = MapProjection(camera: camera, viewport: viewport).groundPoint(screen: p) {
-                move(Mercator(x: camera.center.x + before.x - after.x, y: camera.center.y + before.y - after.y))
-            } else { refresh() }
+            cam.zoom = min(MapCamera.maxZoom, max(MapCamera.minZoom, cam.zoom + dz))
+            if let before, let after = MapProjection(camera: cam, viewport: viewport).groundPoint(screen: p) {
+                cam.center = Self.wrap(Mercator(x: cam.center.x + before.x - after.x, y: cam.center.y + before.y - after.y))
+            }
+            setLive(cam)
         case .rotate(let db, let dp):
-            var b = (camera.bearing + db).truncatingRemainder(dividingBy: 360)
+            var b = (cam.bearing + db).truncatingRemainder(dividingBy: 360)
             if b < 0 { b += 360 }
-            camera.bearing = b
-            camera.pitch = min(MapCamera.maxPitch, max(0, camera.pitch + dp))
-            refresh()
+            cam.bearing = b
+            cam.pitch = min(MapCamera.maxPitch, max(0, cam.pitch + dp))
+            setLive(cam)
         case .click(let p):
-            click(p, proj)
+            click(p, MapProjection(camera: camera, viewport: viewport))
         case .rectangle(let a, let b, let ended):
-            guard drawingRegion, let ga = proj.groundPoint(screen: a), let gb = proj.groundPoint(screen: b) else { return }
+            let pr = MapProjection(camera: camera, viewport: viewport)
+            guard drawingRegion, let ga = pr.groundPoint(screen: a), let gb = pr.groundPoint(screen: b) else { return }
             draftRect = (Mercator(x: min(ga.x, gb.x), y: min(ga.y, gb.y)), Mercator(x: max(ga.x, gb.x), y: max(ga.y, gb.y)))
             frameRevision &+= 1
             if ended { finishRectangle() }
@@ -231,16 +251,15 @@ final class MapModel {
             case .down: handle(.pan(SIMD2(0, -120)))
             case .zoomIn: handle(.zoom(1, around: mid))
             case .zoomOut: handle(.zoom(-1, around: mid))
-            case .resetNorth: camera.bearing = 0; camera.pitch = 0; refresh()
+            case .resetNorth: live = nil; camera.bearing = 0; camera.pitch = 0; refresh()
             }
         }
     }
 
-    private func move(_ c: Mercator) {
-        var x = c.x.truncatingRemainder(dividingBy: 1)
-        if x < 0 { x += 1 }
-        camera.center = Mercator(x: x, y: min(1, max(0, c.y)))
-        refresh()
+    /// Clamped to the world (no antimeridian wrap in v1), exactly as the map view clamps its own
+    /// camera, so both stay identical during gestures.
+    static func wrap(_ c: Mercator) -> Mercator {
+        Mercator(x: min(1, max(0, c.x)), y: min(1, max(0, c.y)))
     }
 
     private func click(_ p: SIMD2<Double>, _ proj: MapProjection) {
@@ -268,6 +287,7 @@ final class MapModel {
     }
 
     func flyTo(_ p: LonLat, zoom: Double? = nil) {
+        live = nil
         camera.center = TileMath.project(p)
         if let zoom { camera.zoom = zoom }
         refresh()
