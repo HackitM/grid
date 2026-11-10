@@ -1,0 +1,109 @@
+/* grid-site-theme
+id: duckduckgo
+name: DuckDuckGo
+version: 1
+hosts: duckduckgo.com
+description: DuckDuckGo search on the GRID: remapped colour tokens, monospace results with accent rails, squared search box.
+*/
+/* DuckDuckGo's own tokens (old --theme-col-*, newer --ds-* and --sds-*). */
+html[data-grid-theme="duckduckgo"], html[data-grid-theme="duckduckgo"] body {
+  --ds-surface-backdrop: var(--grid-bg0) !important;
+  --ds-surface-canvas: var(--grid-bg1) !important;
+  --ds-surface-primary: var(--grid-bg2) !important;
+  --ds-surface-secondary: var(--grid-bg2) !important;
+  --ds-surface-tertiary: var(--grid-bg3) !important;
+  --ds-text-primary: var(--grid-text) !important;
+  --ds-text-secondary: var(--grid-dim) !important;
+  --ds-text-tertiary: var(--grid-mute) !important;
+  --ds-link-primary: var(--grid-accent) !important;
+  --ds-link-header: var(--grid-accent) !important;
+  --ds-link-primary-visited: var(--grid-dim) !important;
+  --ds-link-secondary: var(--grid-mute) !important;
+  --ds-accent-primary: var(--grid-accent) !important;
+  --ds-accent-primary-text-color: var(--grid-accent) !important;
+  --ds-accent-secondary: var(--grid-accent) !important;
+  --ds-container-primary-border-color: var(--grid-line) !important;
+  --ds-container-secondary-border-color: var(--grid-line) !important;
+  --ds-control-primary-border-color: var(--grid-line-strong) !important;
+  --theme-col-bg-page: var(--grid-bg1) !important;
+  --theme-col-bg-header: var(--grid-bg0) !important;
+  --theme-col-bg-ui: var(--grid-bg2) !important;
+  --theme-col-bg-card: var(--grid-bg2) !important;
+  --theme-col-bg-card-header: var(--grid-bg3) !important;
+  --theme-col-bg-search: var(--grid-bg2) !important;
+  --theme-col-metabar-bg: var(--grid-bg0) !important;
+  --theme-col-border-ui: var(--grid-line) !important;
+  --theme-col-bg-button-primary: var(--grid-accent) !important;
+  --theme-col-bg-button-primary-hover: var(--grid-accent) !important;
+  --theme-col-txt-button-primary: var(--grid-on-accent) !important;
+  --theme-col-about-link: var(--grid-accent) !important;
+  --sds-color-background-03: var(--grid-bg2) !important;
+  --sds-color-text-utility: var(--grid-dim) !important;
+  --result-item-bg: transparent !important;
+}
+html[data-grid-theme="duckduckgo"] body, html[data-grid-theme="duckduckgo"] .site-wrapper {
+  background:
+    linear-gradient(var(--grid-line) 1px, transparent 1px) 0 0 / 56px 56px,
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0 / 56px 56px,
+    var(--grid-bg0) !important;
+  background-attachment: fixed !important;
+  color: var(--grid-text) !important;
+}
+html[data-grid-theme="duckduckgo"] #header_wrapper, html[data-grid-theme="duckduckgo"] .header-wrap {
+  background: color-mix(in srgb, var(--grid-bg0) 90%, transparent) !important;
+  border-bottom: 1px solid var(--grid-line-strong) !important;
+  backdrop-filter: blur(10px);
+}
+html[data-grid-theme="duckduckgo"] #web_content_wrapper, html[data-grid-theme="duckduckgo"] #react-layout,
+html[data-grid-theme="duckduckgo"] main, html[data-grid-theme="duckduckgo"] #__next { background: transparent !important; }
+
+/* Search box. */
+html[data-grid-theme="duckduckgo"] form[role="search"], html[data-grid-theme="duckduckgo"] #search_form,
+html[data-grid-theme="duckduckgo"] #search_form_input, html[data-grid-theme="duckduckgo"] input[name="q"] {
+  border-radius: 2px !important;
+  font-family: var(--grid-mono) !important;
+}
+html[data-grid-theme="duckduckgo"] form[role="search"], html[data-grid-theme="duckduckgo"] #search_form {
+  background: var(--grid-bg2) !important;
+  border: 1px solid var(--grid-line-strong) !important;
+  box-shadow: 0 0 16px var(--grid-accent-soft) !important;
+}
+html[data-grid-theme="duckduckgo"] input[name="q"] { background: transparent !important; color: var(--grid-text) !important; }
+
+/* Results: a dim panel with an accent rail. */
+html[data-grid-theme="duckduckgo"] ol.react-results--main > li > article {
+  background: color-mix(in srgb, var(--grid-bg1) 92%, transparent) !important;
+  border: 1px solid var(--grid-line) !important;
+  border-left: 2px solid var(--grid-line-strong) !important;
+  border-radius: 2px !important;
+  padding: 12px 14px !important;
+  margin-bottom: 8px !important;
+  transition: border-color .15s, box-shadow .15s;
+}
+html[data-grid-theme="duckduckgo"] ol.react-results--main > li > article:hover {
+  border-color: var(--grid-line-strong) !important;
+  border-left-color: var(--grid-accent) !important;
+  box-shadow: 0 0 16px var(--grid-accent-soft) !important;
+}
+html[data-grid-theme="duckduckgo"] article h2, html[data-grid-theme="duckduckgo"] article h2 a,
+html[data-grid-theme="duckduckgo"] article h2 span {
+  font-family: var(--grid-mono) !important;
+  color: var(--grid-accent) !important;
+  letter-spacing: -0.01em;
+}
+html[data-grid-theme="duckduckgo"] article a[data-testid="result-extras-url-link"],
+html[data-grid-theme="duckduckgo"] article [data-testid="result-extras-url-link"] span {
+  font-family: var(--grid-mono) !important; color: var(--grid-mute) !important;
+}
+html[data-grid-theme="duckduckgo"] article [data-result="snippet"], html[data-grid-theme="duckduckgo"] article [data-result="snippet"] span {
+  color: var(--grid-dim) !important;
+}
+html[data-grid-theme="duckduckgo"] article [data-result="snippet"] b { color: var(--grid-text) !important; }
+html[data-grid-theme="duckduckgo"] article img { border-radius: 2px !important; }
+
+/* Tabs and filters. */
+html[data-grid-theme="duckduckgo"] nav a, html[data-grid-theme="duckduckgo"] [data-testid="duckbar"] a {
+  font-family: var(--grid-mono) !important; text-transform: uppercase; letter-spacing: 0.06em; font-size: 12px !important;
+}
+html[data-grid-theme="duckduckgo"] button, html[data-grid-theme="duckduckgo"] [role="button"] { border-radius: 2px !important; }
+@media (prefers-reduced-motion: reduce) { html[data-grid-theme="duckduckgo"] ol.react-results--main > li > article { transition: none; } }

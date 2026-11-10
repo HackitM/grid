@@ -30,7 +30,7 @@ final class MapNetwork: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     }
 
     static var userAgent: String {
-        "GRID/\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev") (+https://github.com/HackitM/grid)"
+        "GRID/\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev") (+https://github.com/max-pasho/grid)"
     }
 
     private lazy var session: URLSession = {

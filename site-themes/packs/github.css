@@ -1,0 +1,126 @@
+/* grid-site-theme
+id: github
+name: GitHub
+version: 3
+hosts: github.com, gist.github.com
+description: GitHub's colour and font variables mapped to GRID's palette, with a HUD treatment of the homepage.
+*/
+html[data-grid-theme="github"], html[data-grid-theme="github"] [data-color-mode] {
+  --bgColor-default: var(--grid-bg1) !important; --bgColor-muted: var(--grid-bg2) !important; --bgColor-inset: var(--grid-bg0) !important;
+  --bgColor-emphasis: var(--grid-bg2) !important; --bgColor-inverse: var(--grid-text) !important;
+  --bgColor-accent-emphasis: var(--grid-accent) !important; --bgColor-accent-muted: var(--grid-accent-soft) !important;
+  --bgColor-neutral-muted: var(--grid-accent-soft) !important; --bgColor-neutral-emphasis: var(--grid-mute) !important;
+  --fgColor-default: var(--grid-text) !important; --fgColor-muted: var(--grid-dim) !important; --fgColor-subtle: var(--grid-mute) !important;
+  --fgColor-accent: var(--grid-accent) !important; --fgColor-link: var(--grid-accent) !important; --fgColor-onEmphasis: var(--grid-on-accent) !important;
+  --borderColor-default: var(--grid-line) !important; --borderColor-muted: var(--grid-line) !important;
+  --borderColor-accent-emphasis: var(--grid-accent) !important; --borderColor-accent-muted: var(--grid-line-strong) !important;
+  --header-bgColor: var(--grid-bg0) !important; --header-borderColor-divider: var(--grid-line) !important;
+  --header-fgColor-default: var(--grid-text) !important; --header-fgColor-logo: var(--grid-accent) !important;
+  --underlineNav-borderColor-active: var(--grid-accent) !important;
+  --button-default-bgColor-rest: var(--grid-bg2) !important; --button-default-bgColor-hover: var(--grid-bg3) !important;
+  --button-default-borderColor-rest: var(--grid-line) !important; --button-default-fgColor-rest: var(--grid-text) !important;
+  --button-primary-bgColor-rest: var(--grid-accent) !important; --button-primary-bgColor-hover: var(--grid-accent) !important;
+  --button-primary-fgColor-rest: var(--grid-on-accent) !important; --button-primary-borderColor-rest: var(--grid-accent) !important;
+  --control-bgColor-rest: var(--grid-bg3) !important; --control-borderColor-rest: var(--grid-line) !important;
+  --overlay-bgColor: var(--grid-bg2) !important; --focus-outlineColor: var(--grid-accent) !important;
+  --fontStack-sansSerif: var(--grid-mono) !important; --fontStack-sansSerifDisplay: var(--grid-mono) !important;
+  --fontStack-system: var(--grid-mono) !important; --fontStack-monospace: var(--grid-mono) !important;
+  --color-canvas-default: var(--grid-bg1) !important; --color-canvas-subtle: var(--grid-bg2) !important; --color-canvas-inset: var(--grid-bg0) !important;
+  --color-fg-default: var(--grid-text) !important; --color-fg-muted: var(--grid-dim) !important; --color-accent-fg: var(--grid-accent) !important;
+  --color-border-default: var(--grid-line) !important; --color-border-muted: var(--grid-line) !important;
+  --color-btn-bg: var(--grid-bg2) !important; --color-btn-border: var(--grid-line) !important; --color-header-bg: var(--grid-bg0) !important;
+}
+html[data-grid-theme="github"] body { background: var(--grid-bg1) !important; }
+
+/* Marketing pages (the homepage, features, pricing) use Primer Brand's own tokens. */
+html[data-grid-theme="github"], html[data-grid-theme="github"] main, html[data-grid-theme="github"] [class*="Primer_Brand__"] {
+  --brand-color-canvas-default: var(--grid-bg1) !important; --brand-color-canvas-subtle: var(--grid-bg2) !important;
+  --brand-color-canvas-inset: var(--grid-bg0) !important; --brand-color-canvas-muted: var(--grid-bg2) !important;
+  --brand-color-canvas-overlay: var(--grid-bg2) !important; --brand-color-canvas-invert: var(--grid-text) !important;
+  --brand-color-text-default: var(--grid-text) !important; --brand-color-text-muted: var(--grid-dim) !important;
+  --brand-color-text-onEmphasis: var(--grid-on-accent) !important; --brand-color-text-inverse: var(--grid-bg0) !important;
+  --brand-color-border-default: var(--grid-line) !important; --brand-color-border-muted: var(--grid-line) !important;
+  --brand-color-accent-primary: var(--grid-accent) !important; --brand-color-accent-secondary: var(--grid-warn) !important;
+  --brand-color-focus: var(--grid-accent) !important; --brand-color-success-fg: var(--grid-accent) !important;
+  --brand-color-success-emphasis: var(--grid-accent) !important; --brand-color-success-subtle: var(--grid-accent-soft) !important;
+  --brand-button-primary-bgColor-rest: var(--grid-accent) !important; --brand-button-primary-bgColor-hover: var(--grid-accent) !important;
+  --brand-button-primary-bgColor-active: var(--grid-accent) !important; --brand-button-primary-fgColor-rest: var(--grid-on-accent) !important;
+  --brand-button-primary-borderColor-rest: var(--grid-accent) !important; --brand-button-primary-borderColor-hover: var(--grid-accent) !important;
+  --brand-button-secondary-bgColor-rest: transparent !important; --brand-button-secondary-bgColor-hover: var(--grid-accent-soft) !important;
+  --brand-button-secondary-bgColor-active: var(--grid-accent-soft) !important; --brand-button-secondary-fgColor-rest: var(--grid-text) !important;
+  --brand-button-secondary-borderColor-rest: var(--grid-line-strong) !important; --brand-button-secondary-borderColor-hover: var(--grid-accent) !important;
+  --brand-fontStack-sansSerif: var(--grid-mono) !important; --brand-fontStack-sansSerifAlt: var(--grid-mono) !important;
+  --brand-fontStack-system: var(--grid-mono) !important; --brand-fontStack-monospace: var(--grid-mono) !important;
+  --brand-borderRadius-small: 0 !important; --brand-borderRadius-medium: 0 !important; --brand-borderRadius-large: 0 !important;
+  --brand-borderRadius-xlarge: 0 !important;
+}
+/* Logged-out header and the homepage as a GRID floor. */
+html[data-grid-theme="github"] body.logged-out .HeaderMktg, html[data-grid-theme="github"] body.logged-out header.header-logged-out {
+  background: var(--grid-bg0) !important; border-bottom: 1px solid var(--grid-line-strong) !important; color: var(--grid-text) !important;
+  box-shadow: 0 1px 18px var(--grid-accent-soft) !important;
+}
+html[data-grid-theme="github"] body.logged-out .HeaderMenu-link, html[data-grid-theme="github"] body.logged-out .HeaderMenu-link-wrap,
+html[data-grid-theme="github"] body.logged-out header .HeaderMenu-item > button {
+  color: var(--grid-dim) !important; font-family: var(--grid-mono) !important; text-transform: uppercase; letter-spacing: 0.08em; font-size: 13px !important;
+}
+html[data-grid-theme="github"] body.logged-out .HeaderMenu-link:hover { color: var(--grid-accent) !important; }
+html[data-grid-theme="github"] body.logged-out header .octicon-mark-github { fill: var(--grid-accent) !important; filter: drop-shadow(0 0 6px var(--grid-accent)); }
+html[data-grid-theme="github"] body.logged-out header a[href*="signup"] {
+  background: transparent !important; color: var(--grid-accent) !important; border: 1px solid var(--grid-accent) !important; border-radius: 0 !important;
+}
+html[data-grid-theme="github"] body.logged-out main.font-mktg {
+  background-color: var(--grid-bg1) !important;
+  background-image: linear-gradient(color-mix(in srgb, var(--grid-accent) 7%, transparent) 1px, transparent 1px),
+                    linear-gradient(90deg, color-mix(in srgb, var(--grid-accent) 7%, transparent) 1px, transparent 1px) !important;
+  background-size: 48px 48px !important;
+}
+html[data-grid-theme="github"] body.logged-out main.font-mktg section { background-color: transparent !important; }
+html[data-grid-theme="github"] body.logged-out main h1[class*="Heading"], html[data-grid-theme="github"] body.logged-out main h2[class*="Heading"] {
+  font-family: var(--grid-mono) !important; color: var(--grid-text) !important; letter-spacing: -0.01em;
+  text-shadow: 0 0 22px color-mix(in srgb, var(--grid-accent) 45%, transparent);
+}
+html[data-grid-theme="github"] body.logged-out main [class*="Primer_Brand__Pillar"], html[data-grid-theme="github"] body.logged-out main [class*="Primer_Brand__Card"],
+html[data-grid-theme="github"] body.logged-out main [class*="Primer_Brand__River"] img, html[data-grid-theme="github"] body.logged-out main [class*="Primer_Brand__Testimonial"] {
+  border: 1px solid var(--grid-line) !important; border-radius: 0 !important; background: color-mix(in srgb, var(--grid-bg2) 85%, transparent) !important;
+}
+html[data-grid-theme="github"] body.logged-out main input[type="email"], html[data-grid-theme="github"] body.logged-out main input[type="text"] {
+  background: var(--grid-bg0) !important; color: var(--grid-text) !important; border-radius: 0 !important; font-family: var(--grid-mono) !important;
+}
+html[data-grid-theme="github"] body.logged-out main [class*="Primer_Brand__Button"] { border-radius: 0 !important; font-family: var(--grid-mono) !important; text-transform: uppercase; letter-spacing: 0.06em; }
+html[data-grid-theme="github"] body.logged-out main [class*="Primer_Brand__Button-module__Button--primary"] { box-shadow: 0 0 18px color-mix(in srgb, var(--grid-accent) 40%, transparent) !important; }
+html[data-grid-theme="github"] body.logged-out main [class*="Primer_Brand__Label"], html[data-grid-theme="github"] body.logged-out main [class*="Primer_Brand__Pill"] {
+  border-radius: 0 !important; border-color: var(--grid-line-strong) !important; background: var(--grid-bg0) !important; color: var(--grid-accent) !important;
+}
+html[data-grid-theme="github"] body.logged-out .footer, html[data-grid-theme="github"] body.logged-out footer { background: var(--grid-bg0) !important; color: var(--grid-dim) !important; border-top: 1px solid var(--grid-line) !important; }
+/* The homepage's React views paint their own white palette over the page. */
+html[data-grid-theme="github"] body.logged-out [class*="HomeView"], html[data-grid-theme="github"] body.logged-out [class*="HomeView--palette"] {
+  background: transparent !important; color: var(--grid-text) !important;
+}
+html[data-grid-theme="github"] body.logged-out [class*="HomeView"] [class*="__section"], html[data-grid-theme="github"] body.logged-out [class*="HomeView"] section {
+  background: transparent !important;
+}
+html[data-grid-theme="github"] body.logged-out [class*="HomeView"] p, html[data-grid-theme="github"] body.logged-out [class*="HomeView"] [class*="Text"] {
+  color: var(--grid-dim) !important;
+}
+/* The new React header: top-level menu buttons and links. */
+html[data-grid-theme="github"] body.logged-out header nav button, html[data-grid-theme="github"] body.logged-out header nav > ul > li > a,
+html[data-grid-theme="github"] body.logged-out header a[href="/login"], html[data-grid-theme="github"] body.logged-out header a[href^="/pricing"] {
+  color: var(--grid-dim) !important; font-family: var(--grid-mono) !important; text-transform: uppercase; letter-spacing: 0.08em;
+}
+html[data-grid-theme="github"] body.logged-out header nav button:hover, html[data-grid-theme="github"] body.logged-out header a[href="/login"]:hover { color: var(--grid-accent) !important; }
+html[data-grid-theme="github"] body.logged-out header nav svg { fill: currentColor !important; }
+/* Homepage strips and the header's menus. (Product screenshots built in HTML, ProductUI, stay light on purpose.) */
+html[data-grid-theme="github"] body.logged-out [class*="HeroPagination__"], html[data-grid-theme="github"] body.logged-out [class*="DataMarquee__"] {
+  background: var(--grid-bg0) !important; border-top: 1px solid var(--grid-line) !important; border-bottom: 1px solid var(--grid-line) !important;
+}
+html[data-grid-theme="github"] body.logged-out [class*="DataMarquee__"] * { background-color: transparent !important; border-color: var(--grid-line) !important; }
+html[data-grid-theme="github"] body.logged-out [class*="DataMarquee__"] [class*="Heading"], html[data-grid-theme="github"] body.logged-out [class*="DataMarquee__"] h3 {
+  color: var(--grid-accent) !important; text-shadow: 0 0 14px color-mix(in srgb, var(--grid-accent) 40%, transparent);
+}
+html[data-grid-theme="github"] body.logged-out header [class*="Dropdown__"], html[data-grid-theme="github"] body.logged-out [class*="Primer_Brand__CarouselPagination"] {
+  background: var(--grid-bg2) !important; border: 1px solid var(--grid-line-strong) !important; border-radius: 0 !important;
+  box-shadow: 0 0 24px color-mix(in srgb, var(--grid-accent) 15%, transparent) !important;
+}
+html[data-grid-theme="github"] body.logged-out header [class*="Dropdown__"] a, html[data-grid-theme="github"] body.logged-out header [class*="Dropdown__"] span,
+html[data-grid-theme="github"] body.logged-out header [class*="Dropdown__"] p { color: var(--grid-text) !important; }
+html[data-grid-theme="github"] body.logged-out header [class*="Dropdown__"] a:hover { color: var(--grid-accent) !important; }

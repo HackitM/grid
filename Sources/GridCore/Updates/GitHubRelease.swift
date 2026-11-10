@@ -56,7 +56,7 @@ public struct UpdateFeed: Sendable {
     public let owner: String
     public let repo: String
 
-    public static let grid = UpdateFeed(owner: "HackitM", repo: "grid")
+    public static let grid = UpdateFeed(owner: "max-pasho", repo: "grid")
 
     public init(owner: String, repo: String) { self.owner = owner; self.repo = repo }
 

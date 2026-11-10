@@ -8,9 +8,9 @@ A real terminal, a file browser, an app launcher, a widget deck and a web browse
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-0b0f12?logo=apple&logoColor=white)](#requirements)
 [![Swift 6](https://img.shields.io/badge/Swift-6-f05138?logo=swift&logoColor=white)](Package.swift)
 [![Apple silicon](https://img.shields.io/badge/Apple%20silicon-native-6be3ff)](#requirements)
-[![Release](https://img.shields.io/badge/release-v1.0.0-6be3ff)](https://github.com/HackitM/grid/releases/latest)
+[![Release](https://img.shields.io/badge/release-v1.0.1-6be3ff)](https://github.com/max-pasho/grid/releases/latest)
 
-[**Download**](https://github.com/HackitM/grid/releases/latest) · [Features](#features) · [Install](#install) · [Build from source](#build-from-source) · [Shortcuts](#keyboard-shortcuts) · [Docs](#documentation)
+[**Download**](https://github.com/max-pasho/grid/releases/latest) · [Features](#features) · [Install](#install) · [Build from source](#build-from-source) · [Shortcuts](#keyboard-shortcuts) · [Docs](#documentation)
 
 ![GRID with the Files tree, a split terminal and the widget deck](docs/screenshots/hero.png)
 
@@ -64,9 +64,9 @@ A real terminal, a file browser, an app launcher, a widget deck and a web browse
 
 - A full WebKit browser (Safari's engine) drawn in GRID's style: tabs, address bar with search, find, zoom and history.
 - **New tab page** with a slowly turning dot-matrix globe (drawn on the GPU, paused whenever it isn't in view), your recent pages and a status readout.
-- **Site themes** give GitHub, Hacker News, MDN, Wikipedia, Stack Overflow and Google Search GRID's colours and type. You can toggle them per site, and they follow your GRID theme.
+- **Site themes** give YouTube, GitHub, Reddit, Twitch, DuckDuckGo, Hacker News, MDN, Wikipedia, Stack Overflow and Google Search GRID's colours and type. YouTube gets the full HUD treatment: a grid floor, framed thumbnails with corner brackets and a scan sweep, and a framed player. You can toggle themes per site, and they follow your GRID theme. Themes are plain CSS packs, so they can **update without a new version of GRID** (Settings › Browser › Site themes, off by default), and you can write your own: **New Theme…** starts one in a folder GRID watches.
 - **Reader view** re-sets articles in GRID's monospaced layout.
-- **Ad blocking** uses uBlock Origin's default filter lists through Safari's built-in content blocker, with a one-click "off for this site".
+- **Ad blocking** uses uBlock Origin's default filter lists through Safari's built-in content blocker, with a one-click "off for this site". The lists' site-specific **scriptlet** rules, which are what remove YouTube's video ads, run as GRID's own built-in scripts. The lists only supply arguments, never code.
 - **Extensions** in Chrome / Safari WebExtension format (macOS 15.4+) install after a permission review. Their buttons only appear once one is installed.
 - Web pages can't reach your terminal, files or apps. Downloads always ask first.
 
@@ -127,11 +127,11 @@ The window opens with a short build-on (its frame traces itself in, then the pan
 
 ## Install
 
-1. Download **GRID-x.y.z-macOS.zip** from the [latest release](https://github.com/HackitM/grid/releases/latest), unzip it and move **GRID.app** to Applications.
+1. Download **GRID-x.y.z-macOS.zip** from the [latest release](https://github.com/max-pasho/grid/releases/latest), unzip it and move **GRID.app** to Applications.
 2. GRID isn't notarized by Apple yet, so macOS blocks the first launch. Open it once, then go to **System Settings › Privacy & Security** and click **Open Anyway**. You only need to do this once.
 3. Optional: verify the download against the `.sha256` file from the same release:
    ```bash
-   shasum -a 256 GRID-1.0.0-macOS.zip
+   shasum -a 256 GRID-1.0.1-macOS.zip
    ```
 
 **Updating.** GRID can check GitHub once a day for a new version (it asks first; change it in **Settings › Updates**, or use **GRID › Check for Updates…**). When one is out, **Download & Verify** saves the zip to Downloads, checks its SHA-256, unzips it and shows the new GRID.app in Finder. Quit GRID and replace the app in Applications. GRID never replaces itself.
@@ -186,7 +186,7 @@ Every shortcut except ⌘1–⌘9 can be changed in **Settings › Keyboard**: c
 You need Xcode 16.3 or later (GRID is developed with Xcode 27 and Swift 6.4). There are no other dependencies to install, because Swift Package Manager fetches them.
 
 ```bash
-git clone https://github.com/HackitM/grid.git
+git clone https://github.com/max-pasho/grid.git
 cd grid
 scripts/bundle.sh        # release build -> build/GRID.app
 open build/GRID.app
@@ -206,7 +206,7 @@ Use the `.app` bundle for real use rather than `swift run`, since macOS privacy 
 ## Privacy & security
 
 - **No accounts, telemetry, cloud services or AI features.** Settings, browsing data and history stay on your Mac. Terminal contents are never logged or stored.
-- **Network requests GRID makes on its own:** downloading the ad-blocking filter lists from their publishers (only while ad blocking is on), Safari's standard fraudulent-site check in the browser, Spotify cover art from Spotify's image server (only with a Now Playing widget following Spotify), and **checking GitHub for a new GRID version once a day (only if you turned it on; no identifiers are sent)**. Everything else happens because you asked for it.
+- **Network requests GRID makes on its own:** downloading the ad-blocking filter lists from their publishers (only while ad blocking is on), **checking GRID's GitHub repository (raw.githubusercontent.com) for updated site themes once a day (only if you turned it on; no identifiers are sent, and each theme is checked against the index's SHA-256 and GRID's CSS rules before use)**, Safari's standard fraudulent-site check in the browser, Spotify cover art from Spotify's image server (only with a Now Playing widget following Spotify), and **checking GitHub for a new GRID version once a day (only if you turned it on; no identifiers are sent)**. Everything else happens because you asked for it.
 - **Maps are opt-in.** The Map page downloads nothing until you click **Enable Map Data**. After that:
   - **Map tiles** for the area you view come from OpenFreeMap, which learns roughly where you're
     looking.
@@ -240,7 +240,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full security model.
 - Directory tracking follows the shell process, not `ssh` sessions or subshells.
 - Dragging several items into Finder carries only the first one (an AppKit / SwiftUI limitation). Drags into GRID's terminal carry them all.
 - The Git widget runs `git status`. Like any prompt that shows git status, a malicious repository's config could run commands, so point it only at repositories you trust.
-- Some ads that uBlock Origin removes with page scripts (for example on YouTube) can't be blocked by Safari's content blocker.
+- GRID runs uBlock's site-specific scriptlets, but not the generic ones, scriptlets whose arguments are code, or HTML filtering, so a few ads uBlock Origin removes still get through. YouTube changes its ad delivery often; blocking there is only as current as the filter lists.
 - App discovery scans the standard Applications folders, up to three levels deep.
 - Map camera data is only as complete and current as OpenStreetMap's volunteers have made it. The map has no search, traffic or routing yet.
 - Now Playing follows Apple Music and Spotify only. Audio in a browser or other apps can't be read: macOS 15.4 and later reserve the system-wide now-playing information for Apple's own apps.

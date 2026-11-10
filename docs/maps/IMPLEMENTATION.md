@@ -259,7 +259,7 @@ cache) and draws them in the render pass from a string atlas (see the addendum a
     needs re-consent when it changes.
   - Nothing is requested before **ENABLE MAP DATA** (tiles and catalogue).
   - Each region download is confirmed with its host, request count and estimated size.
-  - User-Agent: `GRID/<version> (+https://github.com/HackitM/grid)`.
+  - User-Agent: `GRID/<version> (+https://github.com/max-pasho/grid)`.
   - Ephemeral session, no cookies, `urlCache = nil`.
 - **Location:**
   - Requested only on ⌖ click.

@@ -29,6 +29,10 @@ if [[ "$MODE" == "qa" ]]; then
 fi
 [[ -f Resources/AppIcon.icns ]] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # License notices for bundled third-party code (MIT requires shipping the notice).
+# Built-in site themes (the same files GRID's in-app theme updates are published from).
+rm -rf "$APP/Contents/Resources/SiteThemes"
+mkdir -p "$APP/Contents/Resources/SiteThemes"
+cp site-themes/packs/*.css "$APP/Contents/Resources/SiteThemes/"
 mkdir -p "$APP/Contents/Resources/Licenses"
 cp .build/checkouts/SwiftTerm/LICENSE "$APP/Contents/Resources/Licenses/SwiftTerm-LICENSE.txt"
 cp ThirdParty/readability/LICENSE.md "$APP/Contents/Resources/Licenses/Readability-LICENSE.md"

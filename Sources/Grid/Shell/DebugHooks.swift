@@ -1,6 +1,7 @@
 #if DEBUG
 import AppKit
 import GridCore
+import WebKit
 
 /// DEBUG-ONLY automation hooks used by scripts/qa.
 ///
@@ -526,7 +527,8 @@ enum DebugHooks {
             case "block": if let t = b.active, let site = SiteKey.of(t.failedURL ?? t.url) { b.adBlocker.setBlocking((c["on"] as? Bool) ?? true, for: site); t.reload() }
             case "eval":
                 guard let t = b.active, t.isLoaded, let js = c["js"] as? String, let path else { break }
-                t.webView.evaluateJavaScript(js, in: nil, in: .defaultClient) { r in
+                let world: WKContentWorld = (c["world"] as? String) == "page" ? .page : .defaultClient
+                t.webView.evaluateJavaScript(js, in: nil, in: world) { r in
                     let out: String
                     switch r {
                     case .success(let v): out = (v as? String) ?? String(describing: v)

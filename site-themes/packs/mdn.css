@@ -1,0 +1,22 @@
+/* grid-site-theme
+id: mdn
+name: MDN Web Docs
+version: 1
+hosts: developer.mozilla.org
+description: MDN's colour variables mapped to GRID's palette.
+*/
+html[data-grid-theme="mdn"], html[data-grid-theme="mdn"] [data-theme] {
+  --color-background-page: var(--grid-bg1) !important; --color-background-primary: var(--grid-bg1) !important;
+  --color-background-secondary: var(--grid-bg2) !important;
+  --color-background-blue: var(--grid-accent-soft) !important; --color-background-purple: var(--grid-accent-soft) !important;
+  --color-background-green: var(--grid-accent-soft) !important; --color-background-orange: var(--grid-accent-soft) !important;
+  --color-background-yellow: var(--grid-accent-soft) !important; --color-background-red: var(--grid-accent-soft) !important;
+  --color-border-primary: var(--grid-line) !important; --color-border-secondary: var(--grid-line) !important; --color-border-active: var(--grid-accent) !important;
+  --color-text-primary: var(--grid-text) !important; --color-text-secondary: var(--grid-dim) !important;
+  --color-text-blue: var(--grid-accent) !important; --color-text-purple: var(--grid-accent) !important; --color-text-green: var(--grid-ok) !important;
+  --color-text-orange: var(--grid-warn) !important; --color-text-yellow: var(--grid-warn) !important; --color-text-red: var(--grid-danger) !important;
+  --color-link-normal: var(--grid-accent) !important; --color-link-visited: var(--grid-dim) !important;
+  --color-scrollbar-thumb: var(--grid-line-strong) !important;
+  --font-family-text: var(--grid-mono) !important; --font-family-code: var(--grid-mono) !important;
+}
+html[data-grid-theme="mdn"], html[data-grid-theme="mdn"] body { background: var(--grid-bg1) !important; }

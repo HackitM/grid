@@ -110,7 +110,7 @@ public enum SiteKey {
     }
 }
 
-/// Built-in site themes: which theme pack applies to a host.
+/// Which site a theme pack covers (see `SiteThemePack`).
 public struct SiteThemeEntry: Equatable, Sendable {
     public let id: String
     public let name: String
@@ -144,21 +144,8 @@ public struct SiteThemeEntry: Equatable, Sendable {
 }
 
 public enum SiteThemeCatalog {
-    public static let entries: [SiteThemeEntry] = [
-        SiteThemeEntry(id: "github", name: "GitHub", hosts: ["github.com", "gist.github.com"]),
-        SiteThemeEntry(id: "hackernews", name: "Hacker News", hosts: ["news.ycombinator.com"]),
-        SiteThemeEntry(id: "mdn", name: "MDN Web Docs", hosts: ["developer.mozilla.org"]),
-        SiteThemeEntry(id: "wikipedia", name: "Wikipedia", hosts: ["*.wikipedia.org"]),
-        SiteThemeEntry(id: "stackoverflow", name: "Stack Overflow", hosts: ["stackoverflow.com", "*.stackexchange.com", "superuser.com", "serverfault.com", "askubuntu.com"]),
-        // Search only: Maps, Gmail, Docs and the rest live on the same or sibling hosts.
-        SiteThemeEntry(id: "google", name: "Google Search",
-                       hosts: ["google.com", "google.co.uk", "google.ca", "google.com.au", "google.de", "google.fr", "google.es",
-                               "google.it", "google.nl", "google.co.in", "google.co.jp", "google.com.br", "google.com.mx", "google.ie",
-                               "google.co.nz", "google.ch", "google.at", "google.be", "google.se", "google.no", "google.dk", "google.pl"],
-                       paths: ["/", "/search", "/webhp"]),
-    ]
-
-    public static func entry(for url: URL?) -> SiteThemeEntry? {
+    /// The first entry whose hosts (and paths, if any) cover `url`.
+    public static func entry(for url: URL?, in entries: [SiteThemeEntry]) -> SiteThemeEntry? {
         guard let url else { return nil }
         return entries.first { $0.matches(url) }
     }

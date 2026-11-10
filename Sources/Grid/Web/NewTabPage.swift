@@ -130,7 +130,7 @@ private struct StatusColumn: View {
             }
             readout("tabs", "\(b.tabs.count)")
             readout("shield", shield(b.adBlocker))
-            readout("themes", "\(SiteThemeCatalog.entries.filter { b.themes.isEnabled($0.id) }.count) of \(SiteThemeCatalog.entries.count) sites")
+            readout("themes", "\(b.themes.entries.filter { b.themes.isEnabled($0.id) }.count) of \(b.themes.entries.count) sites")
             readout("search", b.settings.searchEngine.label)
             Text("Pages can't reach your terminal, files or apps.")
                 .font(GridFont.small).foregroundStyle(theme.textMute)

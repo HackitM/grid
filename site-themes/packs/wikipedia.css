@@ -1,0 +1,38 @@
+/* grid-site-theme
+id: wikipedia
+name: Wikipedia
+version: 1
+hosts: *.wikipedia.org
+description: Wikipedia's colour variables mapped to GRID's palette.
+*/
+html[data-grid-theme="wikipedia"], html[data-grid-theme="wikipedia"] .skin-invert, html[data-grid-theme="wikipedia"] .notheme,
+html[data-grid-theme="wikipedia"] body {
+  --background-color-base: var(--grid-bg1) !important; --background-color-base-fixed: var(--grid-bg1) !important;
+  --background-color-neutral: var(--grid-bg2) !important; --background-color-neutral-subtle: var(--grid-bg2) !important;
+  --background-color-interactive: var(--grid-bg2) !important; --background-color-interactive--hover: var(--grid-bg3) !important;
+  --background-color-interactive--active: var(--grid-bg3) !important; --background-color-interactive-subtle: var(--grid-bg2) !important;
+  --background-color-interactive-subtle--hover: var(--grid-bg3) !important; --background-color-notice-subtle: var(--grid-bg2) !important;
+  --background-color-progressive: var(--grid-accent) !important; --background-color-progressive--hover: var(--grid-accent) !important;
+  --background-color-progressive-subtle: var(--grid-accent-soft) !important; --background-color-progressive-subtle--hover: var(--grid-accent-soft) !important;
+  --background-color-inverted: var(--grid-text) !important; --background-color-backdrop-light: rgba(0,0,0,0.6) !important;
+  --color-base: var(--grid-text) !important; --color-base-fixed: var(--grid-text) !important; --color-emphasized: var(--grid-text) !important;
+  --color-subtle: var(--grid-dim) !important; --color-placeholder: var(--grid-mute) !important; --color-inverted: var(--grid-on-accent) !important;
+  --color-progressive: var(--grid-accent) !important; --color-progressive--hover: var(--grid-accent) !important;
+  --color-progressive--active: var(--grid-accent) !important; --color-visited: var(--grid-dim) !important; --color-visited--hover: var(--grid-text) !important;
+  --border-color-base: var(--grid-line) !important; --border-color-subtle: var(--grid-line) !important; --border-color-muted: var(--grid-line) !important;
+  --border-color-emphasized: var(--grid-line-strong) !important; --border-color-interactive: var(--grid-line-strong) !important;
+  --border-color-progressive: var(--grid-accent) !important; --accent-color-base: var(--grid-accent) !important;
+  --box-shadow-color-base: var(--grid-line) !important; --outline-color-progressive--focus: var(--grid-accent) !important;
+}
+html[data-grid-theme="wikipedia"] body, html[data-grid-theme="wikipedia"] .mw-page-container { background: var(--grid-bg1) !important; }
+html[data-grid-theme="wikipedia"] body, html[data-grid-theme="wikipedia"] .vector-body, html[data-grid-theme="wikipedia"] .mw-body h1,
+html[data-grid-theme="wikipedia"] .mw-body-content h2, html[data-grid-theme="wikipedia"] .mw-body-content h3 { font-family: var(--grid-mono) !important; }
+html[data-grid-theme="wikipedia"] .mw-logo-wordmark, html[data-grid-theme="wikipedia"] .mw-logo-tagline, html[data-grid-theme="wikipedia"] .mw-logo-icon { filter: invert(1) grayscale(1) brightness(1.2); }
+html[data-grid-theme="wikipedia"] .cdx-text-input__input, html[data-grid-theme="wikipedia"] .cdx-search-input__end-button,
+html[data-grid-theme="wikipedia"] .cdx-button, html[data-grid-theme="wikipedia"] .cdx-menu {
+  background: var(--grid-bg3) !important; color: var(--grid-text) !important; border-color: var(--grid-line) !important; }
+html[data-grid-theme="wikipedia"] .infobox, html[data-grid-theme="wikipedia"] .wikitable, html[data-grid-theme="wikipedia"] .navbox {
+  background: var(--grid-bg2) !important; color: var(--grid-text) !important; border-color: var(--grid-line) !important; }
+html[data-grid-theme="wikipedia"] .wikitable > tr > th, html[data-grid-theme="wikipedia"] .wikitable > * > tr > th,
+html[data-grid-theme="wikipedia"] .navbox-title, html[data-grid-theme="wikipedia"] .navbox-group, html[data-grid-theme="wikipedia"] .infobox-above,
+html[data-grid-theme="wikipedia"] .infobox-header { background: var(--grid-bg3) !important; color: var(--grid-text) !important; }

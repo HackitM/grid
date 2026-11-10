@@ -1,0 +1,34 @@
+/* grid-site-theme
+id: stackoverflow
+name: Stack Overflow
+version: 1
+hosts: stackoverflow.com, *.stackexchange.com, superuser.com, serverfault.com, askubuntu.com
+description: Stack Exchange colour variables mapped to GRID's palette.
+*/
+html[data-grid-theme="stackoverflow"] body, html[data-grid-theme="stackoverflow"] body * {
+  --white: var(--grid-bg1) !important; --black: var(--grid-text) !important;
+  --black-025: var(--grid-bg1) !important; --black-050: var(--grid-bg1) !important; --black-075: var(--grid-bg2) !important;
+  --black-100: var(--grid-bg2) !important; --black-150: var(--grid-bg2) !important; --black-200: var(--grid-bg3) !important;
+  --black-225: var(--grid-line) !important; --black-250: var(--grid-line) !important; --black-300: var(--grid-line-strong) !important;
+  --black-350: var(--grid-mute) !important; --black-400: var(--grid-mute) !important; --black-500: var(--grid-dim) !important;
+  --black-600: var(--grid-text) !important; --black-700: var(--grid-text) !important; --black-800: var(--grid-text) !important; --black-900: var(--grid-text) !important;
+  --blue-050: var(--grid-accent-soft) !important; --blue-100: var(--grid-accent-soft) !important; --blue-200: var(--grid-line-strong) !important;
+  --blue-300: var(--grid-accent) !important; --blue-400: var(--grid-accent) !important; --blue-500: var(--grid-accent) !important;
+  --blue-600: var(--grid-accent) !important; --blue-700: var(--grid-accent) !important;
+  --powder-050: var(--grid-accent-soft) !important; --powder-100: var(--grid-accent-soft) !important; --powder-200: var(--grid-accent-soft) !important;
+  --powder-300: var(--grid-line-strong) !important; --powder-700: var(--grid-accent) !important; --powder-800: var(--grid-accent) !important;
+  --orange-400: var(--grid-accent) !important; --orange-500: var(--grid-accent) !important;
+  --yellow-050: var(--grid-bg2) !important; --yellow-100: var(--grid-bg2) !important; --yellow-200: var(--grid-line) !important;
+  --yellow-300: var(--grid-line-strong) !important; --purple-050: var(--grid-bg2) !important; --purple-100: var(--grid-bg2) !important;
+  --theme-secondary-050: var(--grid-bg2) !important; --theme-secondary-100: var(--grid-bg2) !important;
+  --theme-primary: var(--grid-accent) !important; --theme-primary-custom: var(--grid-accent) !important;
+  --theme-background-color: var(--grid-bg1) !important; --theme-content-background-color: var(--grid-bg1) !important;
+  --theme-content-border-color: var(--grid-line) !important; --theme-link-color: var(--grid-accent) !important;
+  --theme-link-color-hover: var(--grid-accent) !important; --theme-link-color-visited: var(--grid-dim) !important;
+  --theme-body-font-color: var(--grid-text) !important; --theme-body-font-family: var(--grid-mono) !important;
+  --fc-light: var(--grid-mute) !important; --fc-medium: var(--grid-dim) !important; --fc-dark: var(--grid-text) !important;
+  --bc-lightest: var(--grid-line) !important; --bc-light: var(--grid-line) !important; --bc-medium: var(--grid-line) !important; --bc-darker: var(--grid-line-strong) !important;
+  --highlight-bg: var(--grid-bg3) !important; --highlight-color: var(--grid-text) !important;
+  --ff-sans: var(--grid-mono) !important; --ff-mono: var(--grid-mono) !important;
+}
+html[data-grid-theme="stackoverflow"], html[data-grid-theme="stackoverflow"] body { background: var(--grid-bg1) !important; color: var(--grid-text) !important; }
