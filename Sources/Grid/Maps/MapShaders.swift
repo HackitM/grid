@@ -38,6 +38,15 @@ struct MapFrameScalars {
     /// 1 = draw building roofs at ground level (footprints), walls collapse to nothing.
     var flat: Float = 1
     var glowOn: Float = 1
+    // Globe mode (GlobeProjection): sphere frame relative to lon0 → clip; clip → rotated unit
+    // sphere (for the per-pixel ray); rotated frame → sphere frame (graticule).
+    var globeVP: simd_float4x4 = matrix_identity_float4x4
+    var invGlobeVP: simd_float4x4 = matrix_identity_float4x4
+    var invRot: simd_float4x4 = matrix_identity_float4x4
+    /// x on (0/1), y lon0 (rad), z horizon (rotated z above which a point faces the camera), w lat0 (rad).
+    var globe: SIMD4<Float> = .zero
+    /// Third row of the rotation (sphere frame → rotated z), for the facing test in the vertex shader.
+    var rotZRow: SIMD4<Float> = .zero
 }
 
 /// Per-tile uniforms (`TileU`): tile-local 0…1 → clip, plus the height scale and tile size.
@@ -48,6 +57,8 @@ struct MapTileUniforms {
     /// Screen pixels per tile (dash lengths from `along`).
     var tilePx: Float
     var pad: SIMD2<Float> = .zero
+    /// Globe mode: the tile's north-west corner and size in world (Mercator) units.
+    var merc: SIMD4<Float> = .zero
 }
 
 /// One instanced overlay quad (`OverlayInst`). Pixels, top-left origin.
@@ -74,8 +85,8 @@ enum MapOverlayKind: UInt32 {
 enum MapUniformLayout {
     /// The Swift structs must match the MSL structs byte for byte (checked once in DEBUG).
     static func checkLayouts() {
-        assert(MemoryLayout<MapFrameScalars>.size == 256 && MemoryLayout<MapFrameScalars>.stride == 256, "FrameU scalars")
-        assert(MemoryLayout<MapTileUniforms>.stride == 80, "TileU")
+        assert(MemoryLayout<MapFrameScalars>.size == 480 && MemoryLayout<MapFrameScalars>.stride == 480, "FrameU scalars")
+        assert(MemoryLayout<MapTileUniforms>.stride == 96, "TileU")
         assert(MemoryLayout<MapOverlayInstance>.stride == 64, "OverlayInst")
         assert(MemoryLayout<LineVertex>.stride == 32 && MemoryLayout<ExtrusionVertex>.stride == 16, "vertex structs")
     }
@@ -103,9 +114,11 @@ struct FrameU {
     float zoom; float revealY; float gridMinorPx; float gridMajorPx;
     float2 phaseMinor; float2 phaseMajor;
     float gridFadeStart; float gridFadeEnd; float flat; float glowOn;
+    float4x4 globeVP; float4x4 invGlobeVP; float4x4 invRot;
+    float4 globe; float4 rotZRow;
 };
 
-struct TileU { float4x4 mvp; float wupm; float tilePx; float2 pad; };
+struct TileU { float4x4 mvp; float wupm; float tilePx; float2 pad; float4 merc; };
 struct DrawU { uint cls; };
 
 struct LineVertex { float2 pos; float2 normal; float side; float along; ushort cls; ushort flags; };
@@ -114,6 +127,58 @@ struct OverlayInst { float2 center; float2 size; float4 color; float4 p; uint ki
 
 static float4 premul(float4 c, float a) { float k = c.a * a; return float4(c.rgb * k, k); }
 static float4 over(float4 dst, float4 src) { return src + dst * (1.0 - src.a); }
+
+// Tile-local position → clip: the flat matrix, or (globe mode) onto the sphere. `facing` > 0
+// when the point is on the side of the globe facing the camera (always 1 when flat).
+static float4 tileClip(float2 tp, constant TileU& t, constant FrameU& u, thread float& facing) {
+    facing = 1.0;
+    if (u.globe.x < 0.5) return t.mvp * float4(tp, 0.0, 1.0);
+    float2 m = t.merc.xy + tp * t.merc.zw;
+    float lon = m.x * 6.28318530718 - 3.14159265359 - u.globe.y;
+    float lat = atan(sinh(3.14159265359 * (1.0 - 2.0 * m.y)));
+    float3 v = float3(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
+    facing = dot(u.rotZRow.xyz, v) - u.globe.z;
+    return u.globeVP * float4(v, 1.0);
+}
+
+// Globe body for a pixel: dark sphere, latitude/longitude graticule, luminous limb and a halo.
+static float4 globeBody(float2 ndc, constant FrameU& u) {
+    float4 a = u.invGlobeVP * float4(ndc, 0.0, 1.0);
+    float4 b = u.invGlobeVP * float4(ndc, 1.0, 1.0);
+    float3 p0 = a.xyz / a.w, p1 = b.xyz / b.w;
+    float3 d = normalize(p1 - p0);
+    float bq = dot(p0, d), cq = dot(p0, p0) - 1.0;
+    float disc = bq * bq - cq;
+    float4 col = float4(u.bg0.rgb, 1.0);
+    // Closest approach of the ray to the centre: > 1 outside the globe (halo falloff).
+    float3 closest = p0 - d * bq;
+    float r = length(closest);
+    if (disc < 0.0) {
+        float halo = exp(-(r - 1.0) * 14.0);
+        return over(col, premul(u.glow, 0.32 * halo));
+    }
+    float t = -bq - sqrt(disc);
+    float3 h = p0 + d * t;                                   // rotated frame, +z toward the camera
+    float rim = pow(clamp(1.0 - h.z, 0.0, 1.0), 3.0);
+    float3 body = mix(u.bg3.rgb * 0.85, u.bg0.rgb, 0.35);
+    col = float4(body, 1.0);
+    // Graticule: every 15°, majors every 30°, the equator brightest.
+    float3 s = (u.invRot * float4(h, 0.0)).xyz;
+    float lat = asin(clamp(s.y, -1.0, 1.0)) * 57.2957795;
+    float lon = (atan2(s.x, s.z) + u.globe.y) * 57.2957795;
+    float fwLat = max(fwidth(lat), 1e-4), fwLon = max(fwidth(lon), 1e-4);
+    float dLat = abs(fract(lat / 15.0 + 0.5) - 0.5) * 15.0;
+    float dLon = abs(fract(lon / 15.0 + 0.5) - 0.5) * 15.0;
+    float minor = max(1.0 - smoothstep(0.0, 1.2 * fwLat, dLat), (1.0 - smoothstep(0.0, 1.2 * fwLon, dLon)) * step(abs(lat), 80.0));
+    float dLat30 = abs(fract(lat / 30.0 + 0.5) - 0.5) * 30.0, dLon30 = abs(fract(lon / 30.0 + 0.5) - 0.5) * 30.0;
+    float major = max(1.0 - smoothstep(0.0, 1.6 * fwLat, dLat30), (1.0 - smoothstep(0.0, 1.6 * fwLon, dLon30)) * step(abs(lat), 80.0));
+    float eq = 1.0 - smoothstep(0.0, 2.0 * fwLat, abs(lat));
+    float limbFade = smoothstep(0.0, 0.25, h.z);             // lines thin out toward the limb
+    col = over(col, premul(u.line, (0.35 * minor + 0.55 * major) * limbFade));
+    col = over(col, premul(u.accent, 0.35 * eq * limbFade));
+    col = over(col, premul(u.accent, 0.55 * rim));
+    return col;
+}
 
 // ---------------------------------------------------------------- floor
 
@@ -163,7 +228,7 @@ fragment float4 floor_fragment(FloorOut in [[stage_in]], constant FrameU& u [[bu
         }
         return col;
     }
-    float4 col = float4(u.bg0.rgb, 1.0);
+    float4 col = u.globe.x > 0.5 ? globeBody(in.ndc, u) : float4(u.bg0.rgb, 1.0);
     if (u.revealY < u.viewportPx.y) {
         float dd = abs(in.pos.y - u.revealY);
         col = over(col, premul(u.accent, 0.85 * (1.0 - smoothstep(0.0, 2.0 * u.scale, dd))));
@@ -192,6 +257,7 @@ fragment float4 stencil_fragment(FillOut in [[stage_in]]) { return float4(0.0); 
 
 struct LineOut {
     float4 pos [[position]];
+    float facing;            // globe: < 0 on the far side
     float d;                 // signed distance from the centre line, px (± (half width + glow))
     float along;             // px along the line
     uint cls [[flat]];
@@ -203,11 +269,14 @@ vertex LineOut line_vertex(uint vid [[vertex_id]], const device LineVertex* v [[
     LineVertex a = v[vid];
     uint cls = min(uint(a.cls), uint(CLASSES - 1));
     float4 style = u.lineStyle[cls];
-    float4 c0 = t.mvp * float4(a.pos, 0.0, 1.0);
+    float facing;
+    float4 c0 = tileClip(a.pos, t, u, facing);
     float ext = style.x + style.y;
     LineOut o;
+    o.facing = facing;
     if (c0.w > 1e-4 && ext > 0.0) {
-        float4 c1 = t.mvp * float4(a.pos + a.normal * 1e-3, 0.0, 1.0);
+        float f1;
+        float4 c1 = tileClip(a.pos + a.normal * 1e-3, t, u, f1);
         if (c1.w > 1e-4) {
             float2 dir = (c1.xy / c1.w - c0.xy / c0.w) * u.viewportPx * 0.5;   // px
             float len = length(dir);
@@ -226,7 +295,7 @@ vertex LineOut line_vertex(uint vid [[vertex_id]], const device LineVertex* v [[
 }
 
 fragment float4 line_fragment(LineOut in [[stage_in]], constant FrameU& u [[buffer(0)]]) {
-    if (in.pos.y > u.revealY) discard_fragment();
+    if (in.pos.y > u.revealY || in.facing < 0.0) discard_fragment();
     float4 st = u.lineStyle[in.cls];
     float4 col = u.lineColor[in.cls];
     float hw = st.x, gl = st.y;

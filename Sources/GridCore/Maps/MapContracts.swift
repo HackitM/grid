@@ -59,8 +59,11 @@ public struct BBox: Hashable, Sendable, Codable {
 /// north (0 = north up), `pitch` is degrees from straight down (0…MapCamera.maxPitch).
 public struct MapCamera: Equatable, Sendable, Codable {
     public static let maxPitch: Double = 45
-    public static let minZoom: Double = 1
+    public static let minZoom: Double = 0.6
     public static let maxZoom: Double = 18
+    /// Below this zoom the map is drawn as a globe (GlobeProjection) instead of a flat map.
+    public static let globeZoom: Double = 3.5
+    public var isGlobe: Bool { zoom < Self.globeZoom }
     public var center: Mercator
     public var zoom: Double
     public var bearing: Double

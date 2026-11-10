@@ -9,7 +9,25 @@ public enum TileGeometryBuilder {
 
     /// The water's edge as `.water` lines, skipping segments that run along or outside the tile
     /// border (those are tile seams or buffer, not shoreline).
-    static func appendShoreline(_ rings: [[SIMD2<Float>]], vertices: inout [LineVertex], indices: inout [UInt32]) {
+    /// Splits segments longer than `maxSegment` (tile units), so low-zoom lines follow the globe's
+    /// curvature instead of cutting chords through it (the 49th-parallel border is one segment).
+    static func densify(_ pts: [SIMD2<Float>], maxSegment: Float?, closed: Bool = false) -> [SIMD2<Float>] {
+        guard let maxSegment, maxSegment > 0, pts.count >= 2 else { return pts }
+        var out: [SIMD2<Float>] = [pts[0]]
+        out.reserveCapacity(pts.count * 2)
+        let n = closed ? pts.count : pts.count - 1
+        for i in 0..<n {
+            let a = pts[i], b = pts[(i + 1) % pts.count]
+            let len = simd_length(b - a)
+            let steps = min(256, Int((len / maxSegment).rounded(.up)))
+            if steps > 1 { for k in 1..<steps { out.append(a + (b - a) * (Float(k) / Float(steps))) } }
+            if i + 1 < pts.count || !closed { out.append(b) }
+        }
+        if closed, out.count > 1, out.last == out.first { out.removeLast() }
+        return out
+    }
+
+    static func appendShoreline(_ rings: [[SIMD2<Float>]], maxSegment: Float? = nil, vertices: inout [LineVertex], indices: inout [UInt32]) {
         let lo: Float = 0.0005, hi: Float = 0.9995
         func onEdge(_ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Bool {
             (a.x <= lo && b.x <= lo) || (a.x >= hi && b.x >= hi) || (a.y <= lo && b.y <= lo) || (a.y >= hi && b.y >= hi)
@@ -18,7 +36,7 @@ public enum TileGeometryBuilder {
             let n = ring.count
             // A ring that never touches the border (a lake or island inside the tile) is one closed line.
             guard let firstEdge = (0..<n).first(where: { onEdge(ring[$0], ring[($0 + 1) % n]) }) else {
-                LineTessellator.append(ring, closed: true, cls: .water, flags: 0, vertices: &vertices, indices: &indices)
+                LineTessellator.append(densify(ring, maxSegment: maxSegment, closed: true), closed: true, cls: .water, flags: 0, vertices: &vertices, indices: &indices)
                 continue
             }
             // Otherwise start just after a border segment, so no run is split at an arbitrary vertex.
@@ -31,7 +49,7 @@ public enum TileGeometryBuilder {
                     if run.isEmpty { run.append(a) }
                     run.append(b)
                 } else if run.count >= 2 {
-                    LineTessellator.append(run, closed: false, cls: .water, flags: 0, vertices: &vertices, indices: &indices)
+                    LineTessellator.append(densify(run, maxSegment: maxSegment), closed: false, cls: .water, flags: 0, vertices: &vertices, indices: &indices)
                     run = []
                 } else {
                     run = []
@@ -41,6 +59,8 @@ public enum TileGeometryBuilder {
     }
 
     public static func build(_ tile: MVTTile, id: TileID) -> TileGeometry {
+        // Tiles shown on the globe (z ≤ 4) get densified lines: ≤ 1/64 tile per segment.
+        let globeSegment: Float? = id.z <= 4 ? 1.0 / 64 : nil
         let maxVerts = MVTLimits().maxVerticesPerFeature
         var fillPos = [[SIMD2<Float>]](repeating: [], count: RenderClass.allCases.count)
         var fillIdx = [[UInt32]](repeating: [], count: RenderClass.allCases.count)
@@ -77,14 +97,14 @@ public enum TileGeometryBuilder {
                             for r in rings { fillPos[c].append(contentsOf: r) }
                             fillIdx[c].reserveCapacity(fillIdx[c].count + tris.count)
                             for t in tris { fillIdx[c].append(base + t) }
-                            if cls == .water { appendShoreline(rings, vertices: &lineVerts[c], indices: &lineIdx[c]) }
+                            if cls == .water { appendShoreline(rings, maxSegment: globeSegment, vertices: &lineVerts[c], indices: &lineIdx[c]) }
                         }
                     }
                 case .lines(let lines):
                     if let (cls, flags) = OpenMapTilesSchema.lineClass(layer: layer.name, tags: f.tags) {
                         let c = Int(cls.rawValue)
                         for l in lines where l.count >= 2 && l.count <= maxVerts {
-                            LineTessellator.append(l.map(norm), closed: false, cls: cls, flags: flags,
+                            LineTessellator.append(densify(l.map(norm), maxSegment: globeSegment), closed: false, cls: cls, flags: flags,
                                                    vertices: &lineVerts[c], indices: &lineIdx[c])
                         }
                     }

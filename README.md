@@ -74,7 +74,8 @@ A real terminal, a file browser, an app launcher, a widget deck and a web browse
 - **A map drawn in GRID's own style** (⌥⌘5). GRID's GPU renderer draws:
   - glowing roads graded by class
   - a faint grid floor over dark land and water
-  - wireframe buildings when you tilt it (two-finger rotate or ⌥-drag)
+  - wireframe buildings when you tilt it (⌥ + two-finger swipe up/down, or ⌥-drag)
+  - a rotatable 3D globe when you zoom out far (drag to spin it)
   - labels in GRID's type
 
   It follows your theme and only draws when something changes.

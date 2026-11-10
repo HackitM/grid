@@ -47,7 +47,7 @@ final class MapLabelPlanner {
 
     /// Places labels for the tiles on screen. Deepest tiles win duplicates (same text and kind).
     /// Cluster counts (left-anchored at their block) are placed first so names never cover them.
-    func place(tiles: [TileGeometry], projection proj: MapProjection, counts: [MapCountLabel] = []) -> (labels: [PlacedMapLabel], counts: [MapCountLabel]) {
+    func place(tiles: [TileGeometry], projection proj: any MapScreenProjection, counts: [MapCountLabel] = []) -> (labels: [PlacedMapLabel], counts: [MapCountLabel]) {
         let zoom = Float(proj.camera.zoom)
         var candidates: [LabelCandidate] = []
         var seen: Set<String> = []

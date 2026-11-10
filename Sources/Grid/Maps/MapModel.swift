@@ -56,7 +56,8 @@ final class MapModel {
            let cam = try? JSONDecoder().decode(MapCamera.self, from: data) {
             camera = cam
         } else {
-            camera = MapCamera(center: TileMath.project(LonLat(lon: -98.5, lat: 39.5)), zoom: 3.6)
+            // Open on the globe, facing North America.
+            camera = MapCamera(center: TileMath.project(LonLat(lon: -96, lat: 36)), zoom: 2.3)
         }
         tiles.enabled = enabledStore
         alpr.enabled = enabledStore
@@ -151,6 +152,11 @@ final class MapModel {
 
     /// Geographic box of the ground in view (nil when it can't be computed).
     func visibleBBox() -> BBox? {
+        if camera.isGlobe {
+            // The facing hemisphere, roughly (the renderer hides anything on the far side).
+            let c = TileMath.unproject(camera.center)
+            return BBox(west: max(-180, c.lon - 95), south: max(-85, c.lat - 90), east: min(180, c.lon + 95), north: min(85, c.lat + 90))
+        }
         let proj = MapProjection(camera: camera, viewport: viewport)
         var pts: [LonLat] = []
         for sx in [0.0, 0.5, 1.0] { for sy in [0.0, 1.0] {
@@ -228,31 +234,20 @@ final class MapModel {
     }
 
     func handle(_ g: MapGesture) {
-        var cam = live ?? camera
-        let proj = MapProjection(camera: cam, viewport: viewport)
+        // Pan, zoom and rotate go through MapGestureMath, exactly as the map view applies them.
+        let cam = live ?? camera
         let mid = viewport / 2
         switch g {
         case .pan(let delta):
-            guard let a = proj.groundPoint(screen: mid), let b = proj.groundPoint(screen: mid - delta) else { return }
-            cam.center = Self.wrap(Mercator(x: cam.center.x + (b.x - a.x), y: cam.center.y + (b.y - a.y)))
-            setLive(cam)
+            setLive(MapGestureMath.pan(cam, by: delta, viewport: viewport))
         case .zoom(let dz, let p):
-            let before = proj.groundPoint(screen: p)
-            cam.zoom = min(MapCamera.maxZoom, max(MapCamera.minZoom, cam.zoom + dz))
-            if let before, let after = MapProjection(camera: cam, viewport: viewport).groundPoint(screen: p) {
-                cam.center = Self.wrap(Mercator(x: cam.center.x + before.x - after.x, y: cam.center.y + before.y - after.y))
-            }
-            setLive(cam)
+            setLive(MapGestureMath.zoom(cam, by: dz, around: p, viewport: viewport))
         case .rotate(let db, let dp):
-            var b = (cam.bearing + db).truncatingRemainder(dividingBy: 360)
-            if b < 0 { b += 360 }
-            cam.bearing = b
-            cam.pitch = min(MapCamera.maxPitch, max(0, cam.pitch + dp))
-            setLive(cam)
+            setLive(MapGestureMath.rotate(cam, bearing: db, pitch: dp))
         case .click(let p):
-            click(p, MapProjection(camera: camera, viewport: viewport))
+            click(p, mapProjection(camera: camera, viewport: viewport))
         case .rectangle(let a, let b, let ended):
-            let pr = MapProjection(camera: camera, viewport: viewport)
+            let pr = mapProjection(camera: camera, viewport: viewport)
             guard drawingRegion, let ga = pr.groundPoint(screen: a), let gb = pr.groundPoint(screen: b) else { return }
             draftRect = (Mercator(x: min(ga.x, gb.x), y: min(ga.y, gb.y)), Mercator(x: max(ga.x, gb.x), y: max(ga.y, gb.y)))
             frameRevision &+= 1
@@ -276,7 +271,7 @@ final class MapModel {
         Mercator(x: min(1, max(0, c.x)), y: min(1, max(0, c.y)))
     }
 
-    private func click(_ p: SIMD2<Double>, _ proj: MapProjection) {
+    private func click(_ p: SIMD2<Double>, _ proj: any MapScreenProjection) {
         if camera.zoom < 12 {
             // A cluster: zoom in on it.
             if let box = visibleBBox() {
