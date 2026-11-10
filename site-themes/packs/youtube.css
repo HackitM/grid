@@ -1,0 +1,299 @@
+/* grid-site-theme
+id: youtube
+name: YouTube
+version: 1
+hosts: youtube.com
+description: A full GRID HUD for YouTube: framed video panels, numbered feeds, a framed player and the grid floor.
+*/
+
+/* ---- 1. YouTube's own colour system mapped to GRID ---------------------------------------- */
+html[data-grid-theme="youtube"], html[data-grid-theme="youtube"][dark], html[data-grid-theme="youtube"] ytd-app {
+  --yt-sys-color-baseline--base-background: var(--grid-bg1) !important;
+  --yt-sys-color-baseline--raised-background: var(--grid-bg2) !important;
+  --yt-sys-color-baseline--surface-container: var(--grid-bg2) !important;
+  --yt-sys-color-baseline--menu-background: var(--grid-bg2) !important;
+  --yt-sys-color-baseline--text-primary: var(--grid-text) !important;
+  --yt-sys-color-baseline--text-secondary: var(--grid-dim) !important;
+  --yt-sys-color-baseline--text-disabled: var(--grid-mute) !important;
+  --yt-sys-color-baseline--call-to-action: var(--grid-accent) !important;
+  --yt-sys-color-baseline--call-to-action-hover: var(--grid-accent) !important;
+  --yt-sys-color-baseline--outline: var(--grid-line) !important;
+  --yt-sys-color-baseline--outline-opaque: var(--grid-line-strong) !important;
+  --yt-sys-color-baseline--outline-rim: var(--grid-line) !important;
+  --yt-sys-color-baseline--tonal-background: var(--grid-accent-soft) !important;
+  --yt-sys-color-baseline--tonal-hover-light: var(--grid-accent-soft) !important;
+  --yt-sys-color-baseline--mono-tonal-hover: var(--grid-accent-soft) !important;
+  --yt-sys-color-baseline--button-chip-background-hover: var(--grid-accent-soft) !important;
+  --yt-sys-color-baseline--additive-background: var(--grid-accent-soft) !important;
+  --yt-sys-color-baseline--inverted-background: var(--grid-accent) !important;
+  --yt-sys-color-baseline--text-primary-inverse: var(--grid-on-accent) !important;
+  --yt-sys-color-baseline--static-brand-red: var(--grid-accent) !important;
+  --yt-sys-color-baseline--red-indicator: var(--grid-accent) !important;
+  --yt-sys-color-baseline--wordmark-text: var(--grid-text) !important;
+  --yt-sys-color-baseline--frosted-glass-desktop: color-mix(in srgb, var(--grid-bg0) 88%, transparent) !important;
+  --yt-spec-base-background: var(--grid-bg1) !important; --yt-spec-raised-background: var(--grid-bg2) !important;
+  --yt-spec-menu-background: var(--grid-bg2) !important; --yt-spec-general-background-a: var(--grid-bg1) !important;
+  --yt-spec-general-background-b: var(--grid-bg1) !important; --yt-spec-general-background-c: var(--grid-bg0) !important;
+  --yt-spec-text-primary: var(--grid-text) !important; --yt-spec-text-secondary: var(--grid-dim) !important;
+  --yt-spec-call-to-action: var(--grid-accent) !important; --yt-spec-10-percent-layer: var(--grid-line) !important;
+  --yt-spec-badge-chip-background: var(--grid-accent-soft) !important; --yt-spec-brand-background-solid: var(--grid-bg0) !important;
+  --yt-spec-static-brand-red: var(--grid-accent) !important; --yt-spec-wordmark-text: var(--grid-text) !important;
+  --yt-spec-icon-active-other: var(--grid-dim) !important; --yt-spec-icon-inactive: var(--grid-mute) !important;
+  --yt-sys-typography-typestack--title-m-emphasized--font-names: var(--grid-mono) !important;
+  color-scheme: dark;
+}
+
+/* ---- 2. The floor: GRID's lattice behind everything ----------------------------------------- */
+html[data-grid-theme="youtube"] body, html[data-grid-theme="youtube"] ytd-app {
+  background-color: var(--grid-bg1) !important;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--grid-accent) 6%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--grid-accent) 6%, transparent) 1px, transparent 1px) !important;
+  background-size: 56px 56px !important;
+  background-attachment: fixed !important;
+}
+html[data-grid-theme="youtube"] #page-manager, html[data-grid-theme="youtube"] ytd-browse, html[data-grid-theme="youtube"] ytd-search,
+html[data-grid-theme="youtube"] ytd-watch-flexy, html[data-grid-theme="youtube"] ytd-two-column-browse-results-renderer {
+  background: transparent !important;
+}
+html[data-grid-theme="youtube"] ytd-app, html[data-grid-theme="youtube"] #content, html[data-grid-theme="youtube"] yt-formatted-string,
+html[data-grid-theme="youtube"] yt-attributed-string, html[data-grid-theme="youtube"] #video-title, html[data-grid-theme="youtube"] h1,
+html[data-grid-theme="youtube"] h3, html[data-grid-theme="youtube"] .yt-core-attributed-string, html[data-grid-theme="youtube"] button,
+html[data-grid-theme="youtube"] input {
+  font-family: var(--grid-mono) !important;
+}
+
+/* ---- 3. Masthead: a command bar ------------------------------------------------------------- */
+html[data-grid-theme="youtube"] #masthead-container, html[data-grid-theme="youtube"] ytd-masthead, html[data-grid-theme="youtube"] ytd-masthead #background {
+  background: color-mix(in srgb, var(--grid-bg0) 94%, transparent) !important;
+}
+html[data-grid-theme="youtube"] #masthead-container {
+  border-bottom: 1px solid var(--grid-line-strong) !important;
+  box-shadow: 0 1px 18px color-mix(in srgb, var(--grid-accent) 22%, transparent) !important;
+}
+html[data-grid-theme="youtube"] ytd-topbar-logo-renderer #logo-icon {
+  filter: grayscale(1) brightness(1.7) drop-shadow(0 0 5px var(--grid-accent)) !important;
+}
+html[data-grid-theme="youtube"] ytd-topbar-logo-renderer #logo::after {
+  content: "// GRID"; margin-left: 8px; align-self: center;
+  font: 600 10px var(--grid-mono); letter-spacing: 0.18em; color: var(--grid-accent);
+}
+html[data-grid-theme="youtube"] yt-searchbox .ytSearchboxComponentInputBox, html[data-grid-theme="youtube"] #search-form #container,
+html[data-grid-theme="youtube"] ytd-searchbox #container {
+  background: var(--grid-bg0) !important; border: 1px solid var(--grid-line-strong) !important; border-radius: 0 !important;
+  box-shadow: none !important;
+}
+html[data-grid-theme="youtube"] yt-searchbox .ytSearchboxComponentInputBoxHasFocus,
+html[data-grid-theme="youtube"] yt-searchbox:focus-within .ytSearchboxComponentInputBox {
+  border-color: var(--grid-accent) !important; box-shadow: 0 0 14px color-mix(in srgb, var(--grid-accent) 35%, transparent) !important;
+}
+html[data-grid-theme="youtube"] yt-searchbox .ytSearchboxComponentSearchButton, html[data-grid-theme="youtube"] #search-icon-legacy {
+  background: var(--grid-accent-soft) !important; border: 1px solid var(--grid-line-strong) !important; border-left: 0 !important;
+  border-radius: 0 !important; color: var(--grid-accent) !important;
+}
+html[data-grid-theme="youtube"] yt-searchbox input, html[data-grid-theme="youtube"] #search-input input {
+  color: var(--grid-text) !important; font-family: var(--grid-mono) !important;
+}
+html[data-grid-theme="youtube"] #voice-search-button button, html[data-grid-theme="youtube"] ytd-masthead #buttons yt-button-shape button {
+  border-radius: 0 !important;
+}
+
+/* ---- 4. Side guide: a rail ------------------------------------------------------------------ */
+html[data-grid-theme="youtube"] tp-yt-app-drawer #contentContainer, html[data-grid-theme="youtube"] #guide-wrapper,
+html[data-grid-theme="youtube"] ytd-mini-guide-renderer {
+  background: var(--grid-bg0) !important; border-right: 1px solid var(--grid-line) !important;
+}
+html[data-grid-theme="youtube"] ytd-guide-entry-renderer tp-yt-paper-item, html[data-grid-theme="youtube"] ytd-mini-guide-entry-renderer {
+  border-radius: 0 !important;
+}
+html[data-grid-theme="youtube"] ytd-guide-entry-renderer .title, html[data-grid-theme="youtube"] ytd-mini-guide-entry-renderer .title {
+  font: 500 11.5px var(--grid-mono) !important; text-transform: uppercase; letter-spacing: 0.08em; color: var(--grid-dim) !important;
+}
+html[data-grid-theme="youtube"] ytd-guide-entry-renderer[active] tp-yt-paper-item {
+  background: var(--grid-accent-soft) !important; box-shadow: inset 2px 0 0 var(--grid-accent) !important;
+}
+html[data-grid-theme="youtube"] ytd-guide-entry-renderer[active] .title { color: var(--grid-accent) !important; }
+html[data-grid-theme="youtube"] ytd-guide-section-renderer #guide-section-title {
+  font: 600 10px var(--grid-mono) !important; letter-spacing: 0.18em; text-transform: uppercase; color: var(--grid-accent) !important;
+}
+html[data-grid-theme="youtube"] ytd-guide-section-renderer { border-bottom: 1px solid var(--grid-line) !important; }
+
+/* ---- 5. Chips: square toggles --------------------------------------------------------------- */
+html[data-grid-theme="youtube"] #chips-wrapper, html[data-grid-theme="youtube"] ytd-feed-filter-chip-bar-renderer #chips-wrapper {
+  background: color-mix(in srgb, var(--grid-bg0) 92%, transparent) !important; border-bottom: 1px solid var(--grid-line) !important;
+}
+html[data-grid-theme="youtube"] chip-shape .ytChipShapeChip, html[data-grid-theme="youtube"] yt-chip-cloud-chip-renderer #chip-container {
+  border-radius: 0 !important; background: transparent !important; border: 1px solid var(--grid-line-strong) !important;
+  color: var(--grid-dim) !important; font: 500 11.5px var(--grid-mono) !important; text-transform: uppercase; letter-spacing: 0.08em;
+}
+html[data-grid-theme="youtube"] chip-shape .ytChipShapeActive, html[data-grid-theme="youtube"] yt-chip-cloud-chip-renderer[selected] #chip-container {
+  background: var(--grid-accent) !important; color: var(--grid-on-accent) !important; border-color: var(--grid-accent) !important;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--grid-accent) 40%, transparent) !important;
+}
+
+/* ---- 6. Video panels: HUD frames, corner brackets, scanlines, numbered feeds ---------------- */
+html[data-grid-theme="youtube"] ytd-rich-grid-renderer, html[data-grid-theme="youtube"] ytd-section-list-renderer,
+html[data-grid-theme="youtube"] ytd-watch-next-secondary-results-renderer { counter-reset: grid-panel; }
+html[data-grid-theme="youtube"] ytd-rich-item-renderer, html[data-grid-theme="youtube"] ytd-video-renderer,
+html[data-grid-theme="youtube"] ytd-watch-next-secondary-results-renderer yt-lockup-view-model { counter-increment: grid-panel; }
+
+html[data-grid-theme="youtube"] ytd-thumbnail, html[data-grid-theme="youtube"] yt-thumbnail-view-model,
+html[data-grid-theme="youtube"] .yt-lockup-view-model__content-image {
+  position: relative; border-radius: 0 !important; overflow: visible !important;
+}
+html[data-grid-theme="youtube"] ytd-thumbnail a#thumbnail, html[data-grid-theme="youtube"] ytd-thumbnail yt-image,
+html[data-grid-theme="youtube"] ytd-thumbnail img, html[data-grid-theme="youtube"] yt-thumbnail-view-model img,
+html[data-grid-theme="youtube"] yt-thumbnail-view-model .ytThumbnailViewModelImage, html[data-grid-theme="youtube"] yt-thumbnail-view-model > div,
+html[data-grid-theme="youtube"] .yt-lockup-view-model__content-image, html[data-grid-theme="youtube"] yt-collection-thumbnail-view-model,
+html[data-grid-theme="youtube"] ytd-thumbnail #thumbnail::before {
+  border-radius: 0 !important;
+}
+/* The frame: a hairline, four bright corner brackets, faint scanlines over the picture. */
+html[data-grid-theme="youtube"] ytd-thumbnail::after, html[data-grid-theme="youtube"] yt-thumbnail-view-model::after {
+  content: ""; position: absolute; inset: -1px; pointer-events: none; z-index: 2;
+  border: 1px solid var(--grid-line);
+  background:
+    linear-gradient(var(--grid-accent), var(--grid-accent)) top left / 14px 2px no-repeat,
+    linear-gradient(var(--grid-accent), var(--grid-accent)) top left / 2px 14px no-repeat,
+    linear-gradient(var(--grid-accent), var(--grid-accent)) top right / 14px 2px no-repeat,
+    linear-gradient(var(--grid-accent), var(--grid-accent)) top right / 2px 14px no-repeat,
+    linear-gradient(var(--grid-accent), var(--grid-accent)) bottom left / 14px 2px no-repeat,
+    linear-gradient(var(--grid-accent), var(--grid-accent)) bottom left / 2px 14px no-repeat,
+    linear-gradient(var(--grid-accent), var(--grid-accent)) bottom right / 14px 2px no-repeat,
+    linear-gradient(var(--grid-accent), var(--grid-accent)) bottom right / 2px 14px no-repeat,
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--grid-bg0) 22%, transparent) 0 1px, transparent 1px 3px);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+/* Panel index (feeds and results): ◤ 01, ◤ 02 … in the top-left corner. */
+html[data-grid-theme="youtube"] ytd-rich-item-renderer ytd-thumbnail::before, html[data-grid-theme="youtube"] ytd-rich-item-renderer yt-thumbnail-view-model::before,
+html[data-grid-theme="youtube"] ytd-video-renderer ytd-thumbnail::before {
+  content: "◤ " counter(grid-panel, decimal-leading-zero); position: absolute; top: 6px; left: 8px; z-index: 3; pointer-events: none;
+  padding: 1px 6px; font: 600 10px var(--grid-mono); letter-spacing: 0.14em; color: var(--grid-accent);
+  background: color-mix(in srgb, var(--grid-bg0) 82%, transparent); border: 1px solid var(--grid-line-strong);
+}
+/* Scan sweep on hover. */
+html[data-grid-theme="youtube"] ytd-thumbnail:hover::after, html[data-grid-theme="youtube"] yt-thumbnail-view-model:hover::after,
+html[data-grid-theme="youtube"] ytd-rich-item-renderer:hover yt-thumbnail-view-model::after, html[data-grid-theme="youtube"] yt-lockup-view-model:hover yt-thumbnail-view-model::after {
+  border-color: var(--grid-accent);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--grid-accent) 40%, transparent), inset 0 0 26px color-mix(in srgb, var(--grid-accent) 18%, transparent);
+  background:
+    linear-gradient(var(--grid-accent), var(--grid-accent)) top left / 22px 2px no-repeat,
+    linear-gradient(var(--grid-accent), var(--grid-accent)) top left / 2px 22px no-repeat,
+    linear-gradient(var(--grid-accent), var(--grid-accent)) top right / 22px 2px no-repeat,
+    linear-gradient(var(--grid-accent), var(--grid-accent)) top right / 2px 22px no-repeat,
+    linear-gradient(var(--grid-accent), var(--grid-accent)) bottom left / 22px 2px no-repeat,
+    linear-gradient(var(--grid-accent), var(--grid-accent)) bottom left / 2px 22px no-repeat,
+    linear-gradient(var(--grid-accent), var(--grid-accent)) bottom right / 22px 2px no-repeat,
+    linear-gradient(var(--grid-accent), var(--grid-accent)) bottom right / 2px 22px no-repeat,
+    linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--grid-accent) 22%, transparent) 50%, transparent 52%) 0 -100% / 100% 200% no-repeat,
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--grid-bg0) 22%, transparent) 0 1px, transparent 1px 3px);
+  animation: grid-yt-scan 1.4s linear infinite;
+}
+@keyframes grid-yt-scan {
+  from { background-position: top left, top left, top right, top right, bottom left, bottom left, bottom right, bottom right, 0 -100%, 0 0; }
+  to   { background-position: top left, top left, top right, top right, bottom left, bottom left, bottom right, bottom right, 0 100%, 0 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-grid-theme="youtube"] *::after { animation: none !important; transition: none !important; }
+}
+/* Duration and live badges: readouts. */
+html[data-grid-theme="youtube"] badge-shape, html[data-grid-theme="youtube"] .yt-badge-shape,
+html[data-grid-theme="youtube"] ytd-thumbnail-overlay-time-status-renderer #time-status, html[data-grid-theme="youtube"] .yt-badge-shape--thumbnail-default {
+  border-radius: 0 !important; font-family: var(--grid-mono) !important; letter-spacing: 0.06em;
+}
+html[data-grid-theme="youtube"] .yt-badge-shape--thumbnail-default, html[data-grid-theme="youtube"] ytd-thumbnail-overlay-time-status-renderer #time-status {
+  background: color-mix(in srgb, var(--grid-bg0) 88%, transparent) !important; color: var(--grid-accent) !important;
+  border: 1px solid var(--grid-line-strong) !important;
+}
+/* Watch progress on a thumbnail. */
+html[data-grid-theme="youtube"] #progress.ytd-thumbnail-overlay-resume-playback-renderer,
+html[data-grid-theme="youtube"] .ytThumbnailOverlayProgressBarHostWatchedProgressBarSegment { background: var(--grid-accent) !important; }
+/* Titles and metadata. */
+html[data-grid-theme="youtube"] #video-title, html[data-grid-theme="youtube"] .yt-lockup-metadata-view-model__title,
+html[data-grid-theme="youtube"] .yt-lockup-metadata-view-model-wiz__title {
+  color: var(--grid-text) !important; font-weight: 600 !important; letter-spacing: -0.01em;
+}
+html[data-grid-theme="youtube"] ytd-rich-item-renderer:hover #video-title, html[data-grid-theme="youtube"] ytd-video-renderer:hover #video-title,
+html[data-grid-theme="youtube"] yt-lockup-view-model:hover .yt-lockup-metadata-view-model__title { color: var(--grid-accent) !important; }
+html[data-grid-theme="youtube"] #metadata-line, html[data-grid-theme="youtube"] .yt-content-metadata-view-model__metadata-text,
+html[data-grid-theme="youtube"] ytd-channel-name #text { color: var(--grid-dim) !important; font-size: 12px !important; }
+html[data-grid-theme="youtube"] yt-img-shadow, html[data-grid-theme="youtube"] yt-avatar-shape img, html[data-grid-theme="youtube"] #avatar img {
+  border-radius: 0 !important; outline: 1px solid var(--grid-line-strong);
+}
+/* Shelves and section headers. */
+html[data-grid-theme="youtube"] ytd-rich-section-renderer, html[data-grid-theme="youtube"] ytd-shelf-renderer,
+html[data-grid-theme="youtube"] ytd-reel-shelf-renderer, html[data-grid-theme="youtube"] grid-shelf-view-model {
+  border-top: 1px solid var(--grid-line) !important;
+}
+html[data-grid-theme="youtube"] #title.ytd-rich-shelf-renderer, html[data-grid-theme="youtube"] yt-section-header-view-model h2,
+html[data-grid-theme="youtube"] .yt-shelf-header-layout__title {
+  font: 600 13px var(--grid-mono) !important; text-transform: uppercase; letter-spacing: 0.16em; color: var(--grid-accent) !important;
+}
+
+/* ---- 7. Watch page: the player as a framed panel -------------------------------------------- */
+html[data-grid-theme="youtube"] #player-container-outer, html[data-grid-theme="youtube"] #full-bleed-container { position: relative; }
+html[data-grid-theme="youtube"] ytd-watch-flexy #player-container-inner, html[data-grid-theme="youtube"] ytd-watch-flexy #ytd-player,
+html[data-grid-theme="youtube"] ytd-watch-flexy .html5-video-player, html[data-grid-theme="youtube"] ytd-watch-flexy #movie_player {
+  border-radius: 0 !important;
+}
+html[data-grid-theme="youtube"] ytd-watch-flexy #ytd-player {
+  outline: 1px solid var(--grid-line-strong); outline-offset: 0;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--grid-bg0) 60%, transparent), 0 0 34px color-mix(in srgb, var(--grid-accent) 22%, transparent) !important;
+}
+html[data-grid-theme="youtube"] ytd-watch-flexy #player-container-outer::before {
+  content: "◆ PLAYBACK  //  CHANNEL 01"; display: block; margin: 0 0 6px; padding: 3px 8px; width: max-content;
+  font: 600 10px var(--grid-mono); letter-spacing: 0.2em; color: var(--grid-accent);
+  border: 1px solid var(--grid-line-strong); background: color-mix(in srgb, var(--grid-bg0) 85%, transparent);
+}
+/* Player chrome: the scrub bar and buttons in GRID's accent. */
+html[data-grid-theme="youtube"] .ytp-play-progress, html[data-grid-theme="youtube"] .ytp-swatch-background-color,
+html[data-grid-theme="youtube"] .ytp-scrubber-button, html[data-grid-theme="youtube"] .ytp-settings-button.ytp-hd-quality-badge::after {
+  background: var(--grid-accent) !important;
+}
+html[data-grid-theme="youtube"] .ytp-load-progress { background: color-mix(in srgb, var(--grid-accent) 30%, transparent) !important; }
+html[data-grid-theme="youtube"] .ytp-scrubber-button { box-shadow: 0 0 10px var(--grid-accent) !important; }
+html[data-grid-theme="youtube"] .ytp-chrome-bottom, html[data-grid-theme="youtube"] .ytp-time-display, html[data-grid-theme="youtube"] .ytp-title-text {
+  font-family: var(--grid-mono) !important;
+}
+html[data-grid-theme="youtube"] .ytp-popup, html[data-grid-theme="youtube"] .ytp-settings-menu {
+  background: color-mix(in srgb, var(--grid-bg0) 92%, transparent) !important; border: 1px solid var(--grid-line-strong) !important; border-radius: 0 !important;
+}
+/* Title, channel row, description and comments. */
+html[data-grid-theme="youtube"] ytd-watch-metadata #title h1 {
+  font: 700 19px var(--grid-mono) !important; letter-spacing: -0.01em; color: var(--grid-text) !important;
+  border-left: 2px solid var(--grid-accent); padding-left: 10px;
+  text-shadow: 0 0 18px color-mix(in srgb, var(--grid-accent) 30%, transparent);
+}
+html[data-grid-theme="youtube"] ytd-watch-metadata #description, html[data-grid-theme="youtube"] ytd-text-inline-expander {
+  background: color-mix(in srgb, var(--grid-bg2) 90%, transparent) !important; border: 1px solid var(--grid-line) !important; border-radius: 0 !important;
+}
+html[data-grid-theme="youtube"] ytd-comments #header, html[data-grid-theme="youtube"] ytd-comments-header-renderer #title {
+  font-family: var(--grid-mono) !important; text-transform: uppercase; letter-spacing: 0.12em; color: var(--grid-accent) !important;
+}
+html[data-grid-theme="youtube"] ytd-comment-thread-renderer { border-bottom: 1px solid var(--grid-line) !important; padding-bottom: 8px; }
+html[data-grid-theme="youtube"] #secondary yt-lockup-view-model { padding: 4px; border: 1px solid transparent; }
+html[data-grid-theme="youtube"] #secondary yt-lockup-view-model:hover { border-color: var(--grid-line); background: var(--grid-accent-soft); }
+
+/* ---- 8. Buttons: squared, outlined; the main action filled ---------------------------------- */
+html[data-grid-theme="youtube"] .yt-spec-button-shape-next, html[data-grid-theme="youtube"] button-view-model button,
+html[data-grid-theme="youtube"] .yt-spec-button-shape-next--segmented-start, html[data-grid-theme="youtube"] .yt-spec-button-shape-next--segmented-end {
+  border-radius: 0 !important; font-family: var(--grid-mono) !important; letter-spacing: 0.04em;
+}
+html[data-grid-theme="youtube"] .yt-spec-button-shape-next--tonal {
+  background: transparent !important; border: 1px solid var(--grid-line-strong) !important; color: var(--grid-text) !important;
+}
+html[data-grid-theme="youtube"] .yt-spec-button-shape-next--tonal:hover { background: var(--grid-accent-soft) !important; border-color: var(--grid-accent) !important; }
+html[data-grid-theme="youtube"] .yt-spec-button-shape-next--filled.yt-spec-button-shape-next--mono {
+  background: var(--grid-accent) !important; color: var(--grid-on-accent) !important;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--grid-accent) 40%, transparent) !important;
+}
+html[data-grid-theme="youtube"] .yt-spec-button-shape-next--outline.yt-spec-button-shape-next--call-to-action {
+  color: var(--grid-accent) !important; border-color: var(--grid-accent) !important;
+}
+
+/* ---- 9. Menus and dialogs ------------------------------------------------------------------- */
+html[data-grid-theme="youtube"] tp-yt-iron-dropdown #contentWrapper > *, html[data-grid-theme="youtube"] ytd-menu-popup-renderer,
+html[data-grid-theme="youtube"] yt-sheet-view-model, html[data-grid-theme="youtube"] tp-yt-paper-dialog {
+  border-radius: 0 !important; border: 1px solid var(--grid-line-strong) !important;
+  box-shadow: 0 0 24px color-mix(in srgb, var(--grid-accent) 18%, transparent) !important;
+}

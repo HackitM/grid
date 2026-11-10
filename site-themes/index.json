@@ -1,11 +1,12 @@
 {
   "format": 1,
   "packs": [
-    {"id": "github", "version": 1, "file": "github.css", "sha256": "7a0836cdee0f22c3e7de147d6bb33f6f855b23898e82b754ae641ba11095e586"},
+    {"id": "github", "version": 3, "file": "github.css", "sha256": "7545668831501fa6d6d14e31e820cf612fbdb517cb08d5fc41e44df10f71771d"},
     {"id": "google", "version": 1, "file": "google.css", "sha256": "e64f6586754cc5d3e628a1be9310e030535bae0b79b584d52ed4a04b2988c069"},
     {"id": "hackernews", "version": 1, "file": "hackernews.css", "sha256": "22bd1e995bac370bd2acc9e5209caee096c5c7533ea30b6b8c4923d9304da1a9"},
     {"id": "mdn", "version": 1, "file": "mdn.css", "sha256": "db8b33aceab0e3d96ade057c39cce8876b47831c318f2ac9ec3f313d441aaf3b"},
     {"id": "stackoverflow", "version": 1, "file": "stackoverflow.css", "sha256": "38a4361daad882b36c033cd6c8aa4406e3236c619c19128319d1c20fa352dcd8"},
-    {"id": "wikipedia", "version": 1, "file": "wikipedia.css", "sha256": "524436f42e44e420717386640b475973f4f3073d157a82aff2261467f7138dd9"}
+    {"id": "wikipedia", "version": 1, "file": "wikipedia.css", "sha256": "524436f42e44e420717386640b475973f4f3073d157a82aff2261467f7138dd9"},
+    {"id": "youtube", "version": 1, "file": "youtube.css", "sha256": "f559dbbf8cb5b62ffff10e68510c441097313857ec46e3c819809654ae0ddda7"}
   ]
 }
