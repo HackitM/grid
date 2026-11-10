@@ -8,7 +8,7 @@ A real terminal, a file browser, an app launcher, a widget deck and a web browse
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-0b0f12?logo=apple&logoColor=white)](#requirements)
 [![Swift 6](https://img.shields.io/badge/Swift-6-f05138?logo=swift&logoColor=white)](Package.swift)
 [![Apple silicon](https://img.shields.io/badge/Apple%20silicon-native-6be3ff)](#requirements)
-[![Release](https://img.shields.io/badge/release-v0.7.0-6be3ff)](https://github.com/HackitM/grid/releases/latest)
+[![Release](https://img.shields.io/badge/release-v0.8.0-6be3ff)](https://github.com/HackitM/grid/releases/latest)
 
 [**Download**](https://github.com/HackitM/grid/releases/latest) · [Features](#features) · [Install](#install) · [Build from source](#build-from-source) · [Shortcuts](#keyboard-shortcuts) · [Docs](#documentation)
 
@@ -120,7 +120,7 @@ The window opens with a short build-on (its frame traces itself in, then the pan
 2. GRID isn't notarized by Apple yet, so macOS blocks the first launch. Open it once, then go to **System Settings › Privacy & Security** and click **Open Anyway**. You only need to do this once.
 3. Optional: verify the download against the `.sha256` file from the same release:
    ```bash
-   shasum -a 256 GRID-0.7.0-macOS.zip
+   shasum -a 256 GRID-0.8.0-macOS.zip
    ```
 
 **Updating.** GRID can check GitHub once a day for a new version (it asks first; change it in **Settings › Updates**, or use **GRID › Check for Updates…**). When one is out, **Download & Verify** saves the zip to Downloads, checks its SHA-256, unzips it and shows the new GRID.app in Finder. Quit GRID and replace the app in Applications. GRID never replaces itself.
