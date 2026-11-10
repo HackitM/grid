@@ -48,7 +48,8 @@ final class MapContainerView: NSView {
     var onViewport: (SIMD2<Double>) -> Void = { _ in }
     var interactive = true { didSet { mtk.interactive = interactive } }
 
-    private var frame_: MapFrame?
+    /// The frame last handed to the renderer.
+    private var currentFrame: MapFrame?
     private var camera: MapCamera?
     private var observers: [NSObjectProtocol] = []
     private var viewportWork: DispatchWorkItem?
@@ -76,7 +77,6 @@ final class MapContainerView: NSView {
         mtk.setAccessibilityHidden(true)
         addSubview(mtk)
         mtk.onGesture = { [weak self] g in self?.handle(g) }
-        mtk.onDragState = { [weak self] dragging in self?.renderer.dragging = dragging }
         #if DEBUG
         renderer.debugOnFrameDrawn = { [weak self] proj in self?.debugProbe?.frameDrawn(proj) }
         #endif
@@ -142,8 +142,13 @@ final class MapContainerView: NSView {
 
     func setFrame(_ f: MapFrame) {
         // SwiftUI re-renders the panel for unrelated state; the model then hands back the same frame.
-        if let old = frame_, old.stamp == f.stamp, old == f { return }
-        frame_ = f
+        if let old = currentFrame, old.stamp == f.stamp {
+            // A build of the model is known by its stamp (only the camera is checked besides);
+            // frames without one (0: QA, printing) are compared in full.
+            let unchanged = f.stamp != 0 ? old.camera == f.camera : old == f
+            if unchanged { return }
+        }
+        currentFrame = f
         #if DEBUG
         let t0 = CACurrentMediaTime()
         defer { MapDebugTimes.add("setFrame", since: t0) }
@@ -217,16 +222,11 @@ final class MapContainerView: NSView {
         }
         onGesture(g)
     }
-
-    private static func clampCenter(_ m: Mercator) -> Mercator {
-        Mercator(x: min(1, max(0, m.x)), y: min(1, max(0, m.y)))
-    }
 }
 
 /// The MTKView with input. Points are view coordinates with a top-left origin.
 final class MapInputView: MTKView {
     var onGesture: (MapGesture) -> Void = { _ in }
-    var onDragState: (Bool) -> Void = { _ in }
     var interactive = true
 
     private var dragStart: SIMD2<Double>?
@@ -297,7 +297,7 @@ final class MapInputView: MTKView {
         let p = point(e)
         let total = p - start
         if !dragMoved && (total.x * total.x + total.y * total.y).squareRoot() < Self.clickThreshold { return }
-        if !dragMoved { dragMoved = true; onDragState(true) }
+        dragMoved = true
         let d = p - last
         dragLast = p
         switch dragMode {
@@ -312,7 +312,6 @@ final class MapInputView: MTKView {
         let p = point(e)
         if dragMoved {
             if dragMode == .rectangle { onGesture(.rectangle(start, p, ended: true)) }
-            onDragState(false)
         } else {
             onGesture(.click(p))
         }
@@ -354,7 +353,9 @@ enum MapDebugTimes {
     static var worst: [String: Double] = [:]
     static var total: [String: Double] = [:]
     static func add(_ name: String, since t0: CFTimeInterval) {
-        let ms = (CACurrentMediaTime() - t0) * 1000
+        add(name, ms: (CACurrentMediaTime() - t0) * 1000)
+    }
+    static func add(_ name: String, ms: Double) {
         worst[name] = max(worst[name] ?? 0, ms)
         total[name, default: 0] += ms
     }
