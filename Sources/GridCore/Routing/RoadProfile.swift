@@ -39,6 +39,9 @@ public enum RoadProfile {
     ]
     static let closed: Set<String> = ["no", "private", "agricultural", "forestry", "delivery", "military", "emergency", "customers"]
     static let open: Set<String> = ["yes", "designated", "permissive", "destination"]
+    /// Every tag key `attributes` reads (the graph builder asks the PBF reader for these only).
+    static let tagKeys: Set<String> = ["highway", "area", "motorcar", "motor_vehicle", "vehicle", "access", "service", "oneway",
+                                       "maxspeed", "junction", "name", "ref", "toll"]
 
     /// nil when a car can't use the way.
     public static func attributes(_ t: [String: String]) -> RoadAttributes? {
