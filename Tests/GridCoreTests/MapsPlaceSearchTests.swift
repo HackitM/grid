@@ -237,6 +237,40 @@ final class MapsNominatimTests: XCTestCase {
         XCTAssertEqual(try Nominatim.parse(Data(json.utf8)).count, Nominatim.maxResults)
     }
 
+    func testNameMatcherAgreesWithFuzzyMatch() {
+        // The byte-wise scorer must give exactly FuzzyMatch's answer, match or no match.
+        var rng = ALPRTestRNG(seed: 31)
+        let pieces = ["main", "st", "oak", "martin", "luther", "king", "m", "a", "ma", "Mc", "o'neil", "1st", "(old)", "x", "saint", "café", "zürich", "東京"]
+        let joiners = [" ", " ", "-", "_", ".", "/", " (", ""]
+        func word() -> String { pieces[Int(rng.next() % UInt64(pieces.count))] }
+        func name() -> String {
+            (0..<(1 + Int(rng.next() % 5))).map { _ in word() + joiners[Int(rng.next() % UInt64(joiners.count))] }.joined()
+        }
+        var checked = 0, matched = 0
+        for _ in 0..<400 {
+            // Queries: words, joined words, initials, fragments, and long ones (scattered matches can score high).
+            let kinds = [word(), word() + " " + word(), name(), String(name().prefix(3)), String(word().dropFirst()), "mlk", "ms", name() + " " + name()]
+            let query = LocalSearch.fold(kinds[Int(rng.next() % UInt64(kinds.count))])
+            guard !query.isEmpty else { continue }
+            let matcher = LocalSearch.NameMatcher(query)
+            for _ in 0..<60 {
+                // Folded as entries are, and now and then raw (a caller may set `folded` itself).
+                let candidate = rng.next() % 6 == 0 ? name() : LocalSearch.fold(name())
+                let expected = FuzzyMatch.score(query, in: candidate)
+                XCTAssertEqual(matcher.score(candidate), expected, "'\(query)' in '\(candidate)'")
+                checked += 1
+                if expected != nil { matched += 1 }
+            }
+        }
+        XCTAssertGreaterThan(checked, 20_000)
+        XCTAssertGreaterThan(matched, 2_000)
+        XCTAssertEqual(LocalSearch.NameMatcher("main").score("main"), 1000)
+        XCTAssertEqual(LocalSearch.NameMatcher("main").score("main street"), 893)
+        XCTAssertEqual(LocalSearch.NameMatcher("st").score("main street"), 695)
+        XCTAssertEqual(LocalSearch.NameMatcher("mlk").score("martin luther king"), 600)
+        XCTAssertNil(LocalSearch.NameMatcher("zz").score("main street"))
+    }
+
     func testRequestSpacer() {
         var s = RequestSpacer(interval: 1)
         let t0 = Date(timeIntervalSince1970: 1000)

@@ -96,10 +96,7 @@ public enum Nominatim {
 
     private static func text(_ v: Any?, max: Int) -> String? {
         guard let s = v as? String else { return nil }
-        let bidi: ClosedRange<UInt32> = 0x202A...0x202E, iso: ClosedRange<UInt32> = 0x2066...0x2069
-        let cleaned = String(String.UnicodeScalarView(s.unicodeScalars.prefix(max * 2).filter {
-            !CharacterSet.controlCharacters.contains($0) && !bidi.contains($0.value) && !iso.contains($0.value)
-        }))
+        let cleaned = DisplayText.stripped(s.unicodeScalars.prefix(max * 2))
         return String(cleaned.trimmingCharacters(in: .whitespacesAndNewlines).prefix(max))
     }
 }

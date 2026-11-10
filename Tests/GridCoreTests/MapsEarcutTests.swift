@@ -155,4 +155,39 @@ final class MapsEarcutTests: XCTestCase {
             XCTAssertTrue(t.allSatisfy { Int($0) < n + hole.count })
         }
     }
+
+    func testHostilePolygonsStopAtTheStepBudget() {
+        // A 20 000 point scribble that crosses itself everywhere: ear clipping alone would take
+        // hundreds of millions of steps on it.
+        var scribble: [SIMD2<Float>] = []
+        for i in 0..<20_000 {
+            let a = Float(i) * 0.37, r = Float(i % 97) / 97 * 0.5
+            scribble.append(SIMD2(0.5 + r * cos(a), 0.5 + r * sin(a)))
+        }
+        var steps = Int.max
+        let t = Date()
+        let triangles = Earcut.triangulate([scribble], steps: &steps)
+        XCTAssertLessThan(Date().timeIntervalSince(t), 5)
+        let used = Int.max - steps
+        XCTAssertLessThanOrEqual(used, Earcut.stepBudget(points: scribble.count))
+        XCTAssertEqual(triangles.count % 3, 0)
+        XCTAssertTrue(triangles.allSatisfy { Int($0) < scribble.count })
+
+        // A caller's budget is honoured and charged, and nothing is done once it is spent.
+        var small = 50_000
+        _ = Earcut.triangulate([scribble], steps: &small)
+        XCTAssertLessThanOrEqual(small, 0)
+        XCTAssertGreaterThan(small, -100)
+        XCTAssertTrue(Earcut.triangulate([scribble], steps: &small).isEmpty)
+
+        // A real polygon uses a sliver of its budget and is triangulated in full.
+        let circle = (0..<5_000).map { i -> SIMD2<Float> in
+            let a = Float(i) / 5_000 * 2 * .pi
+            return SIMD2(0.5 + 0.4 * cos(a), 0.5 + 0.4 * sin(a))
+        }
+        var budget = Int.max
+        XCTAssertEqual(Earcut.triangulate([circle], steps: &budget).count, (circle.count - 2) * 3)
+        XCTAssertLessThan(Int.max - budget, Earcut.stepBudget(points: circle.count) / 20)
+        XCTAssertTrue(Earcut.triangulate([[SIMD2<Float>]](repeating: [], count: 3)).isEmpty)
+    }
 }

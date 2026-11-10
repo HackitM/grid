@@ -363,4 +363,26 @@ final class MapsSubdivisionTests: XCTestCase {
         // Watertight: no duplicate positions (shared midpoints are reused).
         XCTAssertEqual(Set(pos.map { "\($0.x),\($0.y)" }).count, pos.count)
     }
+
+    func testGeometryOfAHostileTileIsBounded() {
+        // Every segment crosses the whole tile buffer, so each is split into the maximum number
+        // of pieces: 40 000 segments would be 20 million line vertices without the limit.
+        var zigzag: [SIMD2<Int32>] = []
+        for i in 0..<2_000 { zigzag.append(SIMD2(i % 2 == 0 ? -8000 : 8000, Int32(i % 4096))) }
+        let lines = (0..<20).map { _ in MVTFeature(id: nil, tags: ["class": .string("motorway")], geometry: .lines([zigzag])) }
+        // And triangles the size of the tile buffer, each subdivided into thousands.
+        let big: [[SIMD2<Int32>]] = [[SIMD2(-8000, -8000), SIMD2(8000, -8000), SIMD2(0, 8000)]]
+        let fills = (0..<600).map { _ in MVTFeature(id: nil, tags: [:], geometry: .polygons([big])) }
+        let tile = MVTTile(layers: [MVTLayer(name: "transportation", extent: 4096, features: lines),
+                                    MVTLayer(name: "water", extent: 4096, features: fills)])
+        let g = TileGeometryBuilder.build(tile, id: TileID(z: 2, x: 1, y: 1))
+        let lineVertices = g.lines.reduce(0) { $0 + $1.vertices.count }
+        let fillVertices = g.fills.reduce(0) { $0 + $1.positions.count }
+        XCTAssertGreaterThan(lineVertices, 0)
+        XCTAssertGreaterThan(fillVertices, 0)
+        // One feature may finish past the limit; nothing is started after it.
+        XCTAssertLessThan(lineVertices, TileGeometryBuilder.maxLineVerticesPerTile + 3_000_000)
+        XCTAssertLessThan(fillVertices, TileGeometryBuilder.maxFillVerticesPerTile + 500_000)
+        XCTAssertLessThan(g.byteCount, 400 << 20)
+    }
 }
