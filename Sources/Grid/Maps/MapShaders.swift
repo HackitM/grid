@@ -132,36 +132,42 @@ static float gridLine(float coord, float spacing, float widthPx) {
     return a * clamp(1.0 - fw / spacing * 5.0, 0.0, 1.0);   // fade before the lattice aliases
 }
 
-fragment float4 floor_fragment(FloorOut in [[stage_in]], constant FrameU& u [[buffer(0)]]) {
-    float4 col = float4(u.bg0.rgb, 1.0);
+// Mode 0: the void and the reveal band (opaque, drawn first). Mode 1: the grid lattice, drawn
+// above the fills (blended, stencil keeps it off water) so it stays visible over land tints.
+fragment float4 floor_fragment(FloorOut in [[stage_in]], constant FrameU& u [[buffer(0)]], constant DrawU& d [[buffer(1)]]) {
     bool revealed = in.pos.y <= u.revealY;
-    if (revealed && u.gridMinorPx > 0.0) {
-        float4 a = u.invVP * float4(in.ndc, 0.0, 1.0);
-        float4 b = u.invVP * float4(in.ndc, 1.0, 1.0);
-        if (abs(a.w) > 1e-12 && abs(b.w) > 1e-12) {
-            float3 p0 = a.xyz / a.w, p1 = b.xyz / b.w;
-            float dz = p1.z - p0.z;
-            if (abs(dz) > 1e-12) {
-                float t = -p0.z / dz;
-                if (t >= 0.0) {
-                    float3 g = p0 + (p1 - p0) * t;                 // points, centred on the camera
-                    float2 gp = g.xy * u.scale;                   // pixels
-                    float dist = length(g.xy) / max(1.0, u.viewportPx.y / u.scale);
-                    float fade = 1.0 - smoothstep(u.gridFadeStart, u.gridFadeEnd, dist);
-                    float minor = max(gridLine(gp.x + u.phaseMinor.x, u.gridMinorPx, u.scale * 0.5),
-                                      gridLine(gp.y + u.phaseMinor.y, u.gridMinorPx, u.scale * 0.5));
-                    float major = max(gridLine(gp.x + u.phaseMajor.x, u.gridMajorPx, u.scale * 0.5),
-                                      gridLine(gp.y + u.phaseMajor.y, u.gridMajorPx, u.scale * 0.5));
-                    col = over(col, premul(u.line, 0.35 * minor * fade));
-                    col = over(col, premul(u.line, 0.8 * major * fade));
+    if (d.cls == 1u) {
+        float4 col = float4(0.0);
+        if (revealed && u.gridMinorPx > 0.0) {
+            float4 a = u.invVP * float4(in.ndc, 0.0, 1.0);
+            float4 b = u.invVP * float4(in.ndc, 1.0, 1.0);
+            if (abs(a.w) > 1e-12 && abs(b.w) > 1e-12) {
+                float3 p0 = a.xyz / a.w, p1 = b.xyz / b.w;
+                float dz = p1.z - p0.z;
+                if (abs(dz) > 1e-12) {
+                    float t = -p0.z / dz;
+                    if (t >= 0.0) {
+                        float3 g = p0 + (p1 - p0) * t;                 // points, centred on the camera
+                        float2 gp = g.xy * u.scale;                   // pixels
+                        float dist = length(g.xy) / max(1.0, u.viewportPx.y / u.scale);
+                        float fade = 1.0 - smoothstep(u.gridFadeStart, u.gridFadeEnd, dist);
+                        float minor = max(gridLine(gp.x + u.phaseMinor.x, u.gridMinorPx, u.scale * 0.5),
+                                          gridLine(gp.y + u.phaseMinor.y, u.gridMinorPx, u.scale * 0.5));
+                        float major = max(gridLine(gp.x + u.phaseMajor.x, u.gridMajorPx, u.scale * 0.5),
+                                          gridLine(gp.y + u.phaseMajor.y, u.gridMajorPx, u.scale * 0.5));
+                        col = premul(u.line, 0.45 * minor * fade);
+                        col = over(col, premul(u.line, 0.9 * major * fade));
+                    }
                 }
             }
         }
+        return col;
     }
+    float4 col = float4(u.bg0.rgb, 1.0);
     if (u.revealY < u.viewportPx.y) {
-        float d = abs(in.pos.y - u.revealY);
-        col = over(col, premul(u.accent, 0.85 * (1.0 - smoothstep(0.0, 2.0 * u.scale, d))));
-        col = over(col, premul(u.glow, 0.25 * (1.0 - smoothstep(0.0, 14.0 * u.scale, in.pos.y > u.revealY ? d : 1e9))));
+        float dd = abs(in.pos.y - u.revealY);
+        col = over(col, premul(u.accent, 0.85 * (1.0 - smoothstep(0.0, 2.0 * u.scale, dd))));
+        col = over(col, premul(u.glow, 0.25 * (1.0 - smoothstep(0.0, 14.0 * u.scale, in.pos.y > u.revealY ? dd : 1e9))));
     }
     return col;
 }
@@ -245,7 +251,13 @@ fragment float4 line_fragment(LineOut in [[stage_in]], constant FrameU& u [[buff
 
 // ---------------------------------------------------------------- buildings
 
-struct ExtOut { float4 pos [[position]]; float shade; float top; float roof [[flat]]; };
+struct ExtOut {
+    float4 pos [[position]];
+    float shade; float top;
+    float roof [[flat]];
+    float2 tilePos;                 // interpolated tile-local position
+    float2 corner [[flat]];         // the triangle's first vertex: the wall corner it contains
+};
 
 vertex ExtOut ext_vertex(uint vid [[vertex_id]], const device ExtrusionVertex* v [[buffer(0)]],
                          constant TileU& t [[buffer(1)]], constant FrameU& u [[buffer(2)]]) {
@@ -256,16 +268,24 @@ vertex ExtOut ext_vertex(uint vid [[vertex_id]], const device ExtrusionVertex* v
     o.shade = float(a.shade) / 65535.0;
     o.top = (a.flags & 2) ? 1.0 : 0.0;
     o.roof = (a.flags & 1) ? 1.0 : 0.0;
+    o.tilePos = a.pos;
+    o.corner = a.pos;
     return o;
 }
 
 fragment float4 ext_fragment(ExtOut in [[stage_in]], constant FrameU& u [[buffer(0)]]) {
     if (in.pos.y > u.revealY) discard_fragment();
     if (in.roof > 0.5) return float4(u.roof.rgb, 1.0);
-    float3 wall = mix(u.wall.rgb * 0.55, u.wall.rgb, in.shade);
-    float fw = max(fwidth(in.top), 1e-4);
-    float edge = smoothstep(1.0 - 1.6 * fw, 1.0 - 0.3 * fw, in.top);      // ~1.5 px band at the roof line
-    float3 c = mix(wall, u.accent.rgb, edge * 0.85);
+    // Dark faces, luminous edges: the roof line from the wallTop flag, the vertical corner edge
+    // from the distance to the triangle's provoking corner (each wall triangle holds one corner).
+    float3 wall = mix(u.wall.rgb * 0.6, u.wall.rgb, in.shade);
+    float fwT = max(fwidth(in.top), 1e-4);
+    float top = smoothstep(1.0 - 1.8 * fwT, 1.0 - 0.4 * fwT, in.top);
+    float dc = length(in.tilePos - in.corner);
+    float fwC = max(fwidth(dc), 1e-7);
+    float vert = 1.0 - smoothstep(0.5 * fwC, 1.5 * fwC, dc);
+    float edge = max(top, vert * 0.7);
+    float3 c = mix(wall, u.accent.rgb, edge * 0.9);
     return float4(c, 1.0);
 }
 
@@ -310,34 +330,30 @@ fragment float4 overlay_fragment(OverlayOut in [[stage_in]], constant FrameU& u 
     float a = 0.0;
     float3 rgb = in.color.rgb;
     switch (in.kind) {
-    case 0: {   // reticle: open square (corner brackets), corner ticks, centre dot
-        float tick = in.p.x;
-        float hs = in.size.x * 0.5 - tick - 1.0 * s;
+    case 0: {   // reticle: open square with heavier corner brackets and a centre dot
+        float hs = in.size.x * 0.5 - 2.0 * s;
         float edge = max(aq.x, aq.y) - hs;
         float other = min(aq.x, aq.y);
-        float outline = stroke(edge, 1.0 * s) * step(hs * 0.42, other);
-        float ticks = 0.0;
-        for (int k = 0; k < 4; k++) {
-            float2 c = float2(k & 1 ? hs : -hs, k & 2 ? hs : -hs);
-            ticks = max(ticks, stroke(segDist(q, c, c + sign(c) * tick), 1.0 * s));
-        }
-        float dot = 1.0 - smoothstep(0.8 * s, 1.6 * s, length(q));
-        a = max(max(outline, ticks), dot);
+        float outline = stroke(edge, 1.0 * s) * 0.5;
+        float bracket = stroke(edge, 1.6 * s) * step(hs * 0.45, other);
+        float dot = 1.0 - smoothstep(0.9 * s, 1.7 * s, length(q));
+        a = max(max(outline, bracket), dot);
         if (in.p.y > 0.5) {   // selected: a second, dimmer square outside
-            float e2 = max(aq.x, aq.y) - (hs + tick + 2.0 * s);
+            float e2 = max(aq.x, aq.y) - (hs - 1.0 * s) - 3.5 * s;
             a = max(a, stroke(e2, 1.0 * s) * 0.6);
         }
         break; }
-    case 1: {   // FOV wedge: sector of radius size.x/2 around p.x with half angle p.y
+    case 1: {   // FOV wedge: sector of radius size.x/2 around p.x with half angle p.y, brighter arc
         float R = in.size.x * 0.5 - 1.0 * s;
         float r = length(q);
         float ang = atan2(q.x, -q.y);                     // clockwise from up
         float da = ang - in.p.x;
         da = da - 6.28318530718 * round(da / 6.28318530718);
-        float inside = (1.0 - smoothstep(R - 1.5 * s, R, r)) * (1.0 - smoothstep(in.p.y - 0.02, in.p.y + 0.02, abs(da)));
-        float radial = mix(1.0, 0.35, clamp(r / max(R, 1.0), 0.0, 1.0));
-        float arc = stroke(r - R + 0.6 * s, 0.8 * s) * (1.0 - smoothstep(in.p.y - 0.02, in.p.y + 0.02, abs(da)));
-        a = inside * radial + arc * 0.5;
+        float sector = 1.0 - smoothstep(in.p.y - 0.02, in.p.y + 0.02, abs(da));
+        float inside = (1.0 - smoothstep(R - 1.5 * s, R, r)) * sector;
+        float radial = mix(1.0, 0.45, clamp(r / max(R, 1.0), 0.0, 1.0));
+        float arc = stroke(r - R + 0.7 * s, 1.0 * s) * sector;
+        a = min(1.0, 0.28 * inside * radial + 0.85 * arc);
         break; }
     case 2: {   // cluster block ▣
         float hs = in.size.x * 0.5 - 1.0 * s;

@@ -188,7 +188,6 @@ final class MapContainerView: NSView {
             labelFrameSkip += 1
             if labelFrameSkip % 2 == 1 { return }
         } else { labelFrameSkip = 0 }
-        let placed = planner.place(tiles: frame.tiles, projection: proj)
         var counts: [MapCountLabel] = []
         counts.reserveCapacity(frame.clusters.count)
         for c in frame.clusters {
@@ -196,7 +195,8 @@ final class MapContainerView: NSView {
             let side = MapRenderer.clusterSide(c.count)
             counts.append(MapCountLabel(text: Self.countText(c.count), center: CGPoint(x: s.x + side / 2 + 3, y: s.y)))
         }
-        labels.apply(placed, counts: counts) { [planner] in planner.width(of: $0) }
+        let placed = planner.place(tiles: frame.tiles, projection: proj, counts: counts)
+        labels.apply(placed.labels, counts: placed.counts) { [planner] in planner.width(of: $0) }
     }
 
     static func countText(_ n: Int) -> String {
