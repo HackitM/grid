@@ -154,3 +154,24 @@ final class UpdatePolicyTests: XCTestCase {
         XCTAssertEqual(back, p)
     }
 }
+
+final class UpdateDownloadHostTests: XCTestCase {
+    func testOnlyGitHubHTTPSHostsAreFollowed() {
+        func ok(_ s: String) -> Bool { UpdateFeed.isTrustedDownloadHost(URL(string: s)!) }
+        XCTAssertTrue(ok("https://github.com/HackitM/grid/releases/download/v1.0.0/GRID-1.0.0-macOS.zip"))
+        XCTAssertTrue(ok("https://objects.githubusercontent.com/github-production-release-asset/1/abc?sig=x"))
+        XCTAssertTrue(ok("https://release-assets.githubusercontent.com/github-production-release-asset/1/abc"))
+        XCTAssertTrue(ok("https://GitHub.com/x"))
+        XCTAssertTrue(ok("https://github.com:443/x"))
+
+        XCTAssertFalse(ok("http://github.com/HackitM/grid/releases/download/v1.0.0/a.zip"))       // not HTTPS
+        XCTAssertFalse(ok("https://github.com.evil.example/a.zip"))
+        XCTAssertFalse(ok("https://evilgithub.com/a.zip"))
+        XCTAssertFalse(ok("https://githubusercontent.com.evil.example/a.zip"))
+        XCTAssertFalse(ok("https://notgithubusercontent.com/a.zip"))
+        XCTAssertFalse(ok("https://user@github.com/a.zip"))
+        XCTAssertFalse(ok("https://github.com:8443/a.zip"))
+        XCTAssertFalse(ok("https://example.com/a.zip"))
+        XCTAssertFalse(ok("file:///tmp/a.zip"))
+    }
+}
