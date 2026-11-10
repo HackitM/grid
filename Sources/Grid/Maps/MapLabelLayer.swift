@@ -42,11 +42,20 @@ final class MapLabelPlanner {
         return kind == .place ? capped.uppercased() : capped
     }
 
+    /// Marks a cluster-count candidate so it can be told apart after placement.
+    private static let countMark = "\u{1}"
+
     /// Places labels for the tiles on screen. Deepest tiles win duplicates (same text and kind).
-    func place(tiles: [TileGeometry], projection proj: MapProjection) -> [PlacedMapLabel] {
+    /// Cluster counts (left-anchored at their block) are placed first so names never cover them.
+    func place(tiles: [TileGeometry], projection proj: MapProjection, counts: [MapCountLabel] = []) -> (labels: [PlacedMapLabel], counts: [MapCountLabel]) {
         let zoom = Float(proj.camera.zoom)
         var candidates: [LabelCandidate] = []
         var seen: Set<String> = []
+        for c in counts where !c.text.isEmpty {
+            let w = width(of: c.text) + 6
+            candidates.append(LabelCandidate(text: Self.countMark + c.text, kind: .place, priority: Int.min / 2,
+                                             center: SIMD2(c.center.x + w / 2, c.center.y), size: SIMD2(w, Self.labelHeight)))
+        }
         for t in tiles.sorted(by: { $0.id.z > $1.id.z }) {
             guard !t.labels.isEmpty else { continue }
             let (nw, se) = TileMath.bounds(t.id)
@@ -66,9 +75,18 @@ final class MapLabelPlanner {
                 if candidates.count >= 2000 { break }
             }
         }
-        let placed = LabelPlacer.place(candidates, viewport: proj.viewport, keep: lastTexts, max: Self.maxLabels, padding: 4)
+        let placed = LabelPlacer.place(candidates, viewport: proj.viewport, keep: lastTexts, max: Self.maxLabels + counts.count, padding: 4)
         lastTexts = Set(placed.map(\.text))
-        return placed.map { PlacedMapLabel(text: $0.text, kind: $0.kind, center: CGPoint(x: $0.center.x, y: $0.center.y)) }
+        var labels: [PlacedMapLabel] = []
+        var placedCounts: [MapCountLabel] = []
+        for c in placed {
+            if c.text.hasPrefix(Self.countMark) {
+                placedCounts.append(MapCountLabel(text: String(c.text.dropFirst()), center: CGPoint(x: c.center.x - c.size.x / 2, y: c.center.y)))
+            } else if labels.count < Self.maxLabels {
+                labels.append(PlacedMapLabel(text: c.text, kind: c.kind, center: CGPoint(x: c.center.x, y: c.center.y)))
+            }
+        }
+        return (labels, placedCounts)
     }
 }
 

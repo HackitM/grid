@@ -13,8 +13,9 @@ import simd
 /// Everything compiled once per process (shared by every map view on the same device).
 private struct MapPipelines {
     let device: MTLDevice
-    let floor, fill, stencil, line, extrusion, overlay: MTLRenderPipelineState
-    let dsNone, dsMasked, dsStencilWrite, dsExtrusion: MTLDepthStencilState
+    let floor, lattice, fill, stencil, line, extrusion, overlay: MTLRenderPipelineState
+    // Stencil bit planes: 0x01 fill-phase level mask, 0x02 water, 0x04 line-phase level mask.
+    let dsNone, dsFill, dsFillWrite, dsWater, dsLattice, dsLine, dsLineWrite, dsExtrusion: MTLDepthStencilState
     let unitQuad: MTLBuffer
 
     static let colorFormat = MTLPixelFormat.bgra8Unorm
@@ -55,12 +56,13 @@ private struct MapPipelines {
             return try? device.makeRenderPipelineState(descriptor: d)
         }
         guard let floor = pso("floor_vertex", "floor_fragment", blend: false),
+              let lattice = pso("floor_vertex", "floor_fragment", blend: true),
               let fill = pso("fill_vertex", "fill_fragment", blend: true),
               let stencil = pso("fill_vertex", "stencil_fragment", blend: false, colorWrite: false),
               let line = pso("line_vertex", "line_fragment", blend: true, maxBlend: true),
               let extrusion = pso("ext_vertex", "ext_fragment", blend: false),
               let overlay = pso("overlay_vertex", "overlay_fragment", blend: true) else { return nil }
-        self.floor = floor; self.fill = fill; self.stencil = stencil; self.line = line; self.extrusion = extrusion; self.overlay = overlay
+        self.floor = floor; self.lattice = lattice; self.fill = fill; self.stencil = stencil; self.line = line; self.extrusion = extrusion; self.overlay = overlay
 
         func ds(depth: Bool, stencil: MTLStencilDescriptor?) -> MTLDepthStencilState? {
             let d = MTLDepthStencilDescriptor()
@@ -69,18 +71,25 @@ private struct MapPipelines {
             d.frontFaceStencil = stencil; d.backFaceStencil = stencil
             return device.makeDepthStencilState(descriptor: d)
         }
-        // Geometry of a level is drawn only where no deeper tile has written the stencil.
-        let masked = MTLStencilDescriptor()
-        masked.stencilCompareFunction = .equal
-        masked.readMask = 0xFF; masked.writeMask = 0
-        // After a level is drawn its tile quads mark their footprint.
-        let write = MTLStencilDescriptor()
-        write.stencilCompareFunction = .always
-        write.depthStencilPassOperation = .replace
-        write.readMask = 0xFF; write.writeMask = 0xFF
-        guard let dsNone = ds(depth: false, stencil: nil), let dsMasked = ds(depth: false, stencil: masked),
-              let dsStencilWrite = ds(depth: false, stencil: write), let dsExtrusion = ds(depth: true, stencil: masked) else { return nil }
-        self.dsNone = dsNone; self.dsMasked = dsMasked; self.dsStencilWrite = dsStencilWrite; self.dsExtrusion = dsExtrusion
+        // Geometry of a level is drawn only where no deeper tile has written its bit; after a level
+        // its tile quads set the bit. Water sets its own bit so the lattice stays off it.
+        func st(read: UInt32, write: UInt32) -> MTLStencilDescriptor {
+            let d = MTLStencilDescriptor()
+            d.stencilCompareFunction = read == 0 ? .always : .equal
+            d.readMask = read; d.writeMask = write
+            d.depthStencilPassOperation = write == 0 ? .keep : .replace
+            return d
+        }
+        guard let dsNone = ds(depth: false, stencil: nil),
+              let dsFill = ds(depth: false, stencil: st(read: 0x01, write: 0)),
+              let dsFillWrite = ds(depth: false, stencil: st(read: 0, write: 0x01)),
+              let dsWater = ds(depth: false, stencil: st(read: 0x01, write: 0x02)),
+              let dsLattice = ds(depth: false, stencil: st(read: 0x02, write: 0)),
+              let dsLine = ds(depth: false, stencil: st(read: 0x04, write: 0)),
+              let dsLineWrite = ds(depth: false, stencil: st(read: 0, write: 0x04)),
+              let dsExtrusion = ds(depth: true, stencil: st(read: 0x04, write: 0)) else { return nil }
+        self.dsNone = dsNone; self.dsFill = dsFill; self.dsFillWrite = dsFillWrite; self.dsWater = dsWater
+        self.dsLattice = dsLattice; self.dsLine = dsLine; self.dsLineWrite = dsLineWrite; self.dsExtrusion = dsExtrusion
 
         let quad: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(1, 0), SIMD2(0, 1), SIMD2(1, 1)]
         guard let q = device.makeBuffer(bytes: quad, length: quad.count * MemoryLayout<SIMD2<Float>>.stride, options: .storageModeShared) else { return nil }
@@ -199,8 +208,8 @@ final class MapRenderer: NSObject, MTKViewDelegate {
     #endif
 
     #if DEBUG
-    /// QA: draw even though the test window is never key.
-    nonisolated(unsafe) static var debugForceActive = false
+    /// QA: draw even though the test window is never key (on by default for `--qa` launches).
+    nonisolated(unsafe) static var debugForceActive = ProcessInfo.processInfo.arguments.contains("--qa")
     #endif
 
     private static var compiledByDevice: [ObjectIdentifier: MapPipelines] = [:]
@@ -331,58 +340,14 @@ final class MapRenderer: NSObject, MTKViewDelegate {
             }
         }
 
-        // 1. Floor: void + grid lattice + reveal band.
-        enc.setDepthStencilState(pipes.dsNone)
-        enc.setRenderPipelineState(pipes.floor)
-        bindFrame(enc, vertex: nil, fragment: 0)
-        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-
-        // 2. Tiles, deepest level first; each level masks the ones above it through the stencil.
-        enc.setStencilReferenceValue(0)
-        for level in levels {
-            // Fills (classes outer so neighbouring tiles agree on order).
-            enc.setDepthStencilState(pipes.dsMasked)
-            enc.setRenderPipelineState(pipes.fill)
-            bindFrame(enc, vertex: nil, fragment: 0)
-            for cls in Self.fillOrder {
-                var d = UInt32(cls.rawValue)
-                var bound = false
-                for t in level {
-                    for b in t.fills where b.cls == cls.rawValue {
-                        if !bound { enc.setFragmentBytes(&d, length: 4, index: 1); bound = true }
-                        enc.setVertexBuffer(t.buffer, offset: b.vertexOffset, index: 0)
-                        enc.setVertexBytes(&t.uniforms, length: MemoryLayout<MapTileUniforms>.stride, index: 1)
-                        enc.drawIndexedPrimitives(type: .triangle, indexCount: b.indexCount, indexType: .uint32, indexBuffer: t.buffer, indexBufferOffset: b.indexOffset)
-                    }
-                }
-            }
-            // Lines with analytic glow.
-            enc.setRenderPipelineState(pipes.line)
-            bindFrame(enc, vertex: 2, fragment: 0)
-            for cls in Self.lineOrder {
-                for t in level {
-                    for b in t.lines where b.cls == cls.rawValue {
-                        enc.setVertexBuffer(t.buffer, offset: b.vertexOffset, index: 0)
-                        enc.setVertexBytes(&t.uniforms, length: MemoryLayout<MapTileUniforms>.stride, index: 1)
-                        enc.drawIndexedPrimitives(type: .triangle, indexCount: b.indexCount, indexType: .uint32, indexBuffer: t.buffer, indexBufferOffset: b.indexOffset)
-                    }
-                }
-            }
-            // Buildings: extruded when pitched, else footprints (walls collapse).
-            if level.contains(where: { $0.extrusion != nil }) {
-                enc.setDepthStencilState(pitched ? pipes.dsExtrusion : pipes.dsMasked)
-                enc.setRenderPipelineState(pipes.extrusion)
-                bindFrame(enc, vertex: 2, fragment: 0)
-                for t in level {
-                    guard let b = t.extrusion else { continue }
-                    enc.setVertexBuffer(t.buffer, offset: b.vertexOffset, index: 0)
-                    enc.setVertexBytes(&t.uniforms, length: MemoryLayout<MapTileUniforms>.stride, index: 1)
-                    enc.drawIndexedPrimitives(type: .triangle, indexCount: b.indexCount, indexType: .uint32, indexBuffer: t.buffer, indexBufferOffset: b.indexOffset)
-                }
-            }
-            // Mark this level's footprint so shallower (ancestor) tiles don't draw under it.
-            enc.setDepthStencilState(pipes.dsStencilWrite)
-            enc.setStencilReferenceValue(1)
+        func drawTile(_ enc: MTLRenderCommandEncoder, _ t: GPUTile, _ b: GPUTile.Batch) {
+            enc.setVertexBuffer(t.buffer, offset: b.vertexOffset, index: 0)
+            enc.setVertexBytes(&t.uniforms, length: MemoryLayout<MapTileUniforms>.stride, index: 1)
+            enc.drawIndexedPrimitives(type: .triangle, indexCount: b.indexCount, indexType: .uint32, indexBuffer: t.buffer, indexBufferOffset: b.indexOffset)
+        }
+        func writeLevelMask(_ enc: MTLRenderCommandEncoder, _ level: [GPUTile], _ ds: MTLDepthStencilState) {
+            enc.setDepthStencilState(ds)
+            enc.setStencilReferenceValue(0xFF)
             enc.setRenderPipelineState(pipes.stencil)
             enc.setVertexBuffer(pipes.unitQuad, offset: 0, index: 0)
             for t in level {
@@ -390,6 +355,70 @@ final class MapRenderer: NSObject, MTKViewDelegate {
                 enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
             }
             enc.setStencilReferenceValue(0)
+        }
+        var mode0: UInt32 = 0, mode1: UInt32 = 1
+
+        // 1. Void + reveal band.
+        enc.setDepthStencilState(pipes.dsNone)
+        enc.setRenderPipelineState(pipes.floor)
+        bindFrame(enc, vertex: nil, fragment: 0)
+        enc.setFragmentBytes(&mode0, length: 4, index: 1)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+
+        // 2. Fills, deepest level first; each level masks the ones above it (bit 0). Water marks bit 1.
+        enc.setStencilReferenceValue(0)
+        for level in levels {
+            enc.setRenderPipelineState(pipes.fill)
+            bindFrame(enc, vertex: nil, fragment: 0)
+            for cls in Self.fillOrder {
+                let water = cls == .water || cls == .waterway
+                var d = UInt32(cls.rawValue)
+                var bound = false
+                for t in level {
+                    for b in t.fills where b.cls == cls.rawValue {
+                        if !bound {
+                            enc.setFragmentBytes(&d, length: 4, index: 1)
+                            enc.setDepthStencilState(water ? pipes.dsWater : pipes.dsFill)
+                            enc.setStencilReferenceValue(water ? 2 : 0)
+                            bound = true
+                        }
+                        drawTile(enc, t, b)
+                    }
+                }
+            }
+            enc.setStencilReferenceValue(0)
+            writeLevelMask(enc, level, pipes.dsFillWrite)
+        }
+
+        // 3. The grid lattice above the land tints, kept off water by the stencil.
+        if frame.gridFloor {
+            enc.setDepthStencilState(pipes.dsLattice)
+            enc.setRenderPipelineState(pipes.lattice)
+            bindFrame(enc, vertex: nil, fragment: 0)
+            enc.setFragmentBytes(&mode1, length: 4, index: 1)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        }
+
+        // 4. Lines and buildings, deepest level first (bit 2 masks ancestors).
+        for level in levels {
+            enc.setDepthStencilState(pipes.dsLine)
+            enc.setRenderPipelineState(pipes.line)
+            bindFrame(enc, vertex: 2, fragment: 0)
+            for cls in Self.lineOrder {
+                for t in level {
+                    for b in t.lines where b.cls == cls.rawValue { drawTile(enc, t, b) }
+                }
+            }
+            if level.contains(where: { $0.extrusion != nil }) {
+                enc.setDepthStencilState(pitched ? pipes.dsExtrusion : pipes.dsLine)
+                enc.setRenderPipelineState(pipes.extrusion)
+                bindFrame(enc, vertex: 2, fragment: 0)
+                for t in level {
+                    guard let b = t.extrusion else { continue }
+                    drawTile(enc, t, b)
+                }
+            }
+            writeLevelMask(enc, level, pipes.dsLineWrite)
         }
 
         // 3. Overlays (CPU-projected, instanced SDF quads).
@@ -438,8 +467,8 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         var s = MapFrameScalars()
         s.invCenteredVP = Self.centeredInverse(proj)
         s.bg0 = p.bg0; s.bg3 = p.bg3; s.accent = p.accent; s.glow = p.glow; s.text = p.text; s.line = p.line
-        s.roof = flat ? mapMix(p.bg2, p.accent, 0.05) : mapMix(p.bg2, p.accent, 0.10)
-        s.wall = mapMix(p.bg1, p.accent, 0.07)
+        s.roof = flat ? mapMix(p.bg1, p.accent, 0.06) : mapMix(p.bg1, p.accent, 0.13)
+        s.wall = mapMix(p.bg1, p.accent, 0.05)
         s.viewportPx = viewportPx
         s.scale = scale
         s.pitch = Float(cam.pitch)
@@ -538,8 +567,8 @@ final class MapRenderer: NSObject, MTKViewDelegate {
 
         // ALPR cameras: FOV wedges under the reticles.
         if !frame.cameras.isEmpty {
-            let wedgeR = Float(min(48, max(12, 40 / max(0.01, metersPerPoint)))) * s
-            var wedge = p.accent; wedge.w = 0.22
+            let wedgeR = Float(min(48, max(14, 40 / max(0.01, metersPerPoint)))) * s
+            let wedge = p.accent   // fill 28% and arc 85% are applied in the shader
             var projected: [(SIMD2<Float>, CameraMarker)] = []
             projected.reserveCapacity(frame.cameras.count)
             for c in frame.cameras {
@@ -554,10 +583,9 @@ final class MapRenderer: NSObject, MTKViewDelegate {
             }
             for (q, c) in projected {
                 var color = p.accent
-                color.w = c.isFlock ? 1.0 : 0.78
-                let side: Float = (c.selected ? 16 : 13) * s
-                let tick: Float = 3 * s
-                add(.reticle, at: q, size: SIMD2(repeating: side + 2 * tick + 2 * s), color: color, p: SIMD4(tick, c.selected ? 1 : 0, 0, 0))
+                color.w = c.isFlock ? 1.0 : 0.7
+                let side: Float = 13 * s
+                add(.reticle, at: q, size: SIMD2(repeating: side + 4 * s + (c.selected ? 8 * s : 0)), color: color, p: SIMD4(0, c.selected ? 1 : 0, 0, 0))
             }
         }
 
@@ -628,16 +656,16 @@ struct MapStyle {
         var fill = [SIMD4<Float>](repeating: .zero, count: mapClassTableCount)
         var style = [SIMD4<Float>](repeating: .zero, count: mapClassTableCount)
         var color = [SIMD4<Float>](repeating: .zero, count: mapClassTableCount)
-        // Width factor: roads grow with zoom, slower than the map itself.
-        let wf = Float(min(3, max(0.45, pow(2, (zoom - 14) * 0.45))))
+        // Width factor: roads grow with zoom, slower than the map itself. Hairline threads at low zoom.
+        let wf = Float(min(2.2, max(0.5, pow(2, (zoom - 14) * 0.42))))
         func setFill(_ c: RenderClass, _ col: SIMD4<Float>, _ a: Float) { var v = col; v.w = a; fill[Int(c.rawValue)] = v }
         func setLine(_ c: RenderClass, hw: Float, _ col: SIMD4<Float>, alpha: Float, glow g: Float, dash: Float = 0) {
-            let half = max(0.5, hw * wf) * scale
-            let glowPx: Float = glow && g > 0 ? (2.0 + hw * wf * 1.1) * scale : 0
+            let half = max(0.4, hw * wf) * scale
+            let glowPx: Float = glow && g > 0 ? (1.5 + hw * wf * 1.6) * scale : 0
             style[Int(c.rawValue)] = SIMD4(half, glowPx, g, dash * scale)
             var v = col; v.w = alpha; color[Int(c.rawValue)] = v
         }
-        let water = mapMix(p.bg3, p.accent, 0.035)
+        let water = mapMix(p.bg3, p.bg0, 0.5)   // the darkest surface: land tints sit above it
         setFill(.water, water, 1)
         setFill(.waterway, water, 1)
         setFill(.landuse, mapMix(p.bg1, p.accent, 0.05), 0.75)
@@ -645,19 +673,21 @@ struct MapStyle {
         setFill(.building, p.bg2, 0.9)
         setFill(.aeroway, mapMix(p.bg2, p.textMute, 0.1), 0.8)
 
-        setLine(.water, hw: 0.5, p.accent, alpha: 0.35, glow: 0)
-        setLine(.waterway, hw: 0.8, mapMix(p.accent, p.bg3, 0.45), alpha: 0.7, glow: 0.15)
-        setLine(.path, hw: 0.35, p.textMute, alpha: 0.45, glow: 0, dash: 3)
-        setLine(.rail, hw: 0.5, p.textMute, alpha: 0.6, glow: 0, dash: 6)
-        setLine(.service, hw: 0.4, p.textMute, alpha: 0.5, glow: 0.1)
-        setLine(.minor, hw: 0.5, mapMix(p.textDim, p.accent, 0.3), alpha: 0.6, glow: 0.18)
-        setLine(.tertiary, hw: 0.65, mapMix(p.textDim, p.accent, 0.5), alpha: 0.8, glow: 0.28)
-        setLine(.secondary, hw: 0.85, mapMix(p.text, p.accent, 0.6), alpha: 0.85, glow: 0.4)
-        setLine(.primary, hw: 1.05, p.accent, alpha: 0.95, glow: 0.55)
-        setLine(.trunk, hw: 1.3, p.accent, alpha: 1, glow: 0.7)
-        setLine(.motorway, hw: 1.5, mapMix(p.accent, p.text, 0.25), alpha: 1, glow: 0.9)
-        setLine(.boundary, hw: 0.6, p.accent, alpha: 0.5, glow: 0, dash: 5)
-        setLine(.aeroway, hw: 1.0, p.textDim, alpha: 0.7, glow: 0.1)
+        // Thin bright cores with a soft halo for the top three classes only; everything below is
+        // pure accent at falling alpha, no glow, so a city at z13 reads as a graded lattice.
+        setLine(.water, hw: 0.45, p.accent, alpha: 0.35, glow: 0)
+        setLine(.waterway, hw: 0.6, mapMix(p.accent, p.bg3, 0.45), alpha: 0.6, glow: 0)
+        setLine(.path, hw: 0.25, p.textMute, alpha: 0.35, glow: 0, dash: 3)
+        setLine(.rail, hw: 0.35, p.textMute, alpha: 0.45, glow: 0, dash: 6)
+        setLine(.service, hw: 0.3, p.accent, alpha: 0.3, glow: 0)
+        setLine(.minor, hw: 0.4, p.accent, alpha: 0.38, glow: 0)
+        setLine(.tertiary, hw: 0.45, p.accent, alpha: 0.55, glow: 0)
+        setLine(.secondary, hw: 0.55, p.accent, alpha: 0.7, glow: 0)
+        setLine(.primary, hw: 0.65, p.accent, alpha: 0.95, glow: 0.45)
+        setLine(.trunk, hw: 0.75, mapMix(p.accent, p.text, 0.15), alpha: 1, glow: 0.6)
+        setLine(.motorway, hw: 0.85, mapMix(p.accent, p.text, 0.35), alpha: 1, glow: 0.7)
+        setLine(.boundary, hw: 0.5, p.accent, alpha: 0.45, glow: 0, dash: 5)
+        setLine(.aeroway, hw: 0.7, p.textDim, alpha: 0.6, glow: 0)
         self.fill = fill; lineStyle = style; lineColor = color
     }
 }
