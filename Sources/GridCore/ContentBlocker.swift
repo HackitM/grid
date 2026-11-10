@@ -122,7 +122,7 @@ public struct ContentBlockerOutput: Sendable {
 
 public enum ContentBlockerCompiler {
     /// Bump when the conversion changes so cached compiled lists are invalidated.
-    public static let formatVersion = 1
+    public static let formatVersion = 2
     /// WebKit rejects a JSON array with more rules than this ("Too many rules in JSON array").
     public static let webKitRuleLimit = 150_000
 
@@ -581,6 +581,13 @@ struct Compilation {
 
         if let third = filter.thirdParty { rule.loadType = third ? "third-party" : "first-party" }
 
+        // Every site the filter was meant for was dropped (e.g. `kat.*` entities): what is left would
+        // apply everywhere (or everywhere but its exclusions), so the filter is skipped. This once
+        // turned `*$script,1p,domain=~kat.ai|kat.*` into "block first-party scripts on every site".
+        if filter.droppedDomains && filter.includeDomains.isEmpty {
+            skip(.unsupportedDomain, list: list)
+            return
+        }
         if !filter.includeDomains.isEmpty && !filter.excludeDomains.isEmpty {
             skip(.mixedDomains, list: list)
             return
@@ -857,6 +864,7 @@ struct Compilation {
 
         var include: [String] = []
         var exclude: [String] = []
+        var droppedInclusion = false
         let domainList = entry.text[..<entry.anchor.lowerBound]
         for raw in domainList.split(separator: ",") {
             var domain = raw
@@ -864,9 +872,15 @@ struct Compilation {
             if domain.hasPrefix("~") { excluded = true; domain = domain.dropFirst() }
             guard let valid = Compilation.validDomain(domain) else {
                 if excluded || entry.isException { skip(.unsupportedDomain, list: list); return }
+                droppedInclusion = true
                 continue // dropped inclusion narrows the filter
             }
             if excluded { exclude.append(valid) } else { include.append(valid) }
+        }
+        // Every site it was meant for was dropped: what's left would hide the element everywhere.
+        if droppedInclusion && include.isEmpty {
+            skip(.unsupportedDomain, list: list)
+            return
         }
         if !domainList.isEmpty && include.isEmpty && exclude.isEmpty {
             skip(.unsupportedDomain, list: list)
