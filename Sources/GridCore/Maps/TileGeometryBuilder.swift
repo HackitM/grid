@@ -4,6 +4,7 @@ import simd
 /// Decoded MVT tile → render geometry (tile-local 0…1 positions, ready for GPU upload).
 public enum TileGeometryBuilder {
     static let maxLabelsPerTile = 2000
+    static let maxPOIsPerTile = 1500
     /// Light direction in tile space (y down) used to shade building walls: from the upper left.
     private static let light = simd_normalize(SIMD2<Float>(-0.5, -0.8))
 
@@ -71,6 +72,7 @@ public enum TileGeometryBuilder {
         var extVerts: [ExtrusionVertex] = []
         var extIdx: [UInt32] = []
         var labels: [LabelAnchor] = []
+        var pois: [POIAnchor] = []
 
         for layer in tile.layers where OpenMapTilesSchema.layers.contains(layer.name) {
             guard layer.extent > 0 else { continue }
@@ -119,6 +121,12 @@ public enum TileGeometryBuilder {
                             labels.append(LabelAnchor(text: info.text, kind: info.kind, priority: info.priority, pos: pos, minZoom: info.minZoom, dir: dir))
                         }
                     }
+                case .points(let pts) where layer.name == "poi":
+                    for p in pts where pois.count < maxPOIsPerTile {
+                        let pos = norm(p)
+                        guard inTile(pos), let poi = OpenMapTilesSchema.poi(tags: f.tags, pos: pos) else { continue }
+                        pois.append(poi)
+                    }
                 case .points(let pts):
                     guard layer.name == "place" || layer.name == "water_name", labels.count < maxLabelsPerTile,
                           let info = OpenMapTilesSchema.label(layer: layer.name, tags: f.tags) else { continue }
@@ -150,8 +158,8 @@ public enum TileGeometryBuilder {
             extrusion = ExtrusionBatch(vertices: extVerts, indices: extIdx)
             bytes += extVerts.count * MemoryLayout<ExtrusionVertex>.stride + extIdx.count * 4
         }
-        bytes += labels.count * MemoryLayout<LabelAnchor>.stride
-        return TileGeometry(id: id, fills: fills, lines: lines, extrusion: extrusion, labels: labels, byteCount: bytes)
+        bytes += labels.count * MemoryLayout<LabelAnchor>.stride + pois.count * (MemoryLayout<POIAnchor>.stride + 32)
+        return TileGeometry(id: id, fills: fills, lines: lines, extrusion: extrusion, labels: labels, pois: pois, byteCount: bytes)
     }
 
     @inline(__always) private static func inTile(_ p: SIMD2<Float>) -> Bool { p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1 }

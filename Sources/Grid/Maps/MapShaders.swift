@@ -90,6 +90,7 @@ enum MapOverlayKind: UInt32 {
     case locationDot = 3
     case ring = 4         // p.x thickness px
     case segment = 5      // p.x angle (rad), p.y half length px, p.z dash px (0 solid), p.w phase px
+    case pin = 6          // the chosen place: diamond outline, filled core, faint halo
 }
 
 /// Byte layout of the frame uniform blob.
@@ -609,6 +610,15 @@ fragment float4 overlay_fragment(OverlayOut in [[stage_in]], constant FrameU& u 
             line *= smoothstep(0.0, e, f) * (1.0 - smoothstep(0.5 - e, 0.5, f));
         }
         a = line;
+        break; }
+    case 6: {   // chosen place: a diamond with a filled core and a faint halo
+        float hs = in.size.x * 0.5 - 4.0 * s;
+        float dm = (aq.x + aq.y) * 0.70710678;            // distance along the diamond's normal
+        float edge = dm - hs * 0.70710678;
+        float outline = stroke(edge, 1.6 * s);
+        float core = 1.0 - smoothstep(hs * 0.30 - 0.5, hs * 0.30 + 0.5, dm);
+        float halo = (1.0 - smoothstep(0.0, 3.5 * s, edge)) * step(0.0, edge) * 0.3;
+        a = max(max(outline, core), halo);
         break; }
     default: break;
     }

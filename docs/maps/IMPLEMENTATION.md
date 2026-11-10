@@ -628,3 +628,29 @@ cache) and draws them in the render pass from a string atlas (see the addendum a
   The renderer keeps up to 160 tiles / 320 MB on the GPU and spreads uploads over frames.
 - **QA.** `{"cmd":"map","op":"gesture",…}` drives pan/zoom/rotate through the view's gesture
   path at display rate and writes frame times, label lag and tile coverage (DebugHooks.swift).
+
+## Addendum: places and search
+
+- **Points of interest** come from the OpenMapTiles `poi` layer already in the base tiles
+  (z12–z14): `OpenMapTilesSchema.poi` keeps named points, `POICatalog` maps `class`/`subclass`
+  to ten categories (food, shops, fuel, transit, health, lodging, parks, sights, services, other)
+  and skips noise (entrances, toilets, benches…). They live in `TileGeometry.pois` and are drawn
+  by the label planner as a glyph (an SF Symbol rasterised into the R8 atlas as a coverage mask)
+  plus the name, at most 28 per frame on top of the 40 names, after road names in priority. The
+  Places layer and per-category chips set `MapFrame.poiMask`. Clicks pick only glyphs drawn in
+  the last frame.
+- **Local search** (`LocalSearch` in GridCore) searches the place, water, street and POI names of
+  every decoded tile in memory: accent-folded, whole-name and prefix matches first, then words and
+  substrings (no scattered subsequences); more important places and nearer ones rank higher, and
+  the same name and kind within a kind-specific radius collapses to one result. Entries are built
+  per tile revision off the main thread. Nothing leaves the Mac.
+- **Online search** (`Nominatim` in GridCore, `MapSearch` in the app) follows the public server's
+  policy: only on an explicit action (Return with no local match, ⌘Return, or the row), never as
+  autocomplete; one request a second (`RequestSpacer`); answers cached in memory for 24 h
+  (`ExpiringCache`); GRID's identifying User-Agent; an Off switch and a custom https endpoint in
+  Settings › Map. First use asks (SEARCH-NET). The visible area is sent as a bias (`viewbox`), not
+  a limit. Responses are capped at 512 KB and 10 results and treated as untrusted. Queries are
+  never written to disk or logged.
+- **Chosen place**: `MapModel.place` draws a diamond pin (`MapOverlayKind.pin`) with its name
+  placed before every other label, and the side column shows a PLACE inspector (address,
+  coordinates, Apple Maps and OpenStreetMap links).

@@ -12,6 +12,7 @@ final class MapModel {
     let alpr = ALPRStore()
     let terrain = TerrainStore()
     let location = LocationProvider()
+    let search = MapSearch()
     @ObservationIgnored weak var app: AppState?
 
     /// The camera, always current: gestures land here at once. While a gesture runs, views that
@@ -31,6 +32,12 @@ final class MapModel {
     var showGrid: Bool { didSet { d.set(showGrid, forKey: "map.layer.grid"); refresh() } }
     /// Elevation: shaded relief, contour lines, and 3D terrain when tilted.
     var showTerrain: Bool { didSet { d.set(showTerrain, forKey: "map.layer.terrain"); terrain.enabled = enabledStore && showTerrain; refresh() } }
+    /// Points of interest (shops, stops, sights…) from the map tiles, as glyphs.
+    var showPlaces: Bool { didSet { d.set(showPlaces, forKey: "map.layer.places"); refresh() } }
+    /// Place categories switched off with the chips under the Places layer.
+    var hiddenCategories: Set<POICategory> {
+        didSet { d.set(hiddenCategories.map { Int($0.rawValue) }.sorted(), forKey: "map.places.hidden"); refresh() }
+    }
     /// Vertical exaggeration of the 3D terrain (1 = true scale).
     var terrainExaggeration: Double { didSet { d.set(terrainExaggeration, forKey: "map.terrain.exaggeration"); frameRevision &+= 1 } }
 
@@ -38,6 +45,8 @@ final class MapModel {
     var drawingRegion = false
     private(set) var draftRect: (Mercator, Mercator)?
     private(set) var selected: Int?
+    /// The chosen place: a search result or a clicked point of interest.
+    private(set) var place: PlaceResult?
     private(set) var reveal: Float = 1
     private(set) var frameRevision = 0
     /// Error or progress line for the page (downloads, catalogue).
@@ -69,13 +78,15 @@ final class MapModel {
 
     init() {
         d.register(defaults: ["map.layer.alpr": true, "map.layer.regions": true, "map.layer.buildings": true, "map.layer.grid": true,
-                              "map.layer.terrain": true, "map.terrain.exaggeration": 1.5,
+                              "map.layer.terrain": true, "map.terrain.exaggeration": 1.5, "map.layer.places": true,
                               "map.enabled": false, "map.rememberView": false])
         showCameras = d.bool(forKey: "map.layer.alpr")
         showRegions = d.bool(forKey: "map.layer.regions")
         showBuildings = d.bool(forKey: "map.layer.buildings")
         showGrid = d.bool(forKey: "map.layer.grid")
         showTerrain = d.bool(forKey: "map.layer.terrain")
+        showPlaces = d.bool(forKey: "map.layer.places")
+        hiddenCategories = Set((d.array(forKey: "map.places.hidden") as? [Int] ?? []).compactMap { POICategory(rawValue: UInt8(clamping: $0)) })
         terrainExaggeration = min(3, max(1, d.double(forKey: "map.terrain.exaggeration")))
         enabledStore = d.bool(forKey: "map.enabled")
         // Start over the continental US (or the remembered view, if that setting is on).
@@ -89,6 +100,7 @@ final class MapModel {
         tiles.enabled = enabledStore
         alpr.enabled = enabledStore
         terrain.enabled = enabledStore && showTerrain
+        search.model = self
     }
 
     /// Set once Locate has centred the map this session: the remembered view must never hold the
@@ -271,6 +283,8 @@ final class MapModel {
             }
         }
         f.location = fix
+        f.poiMask = poiMask
+        if let pl = place { f.pin = PlaceMarker(world: TileMath.project(pl.coordinate), title: pl.name) }
         if showRegions {
             for r in alpr.regions {
                 f.regions.append(RegionOutline(rings: r.meta.polygon.polygons.compactMap { $0.first?.map(TileMath.project) }, highlighted: false))
@@ -306,7 +320,61 @@ final class MapModel {
         return alpr.index.cameras[s]
     }
 
-    func select(_ i: Int?) { selected = i; frameRevision &+= 1 }
+    func select(_ i: Int?) {
+        selected = i
+        if i != nil { place = nil }
+        frameRevision &+= 1
+    }
+
+    /// Bits of the place categories drawn (0 when the Places layer is off).
+    var poiMask: UInt16 {
+        guard showPlaces else { return 0 }
+        var m: UInt16 = 0
+        for c in POICategory.allCases where !hiddenCategories.contains(c) { m |= 1 << UInt16(c.rawValue) }
+        return m
+    }
+
+    /// Shows a place (pin, inspector); `fly` moves the map to it.
+    func selectPlace(_ r: PlaceResult?, fly: Bool = false) {
+        place = r
+        if r != nil { selected = nil }
+        frameRevision &+= 1
+        guard let r else { return }
+        app?.inspectorVisible = true
+        if fly {
+            var c = camera
+            c.center = TileMath.project(r.coordinate)
+            // Keep the view as close as it is when that already shows the place well.
+            let z = r.suggestedZoom
+            c.zoom = camera.isGlobe || abs(camera.zoom - z) > 1.5 ? z : max(camera.zoom, min(z, 17))
+            setCamera(c)
+        }
+    }
+
+    /// The drawn point of interest nearest a view point (within 14 pt), from the last frame.
+    private func poi(at p: SIMD2<Double>, _ proj: any MapScreenProjection) -> PlaceResult? {
+        guard let f = lastFrame, f.poiMask != 0 else { return nil }
+        let zoom = Float(camera.zoom)
+        var best: (Double, POIAnchor, Mercator)?
+        for t in f.tiles where !t.pois.isEmpty {
+            let (nw, se) = TileMath.bounds(t.id)
+            for a in t.pois where a.minZoom <= zoom && f.poiMask & (1 << UInt16(a.category.rawValue)) != 0 {
+                let w = Mercator(x: nw.x + Double(a.pos.x) * (se.x - nw.x), y: nw.y + Double(a.pos.y) * (se.y - nw.y))
+                guard let s = screenOnTerrain(w, proj, drawnFrame) else { continue }
+                let d = hypot(s.x - p.x, s.y - p.y)
+                guard d < 14, d < (best?.0 ?? .infinity) else { continue }
+                // Only a glyph that is on screen (not dropped for overlapping another label).
+                let shown = MapLabelPlanner.display(a.name, kind: .road)
+                guard MapLabelPlanner.drawnPOIs.contains(where: { $0.name == shown && hypot($0.center.x - s.x, $0.center.y - s.y) < 4 }) else { continue }
+                best = (d, a, w)
+            }
+        }
+        guard let (_, a, w) = best else { return nil }
+        let ll = TileMath.unproject(w)
+        return PlaceResult(id: String(format: "poi:%.6f,%.6f:", ll.lat, ll.lon) + a.name, name: a.name, kind: .poi, category: a.category,
+                           detail: a.detail, coordinate: ll, source: .local,
+                           distance: nil)
+    }
 
     func camerasInViewCount() -> Int { visibleBBox().map { alpr.index.query($0).count } ?? 0 }
 
@@ -521,11 +589,15 @@ final class MapModel {
                 }
             }
             select(nil)
+            if place != nil { selectPlace(nil) }
             return
         }
         guard let ground = pick(p, proj) else { select(nil); return }
         let maxWorld = 12 / proj.worldScale
-        select(alpr.index.nearest(to: TileMath.unproject(ground), maxWorldDistance: maxWorld))
+        if let cam = alpr.index.nearest(to: TileMath.unproject(ground), maxWorldDistance: maxWorld) { select(cam); return }
+        if let hit = poi(at: p, proj) { selectPlace(hit); return }
+        select(nil)
+        if place != nil { selectPlace(nil) }
     }
 
     // MARK: Right-click menu
@@ -541,6 +613,9 @@ final class MapModel {
         var items: [GridMenuItem] = []
         if let i = camIndex {
             items.append(.action("Inspect Camera") { [weak self] in self?.select(i); self?.app?.inspectorVisible = true })
+            items.append(.divider)
+        } else if let hit = poi(at: p, proj) {
+            items.append(.action("Inspect \(hit.name)") { [weak self] in self?.selectPlace(hit) })
             items.append(.divider)
         }
         items.append(.action("Centre Map Here") { [weak self] in self?.flyTo(ll) })
@@ -658,6 +733,9 @@ final class MapModel {
         terrain.clear()
         tiles.clearMemory()
         select(nil)
+        selectPlace(nil)
+        search.clear()
+        search.forgetOnline()
         Task { await tiles.loadSource(); refresh() }
     }
 }

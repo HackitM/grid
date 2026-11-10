@@ -32,8 +32,16 @@ final class MapLabelPlanner {
     static let countFont = NSFont.monospacedSystemFont(ofSize: 9.5, weight: .semibold)
     static let labelHeight: Double = 12
     static let maxLabels = 40
+    /// Points of interest are counted apart from names, so they never crowd out street names.
+    static let maxPOIs = 28
+    /// A POI's glyph: its box in points, and the gap before its name.
+    static let iconSize: Double = 12, iconGap: Double = 3
 
-    enum Style: UInt8 { case place, road, water, count }
+    enum Style: UInt8 { case place, road, water, count, poi }
+
+    /// The points of interest drawn in the last frame (glyph centre in view points, name): a click
+    /// picks only what the user can see. One map view exists, so this is shared.
+    private(set) static var drawnPOIs: [(center: SIMD2<Double>, name: String)] = []
 
     struct Placed {
         /// Index into the planner's string table (`text(of:)`), stable until `epoch` changes.
@@ -43,6 +51,9 @@ final class MapLabelPlanner {
         var center: SIMD2<Double>
         /// Radians, clockwise in screen space; 0 for level labels.
         var angle: Double
+        /// A point of interest's category (`POICategory.rawValue`, 0: not a POI) and its glyph's centre.
+        var icon: UInt8 = 0
+        var iconCenter: SIMD2<Double> = .zero
     }
 
     // Interned strings: one id per (style, display text).
@@ -90,6 +101,8 @@ final class MapLabelPlanner {
         var minZoom: Float
         var place: Bool
         var hasDir: Bool
+        /// `POICategory.rawValue` for a point of interest, else 0.
+        var icon: UInt8 = 0
         var x, y, ax, ay: Double
         var worldPerMeter: Double
         /// Elevation in metres from the frame's terrain (nan: none), refreshed per frame build.
@@ -119,6 +132,13 @@ final class MapLabelPlanner {
                               x: x, y: y, ax: x + Double(a.dir.x) * w * 0.02, ay: y + Double(a.dir.y) * h * 0.02,
                               worldPerMeter: MapProjection.worldUnitsPerMeter(y: y)))
         }
+        for a in t.pois {
+            let text = Self.display(a.name, kind: .road)
+            guard !text.isEmpty else { continue }
+            let x = nw.x + Double(a.pos.x) * w, y = nw.y + Double(a.pos.y) * h
+            out.append(Anchor(id: intern(text, .poi), priority: 920 + min(a.rank, 79), minZoom: a.minZoom, place: false, hasDir: false,
+                              icon: a.category.rawValue, x: x, y: y, ax: x, ay: y, worldPerMeter: MapProjection.worldUnitsPerMeter(y: y)))
+        }
         let c = TileLabels(revision: t.revision, anchors: out)
         tileCache[t.id] = c
         return c
@@ -143,7 +163,7 @@ final class MapLabelPlanner {
         if texts.count > 12_000 { startOver() }
         if frame.stamp == 0 || frame.stamp != orderStamp {
             orderStamp = frame.stamp
-            order = frame.tiles.filter { !$0.labels.isEmpty }.sorted { $0.id.z > $1.id.z }.map(prepared)
+            order = frame.tiles.filter { !$0.labels.isEmpty || !$0.pois.isEmpty }.sorted { $0.id.z > $1.id.z }.map(prepared)
             if tileCache.count > 2 * frame.tiles.count + 64 {
                 let keep = Set(frame.tiles.map(\.id))
                 tileCache = tileCache.filter { keep.contains($0.key) }
@@ -181,13 +201,31 @@ final class MapLabelPlanner {
                     tile.anchors[i].raw = frame.rawElevation(at: Mercator(x: tile.anchors[i].x, y: tile.anchors[i].y)) ?? .nan
                 }
             }
-            for a in tile.anchors where a.minZoom <= zoom && seenIn[Int(a.id)] != frameNo {
+            for a in tile.anchors where a.minZoom <= zoom {
+                // A name shows once per frame; points of interest repeat (two cafés of a chain),
+                // and the collision pass drops a copy in the same spot.
+                if a.icon != 0 {
+                    guard frame.poiMask & (1 << UInt16(a.icon)) != 0 else { continue }
+                } else if seenIn[Int(a.id)] == frameNo { continue }
                 let z = lifted && !a.raw.isNaN ? frame.lift.lift(a.raw) : 0
                 guard let s = screen(a.x, a.y, z, a.worldPerMeter) else { continue }
                 let tw = widths[Int(a.id)] + 8
                 // Nothing wider than this can reach the view from here.
                 let reach = tw / 2 + half
                 guard s.x > -reach, s.y > -reach - 10, s.x < vp.x + reach, s.y < vp.y + reach else { continue }
+                if a.icon != 0 {
+                    // Glyph on the point, name to its right.
+                    let left = s.x - Self.iconSize / 2 - 1
+                    let wbox = Self.iconSize + Self.iconGap + widths[Int(a.id)] + 4
+                    let box = SIMD2(left + wbox / 2, s.y)
+                    guard box.x + wbox / 2 > 0, box.y + half > 0, box.x - wbox / 2 < vp.x, box.y - half < vp.y else { continue }
+                    seenIn[Int(a.id)] = frameNo
+                    boxes.append(LabelBox(center: box, size: SIMD2(wbox, Self.labelHeight), priority: a.priority, keep: placedIn[Int(a.id)] == frameNo - 1))
+                    candidates.append(Placed(id: a.id, style: .poi, center: SIMD2(s.x + Self.iconSize / 2 + Self.iconGap + widths[Int(a.id)] / 2, s.y),
+                                             angle: 0, icon: a.icon, iconCenter: s))
+                    if boxes.count >= 2000 { break outer }
+                    continue
+                }
                 var size = SIMD2(tw, Self.labelHeight)
                 var center = s + SIMD2(0, a.place ? 10 : 0)
                 var angle = 0.0
@@ -209,16 +247,20 @@ final class MapLabelPlanner {
             }
         }
         var out: [Placed] = []
-        var names = 0
-        for i in LabelPlacer.place(boxes: boxes, viewport: vp, max: Self.maxLabels + countBoxes, padding: 4) {
+        var names = 0, pois = 0
+        for i in LabelPlacer.place(boxes: boxes, viewport: vp, max: Self.maxLabels + Self.maxPOIs + countBoxes, padding: 4) {
             let c = candidates[i]
-            if c.style != .count {
+            if c.style == .poi {
+                guard pois < Self.maxPOIs else { continue }
+                pois += 1
+            } else if c.style != .count {
                 guard names < Self.maxLabels else { continue }
                 names += 1
             }
             placedIn[Int(c.id)] = frameNo
             out.append(c)
         }
+        Self.drawnPOIs = out.filter { $0.icon != 0 }.map { ($0.iconCenter, texts[Int($0.id)]) }
         return out
     }
 }
@@ -273,6 +315,42 @@ final class MapLabelAtlas {
             scratch?.setAllowsFontSubpixelPositioning(true)
             scratch?.setShouldSubpixelPositionFonts(true)
         }
+    }
+
+    /// The slot holding a place category's glyph (an SF Symbol), rasterised on first use.
+    func iconSlot(_ category: POICategory) -> Slot? {
+        let id = -Int32(category.rawValue) - 1
+        if let s = slots[id] { return s }
+        guard let texture, let ctx = scratch else { return nil }
+        let side = min(ctx.height, Int((CGFloat(MapLabelPlanner.iconSize) * scale).rounded(.up)) + 2)
+        if penX + side > Self.width { penX = 0; penY += rowHeight }
+        guard penY + side <= Self.height else { return nil }
+        ctx.setFillColor(gray: 0, alpha: 1)
+        ctx.fill(CGRect(x: 0, y: 0, width: side, height: side))
+        // Rasterised at the atlas scale and used as a coverage mask (drawing the image straight
+        // into a one-channel bitmap paints nothing).
+        let cfg = NSImage.SymbolConfiguration(pointSize: 8.5 * scale, weight: .semibold)
+        if let img = NSImage(systemSymbolName: category.symbol, accessibilityDescription: nil)?.withSymbolConfiguration(cfg) {
+            var r = NSRect(origin: .zero, size: img.size)
+            if let cg = img.cgImage(forProposedRect: &r, context: nil, hints: nil) {
+                // Fit the symbol in the box, centred (symbols differ in width).
+                let box = (CGFloat(MapLabelPlanner.iconSize) - 1) * scale
+                let k = min(1, box / max(img.size.width, img.size.height, 1))
+                let w = img.size.width * k, h = img.size.height * k
+                ctx.saveGState()
+                ctx.clip(to: CGRect(x: (CGFloat(side) - w) / 2, y: (CGFloat(side) - h) / 2, width: w, height: h), mask: cg)
+                ctx.setFillColor(gray: 1, alpha: 1)
+                ctx.fill(CGRect(x: 0, y: 0, width: side, height: side))
+                ctx.restoreGState()
+            }
+        }
+        guard let data = ctx.data else { return nil }
+        let top = data.advanced(by: (ctx.height - side) * ctx.bytesPerRow)
+        texture.replace(region: MTLRegionMake2D(penX, penY, side, side), mipmapLevel: 0, withBytes: top, bytesPerRow: ctx.bytesPerRow)
+        let s = Slot(x: penX, y: penY, w: side, h: side)
+        slots[id] = s
+        penX += side + 1
+        return s
     }
 
     /// The slot holding `text`, rasterising it on first use; nil when the atlas has no room left

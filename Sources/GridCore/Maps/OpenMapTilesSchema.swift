@@ -1,4 +1,5 @@
 import Foundation
+import simd
 
 /// Maps OpenMapTiles-schema features (the layers OpenFreeMap serves) to GRID's render classes and
 /// label anchors. Pure functions over decoded tags; unknown values map to nil (the feature is not
@@ -7,7 +8,7 @@ public enum OpenMapTilesSchema {
     /// The layers v1 decodes; every other layer is skipped without parsing its features.
     public static let layers: Set<String> = [
         "water", "waterway", "landuse", "landcover", "park", "building", "transportation",
-        "transportation_name", "place", "water_name", "boundary", "aeroway",
+        "transportation_name", "place", "water_name", "boundary", "aeroway", "poi",
     ]
 
     private static func str(_ tags: [String: MVTValue], _ key: String) -> String? { tags[key]?.string }
@@ -124,6 +125,25 @@ public enum OpenMapTilesSchema {
         default:
             return nil
         }
+    }
+
+    /// The place class a place label's priority came from (see `label`): "country", "city", ….
+    public static func placeClass(priority: Int) -> String {
+        switch priority / 100 {
+        case 0: "country"; case 1: "state"; case 2: "city"; case 3: "town"; case 4: "village"; case 5: "suburb"
+        default: "neighbourhood"
+        }
+    }
+
+    /// A `poi` layer feature as a point of interest (nil: unnamed, or a kind GRID skips).
+    public static func poi(tags: [String: MVTValue], pos: SIMD2<Float>) -> POIAnchor? {
+        guard let text = name(tags) else { return nil }
+        let cls = str(tags, "class") ?? "", sub = str(tags, "subclass")
+        guard let cat = POICatalog.category(class: cls, subclass: sub) else { return nil }
+        let rank = Int(max(1, min(999, tags["rank"]?.number ?? 50)))
+        let detail = POICatalog.describe(sub ?? cls)
+        return POIAnchor(name: text, category: cat, detail: detail.isEmpty ? cat.short.lowercased() : detail,
+                         rank: rank, pos: pos, minZoom: POICatalog.minZoom(rank: rank))
     }
 
     /// Display name: `name_en`, then `name:latin`, then `name`; trimmed, non-empty, at most 64

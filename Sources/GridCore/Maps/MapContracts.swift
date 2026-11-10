@@ -249,13 +249,15 @@ public struct TileGeometry: Sendable, Equatable {
     public var lines: [LineBatch]
     public var extrusion: ExtrusionBatch?
     public var labels: [LabelAnchor]
+    /// Named points of interest (shops, stops, sights…), drawn as glyphs and searchable.
+    public var pois: [POIAnchor]
     /// Approximate memory held (for LRU accounting).
     public var byteCount: Int
     /// Bumped when the geometry of the same tile changes (e.g. terrain contours added); the
     /// renderer re-uploads a tile whose revision differs from the one it holds.
     public var revision: Int
-    public init(id: TileID, fills: [FillBatch], lines: [LineBatch], extrusion: ExtrusionBatch?, labels: [LabelAnchor], byteCount: Int, revision: Int = 0) {
-        self.id = id; self.fills = fills; self.lines = lines; self.extrusion = extrusion; self.labels = labels; self.byteCount = byteCount
+    public init(id: TileID, fills: [FillBatch], lines: [LineBatch], extrusion: ExtrusionBatch?, labels: [LabelAnchor], pois: [POIAnchor] = [], byteCount: Int, revision: Int = 0) {
+        self.id = id; self.fills = fills; self.lines = lines; self.extrusion = extrusion; self.labels = labels; self.pois = pois; self.byteCount = byteCount
         self.revision = revision
     }
 }

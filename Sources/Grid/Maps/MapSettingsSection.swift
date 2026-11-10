@@ -8,6 +8,9 @@ struct MapSettingsSection: View {
     @Environment(\.theme) private var theme
     @State private var endpoint = UserDefaults.standard.string(forKey: "map.overpass.endpoint") ?? ALPRStore.defaultOverpass
     @State private var endpointError: String?
+    @State private var searchEndpoint = UserDefaults.standard.string(forKey: MapSearch.endpointKey) ?? Nominatim.defaultEndpoint
+    @State private var searchEndpointError: String?
+    @State private var onlineSearch = UserDefaults.standard.object(forKey: MapSearch.onlineKey) as? Bool
     @State private var cacheSize: Int64?
     @FocusState private var focused: Bool
 
@@ -16,7 +19,7 @@ struct MapSettingsSection: View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 6) {
                 toggle("Map data (tiles, region list, camera downloads)", m.enabled) { m.enabled = $0 }
-                Text("Off means the Map page makes no network requests at all. Hosts: tiles.openfreemap.org, elevation-tiles-prod.s3.amazonaws.com (terrain, while the Terrain layer is on), download.geofabrik.de, deflock.dontgetflocked.com, and your Overpass server (only for regions outside the US and Canada).")
+                Text("Off means the Map page makes no network requests at all. Hosts: tiles.openfreemap.org, elevation-tiles-prod.s3.amazonaws.com (terrain, while the Terrain layer is on), download.geofabrik.de, deflock.dontgetflocked.com, and your Overpass server (only for regions outside the US and Canada). Online place search is separate (below).")
                     .font(GridFont.small).foregroundStyle(theme.textMute).fixedSize(horizontal: false, vertical: true)
                 toggle("Remember the last map view", m.rememberView) { m.rememberView = $0 }
                 toggle("3D buildings when the map is tilted", m.showBuildings) { m.showBuildings = $0 }
@@ -41,6 +44,22 @@ struct MapSettingsSection: View {
             if let e = endpointError { Text("✕ \(e)").font(GridFont.small).foregroundStyle(theme.danger) }
             Text("Used only for camera regions outside the US and Canada. Requests go one at a time, wait after errors, and stop after 60 a day. Public servers ask apps to keep usage light.")
                 .font(GridFont.small).foregroundStyle(theme.textMute).fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 6) {
+                toggle("Online place search (only when you press Return or choose Search Online)", onlineSearch ?? false) { on in
+                    onlineSearch = on
+                    m.search.onlineAllowed = on
+                    if !on { m.search.forgetOnline() }
+                }
+                HStack(spacing: 12) {
+                    Text("Search server").font(GridFont.body).foregroundStyle(theme.textDim).frame(width: 150, alignment: .leading)
+                    GridField(placeholder: Nominatim.defaultEndpoint, text: $searchEndpoint, focus: $focused) { saveSearchEndpoint() }
+                        .frame(maxWidth: 360)
+                    Button("Apply") { saveSearchEndpoint() }.buttonStyle(GridButtonStyle(compact: true))
+                }
+                if let e = searchEndpointError { Text("✕ \(e)").font(GridFont.small).foregroundStyle(theme.danger) }
+                Text("Typing in the map's search box only searches names in the map already on this Mac. Online search sends your search and the visible area to \(MapSearch.host) (Nominatim, run by the OpenStreetMap Foundation): at most once a second, never while you type. Answers are kept in memory for up to a day; searches are never saved. \(onlineSearch == nil ? "GRID asks the first time you search online." : "")")
+                    .font(GridFont.small).foregroundStyle(theme.textMute).fixedSize(horizontal: false, vertical: true)
+            }
             HStack(spacing: 10) {
                 Text("Stored").font(GridFont.body).foregroundStyle(theme.textDim).frame(width: 150, alignment: .leading)
                 Text(cacheSize.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "…")
@@ -71,6 +90,23 @@ struct MapSettingsSection: View {
                                      message: "Regions outside the US and Canada will be downloaded from \(u.host!). That server learns which areas you download.",
                                      confirmLabel: "Use It", destructive: false,
                                      onConfirm: { UserDefaults.standard.set(raw, forKey: "map.overpass.endpoint"); endpointError = nil }))
+    }
+
+    private func saveSearchEndpoint() {
+        guard let u = Nominatim.endpoint(searchEndpoint) else {
+            searchEndpointError = "Use an https address without a port, user name or query (for example \(Nominatim.defaultEndpoint))."
+            return
+        }
+        let raw = u.absoluteString
+        guard raw != MapSearch.endpoint.absoluteString else { searchEndpointError = nil; return }
+        _ = app.present(Confirmation(code: "SEARCH-NET", title: "Use \(u.host ?? raw) for online search?",
+                                     message: "Online place searches will go to \(u.host ?? raw). That server learns what you search for and roughly where you're looking.",
+                                     confirmLabel: "Use It", destructive: false,
+                                     onConfirm: {
+                                         UserDefaults.standard.set(raw, forKey: MapSearch.endpointKey)
+                                         searchEndpoint = raw; searchEndpointError = nil
+                                         app.maps.search.forgetOnline()
+                                     }))
     }
 
     private func refreshSize() {
