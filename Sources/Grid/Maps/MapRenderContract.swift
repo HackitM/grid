@@ -184,12 +184,19 @@ struct MapFrame: Equatable {
         return TerrainLift(scale: Float(s), base: Float(base), ceiling: Float(camHeight * 0.92))
     }
 
+    /// Same picture: everything that is drawn, with tiles and elevation grids compared by
+    /// identity (id and revision), not by content. `stamp` and `lift` are left out: the stamp
+    /// names a build, not what is in it, and the lift is derived from the camera when drawing.
     static func == (a: MapFrame, b: MapFrame) -> Bool {
-        a.camera == b.camera && a.tileGeneration == b.tileGeneration && a.tiles.map(\.id) == b.tiles.map(\.id) && a.cameras == b.cameras
-            && a.clusters == b.clusters && a.location == b.location && a.regions == b.regions && a.palette == b.palette
+        // Cheap fields first; the arrays last.
+        a.camera == b.camera && a.tileGeneration == b.tileGeneration && a.palette == b.palette
             && a.glow == b.glow && a.buildings == b.buildings && a.reveal == b.reveal && a.gridFloor == b.gridFloor
-            && a.terrain.map(\.id) == b.terrain.map(\.id) && a.exaggeration == b.exaggeration && a.hillshade == b.hillshade && a.terrainFloor == b.terrainFloor
-            && a.tiles.map(\.revision) == b.tiles.map(\.revision)
+            && a.exaggeration == b.exaggeration && a.hillshade == b.hillshade && a.terrainFloor == b.terrainFloor
+            && a.location == b.location && a.pin == b.pin && a.stepMark == b.stepMark && a.poiMask == b.poiMask
+            && a.tiles.elementsEqual(b.tiles) { $0.id == $1.id && $0.revision == $1.revision }
+            && a.terrain.elementsEqual(b.terrain) { $0.id == $1.id }
+            && a.clusters == b.clusters && a.routeMarks == b.routeMarks && a.regions == b.regions
+            && a.cameras == b.cameras && a.routes == b.routes
     }
 }
 
