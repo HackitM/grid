@@ -59,7 +59,12 @@ final class MapModel {
             camera = MapCamera(center: TileMath.project(LonLat(lon: -98.5, lat: 39.5)), zoom: 3.6)
         }
         tiles.enabled = enabledStore
+        alpr.enabled = enabledStore
     }
+
+    /// Set once Locate has centred the map this session: the remembered view must never hold the
+    /// user's position.
+    @ObservationIgnored private var located = false
 
     var rememberView: Bool {
         get { d.bool(forKey: "map.rememberView") }
@@ -68,19 +73,32 @@ final class MapModel {
 
     func appeared() {
         if enabled {
-            Task { await tiles.loadSource(); refresh() }
+            // The scan-in plays once per page open (and when the tile source changes), not on
+            // every pan or zoom step.
+            Task {
+                let gen = tiles.generation
+                await tiles.loadSource()
+                if app?.settings.effects.motion == true && (lastCover.isEmpty || gen != tiles.generation || !revealedThisVisit) { startReveal() }
+                revealedThisVisit = true
+                refresh()
+            }
             Task { await alpr.checkFreshness(manual: false) }
         }
         refresh()
     }
 
+    @ObservationIgnored private var revealedThisVisit = false
+
     func disappeared() {
+        revealedThisVisit = false
         location.clear()
-        if rememberView, let data = try? JSONEncoder().encode(camera) { d.set(data, forKey: "map.lastView") }
+        if rememberView, !located, let data = try? JSONEncoder().encode(camera) { d.set(data, forKey: "map.lastView") }
     }
 
     private func onEnabledChange() {
         tiles.enabled = enabledStore
+        alpr.enabled = enabledStore
+        if !enabledStore { alpr.cancel() }
         if enabledStore { Task { await tiles.loadSource(); refresh() } }
     }
 
@@ -89,10 +107,6 @@ final class MapModel {
     /// Recomputes the wanted tiles and bumps the frame (call after camera, viewport or data changes).
     func refresh() {
         let cover = TileMath.cover(camera, viewport: viewport, maxZoom: tiles.source?.maxZoom ?? 14, limit: 48)
-        let newOnes = Set(cover).subtracting(lastCover)
-        if app?.settings.effects.motion == true, !lastCover.isEmpty || frameRevision == 0, newOnes.count * 2 > cover.count, tiles.source != nil {
-            startReveal()
-        }
         lastCover = Set(cover)
         tiles.want(cover)
         frameRevision &+= 1
@@ -251,7 +265,7 @@ final class MapModel {
             case .down: handle(.pan(SIMD2(0, -120)))
             case .zoomIn: handle(.zoom(1, around: mid))
             case .zoomOut: handle(.zoom(-1, around: mid))
-            case .resetNorth: live = nil; camera.bearing = 0; camera.pitch = 0; refresh()
+            case .resetNorth: var c = camera; c.bearing = 0; c.pitch = 0; setCamera(c)
             }
         }
     }
@@ -287,9 +301,21 @@ final class MapModel {
     }
 
     func flyTo(_ p: LonLat, zoom: Double? = nil) {
+        var c = camera
+        c.center = TileMath.project(p)
+        if let zoom { c.zoom = zoom }
+        setCamera(c)
+    }
+
+    /// Every programmatic camera change (fly to, reset, tilt toggle, QA): drops a pending
+    /// gesture update so it can't overwrite this one.
+    func setCamera(_ c: MapCamera) {
         live = nil
-        camera.center = TileMath.project(p)
-        if let zoom { camera.zoom = zoom }
+        var c = c
+        c.center = Self.wrap(c.center)
+        c.pitch = min(MapCamera.maxPitch, max(0, c.pitch))
+        c.zoom = min(MapCamera.maxZoom, max(MapCamera.minZoom, c.zoom))
+        camera = c
         refresh()
     }
 
@@ -301,7 +327,11 @@ final class MapModel {
     private func observeLocation() {
         Task { @MainActor in
             for _ in 0..<600 {          // up to 60 s
-                if let (p, _) = location.fix { flyTo(p, zoom: max(camera.zoom, 14)); return }
+                if let (p, _) = location.fix {
+                    located = true
+                    d.removeObject(forKey: "map.lastView")
+                    flyTo(p, zoom: max(camera.zoom, 14)); return
+                }
                 switch location.state {
                 case .locating, .asking, .explaining: break
                 default: return
@@ -344,7 +374,7 @@ final class MapModel {
                 app.present(Confirmation(code: "ALPR-NET", title: "Download cameras for \(d.name)?", message: msg,
                                          confirmLabel: "Download", destructive: false,
                                          onConfirm: { [weak self] in
-                                             Task { await self?.alpr.download(plan); done?(); self?.refresh() }
+                                             self?.alpr.start(plan) { done?(); self?.refresh() }
                                          },
                                          onCancel: { done?() }))
             } catch {

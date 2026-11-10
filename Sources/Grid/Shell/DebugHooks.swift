@@ -54,6 +54,15 @@ enum DebugHooks {
         }
     }
 
+    /// The location state's name only: QA output never contains coordinates.
+    static func locationCase(_ s: LocationProvider.State) -> String {
+        switch s {
+        case .idle: "idle"; case .explaining: "explaining"; case .asking: "asking"; case .locating: "locating"
+        case .fix: "fix"; case .denied: "denied"; case .restricted: "restricted"; case .servicesOff: "servicesOff"
+        case .failed: "failed"
+        }
+    }
+
     static func describePanels(_ t: SplitTree) -> String {
         switch t {
         case .leaf(let id): return WorkspacePanel(nodeID: id)?.rawValue ?? "?"
@@ -661,7 +670,7 @@ enum DebugHooks {
                             "catalog": m.alpr.catalog?.regions.count ?? 0, "catalogState": m.alpr.catalogState ?? "",
                             "regions": m.alpr.regions.map { ["id": $0.id, "name": $0.meta.descriptor.name, "count": $0.meta.cameraCount,
                                                              "status": "\($0.status)", "sources": $0.meta.sources.map(\.rawValue), "requests": $0.meta.requests] },
-                            "location": "\(m.location.state)", "inView": m.camerasInViewCount()]
+                            "location": Self.locationCase(m.location.state), "inView": m.camerasInViewCount()]
                 } ?? [:],
                 "updates": ["current": app.updates.current.description, "latest": app.updates.latest?.tagName ?? "",
                             "available": app.updates.available?.tagName ?? "", "notice": app.updates.showsNotice,
@@ -703,11 +712,12 @@ enum DebugHooks {
             case "enable": m.enabled = true; m.appeared()
             case "disable": m.enabled = false
             case "camera":
-                if let lon = c["lon"] as? Double, let lat = c["lat"] as? Double { m.camera.center = TileMath.project(LonLat(lon: lon, lat: lat)) }
-                if let z = c["zoom"] as? Double { m.camera.zoom = z }
-                if let b = c["bearing"] as? Double { m.camera.bearing = b }
-                if let p = c["pitch"] as? Double { m.camera.pitch = min(MapCamera.maxPitch, max(0, p)) }
-                m.refresh()
+                var cam = m.camera
+                if let lon = c["lon"] as? Double, let lat = c["lat"] as? Double { cam.center = TileMath.project(LonLat(lon: lon, lat: lat)) }
+                if let z = c["zoom"] as? Double { cam.zoom = z }
+                if let b = c["bearing"] as? Double { cam.bearing = b }
+                if let p = c["pitch"] as? Double { cam.pitch = p }
+                m.setCamera(cam)
             case "download":
                 if let r = c["rect"] as? [Double], r.count == 4 {
                     let box = BBox(west: r[0], south: r[1], east: r[2], north: r[3])

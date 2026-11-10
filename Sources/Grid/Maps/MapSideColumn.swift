@@ -146,6 +146,10 @@ private struct RegionRow: View {
                 Text("\(m.cameraCount.formatted()) cameras · \(age(m.fetchedAt))").font(GridFont.small).foregroundStyle(theme.textDim)
                 Spacer(minLength: 2)
                 GridMenuButton(help: "Region actions", size: 9, frame: CGSize(width: 16, height: 16)) {
+                    if case .downloading = region.status {
+                        GridMenuItem.action("Cancel Download") { model.alpr.cancel() }
+                        GridMenuItem.divider
+                    }
                     GridMenuItem.action("Show on Map") { fly() }
                     GridMenuItem.action("Update Now", enabled: !model.alpr.busy) {
                         model.requestDownload(m.descriptor, polygon: m.polygon, isRectangle: m.isRectangle)

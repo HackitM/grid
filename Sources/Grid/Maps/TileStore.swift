@@ -111,12 +111,13 @@ final class TileStore {
         guard let source, let cache else { return }
         let gen = generation
         var data = await cache.read(t)
+        var fromNetwork = false
         if data == nil {
             guard wanted.contains(t), let url = source.url(for: t) else { return }
             do {
                 let r = try await MapNetwork.shared.get(url, hosts: [source.host], maxBytes: TileCache.maxTileBytes)
                 switch r.status {
-                case 200: data = r.data; await cache.write(t, r.data)
+                case 200: data = r.data; fromNetwork = true
                 case 204, 404: data = Data()    // outside coverage: draw nothing
                 default: throw MapNetwork.NetError.http(r.status)
                 }
@@ -126,13 +127,18 @@ final class TileStore {
             }
         }
         guard let bytes = data, gen == generation else { return }
-        let geometry = await Task.detached(priority: .userInitiated) { () -> TileGeometry in
-            guard !bytes.isEmpty, let tile = try? MVTDecoder.decode(bytes, layers: OpenMapTilesSchema.layers) else {
-                return TileGeometry(id: t, fills: [], lines: [], extrusion: nil, labels: [], byteCount: 64)
-            }
+        let result = await Task.detached(priority: .userInitiated) { () -> TileGeometry? in
+            if bytes.isEmpty { return TileGeometry(id: t, fills: [], lines: [], extrusion: nil, labels: [], byteCount: 64) }
+            guard let tile = try? MVTDecoder.decode(bytes, layers: OpenMapTilesSchema.layers) else { return nil }
             return TileGeometryBuilder.build(tile, id: t)
         }.value
         guard gen == generation else { return }
+        guard let geometry = result else {
+            // Not a vector tile (a captive portal page, a truncated body…): don't cache it, retry later.
+            failed[t] = Date(); errorCount += 1
+            return
+        }
+        if fromNetwork && !bytes.isEmpty { await cache.write(t, bytes) }
         insert(geometry)
         if wanted.contains(t) { loadedCount = wanted.filter { decoded[$0] != nil }.count }
         revision &+= 1

@@ -77,7 +77,10 @@ public struct RegionCatalog: Sendable {
         out.reserveCapacity(arr.count)
         for p in arr {
             guard let c = p as? [Any], c.count >= 2, let lon = number(c[0]), let lat = number(c[1]) else { return nil }
-            let ll = LonLat(lon: lon, lat: lat)
+            // Antimeridian-crossing boundaries may step a little past ±180: clamp those rather
+            // than losing the whole region.
+            guard abs(lon) <= 200 else { return nil }
+            let ll = LonLat(lon: max(-180, min(180, lon)), lat: lat)
             guard ll.isValid else { return nil }
             out.append(ll)
         }

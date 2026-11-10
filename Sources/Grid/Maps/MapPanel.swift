@@ -7,7 +7,6 @@ import SwiftUI
 struct MapPanel: View {
     @Environment(AppState.self) private var app
     @Environment(\.theme) private var theme
-    @State private var columnVisible = true
     @State private var showPicker = false
 
     var body: some View {
@@ -23,10 +22,10 @@ struct MapPanel: View {
                         IconButton(symbol: "rectangle.dashed", label: "Draw an area to download cameras (⇧-drag on the map)", active: m.drawingRegion, disabled: !m.enabled) {
                             m.drawingRegion.toggle()
                         }
-                        IconButton(symbol: "sidebar.right", label: "Layers, regions and inspector (⌘I)", active: columnVisible) { columnVisible.toggle() }
+                        IconButton(symbol: "sidebar.right", label: "Layers, regions and inspector (⌘I)", active: app.inspectorVisible) { app.inspectorVisible.toggle() }
                     }
                 } overflow: {
-                    GridMenuItem.action("Download Cameras for a Region…", enabled: m.enabled) { columnVisible = true; showPicker = true }
+                    GridMenuItem.action("Download Cameras for a Region…", enabled: m.enabled) { app.inspectorVisible = true; showPicker = true }
                     GridMenuItem.action("Check Camera Data for Updates", enabled: m.enabled && !m.alpr.regions.isEmpty) { Task { await m.alpr.checkFreshness(manual: true) } }
                     GridMenuItem.divider
                     GridMenuItem.action("Map Settings…") { app.settingsSection = "map"; app.show(.settings) }
@@ -44,21 +43,17 @@ struct MapPanel: View {
                         }
                     }
                 }
-                if columnVisible && m.enabled && !compact {
+                if app.inspectorVisible && m.enabled && !compact {
                     MapSideColumn(model: m, showPicker: $showPicker)
                         .frame(width: 236)
                 }
             }
-            .popover(isPresented: Binding(get: { compact && columnVisible && m.enabled && showPicker }, set: { showPicker = $0 })) {
+            .popover(isPresented: Binding(get: { compact && app.inspectorVisible && m.enabled && showPicker }, set: { showPicker = $0 })) {
                 MapSideColumn(model: m, showPicker: $showPicker).frame(width: 260, height: 520).padding(8)
             }
         }
         .onAppear { m.app = app; m.appeared() }
         .onDisappear { m.disappeared() }
-        .onKeyPress(characters: CharacterSet(charactersIn: "i"), phases: .down) { press in
-            guard press.modifiers.contains(.command) else { return .ignored }
-            columnVisible.toggle(); return .handled
-        }
     }
 
     private func confirmClear(_ m: MapModel) {
@@ -74,7 +69,7 @@ private struct PitchButton: View {
     var body: some View {
         let tilted = model.camera.pitch > 1
         IconButton(symbol: tilted ? "view.2d" : "view.3d", label: tilted ? "Flat view" : "Tilted 3D view", disabled: !model.enabled) {
-            model.camera.pitch = tilted ? 0 : 40; model.refresh()
+            var c = model.camera; c.pitch = tilted ? 0 : 40; model.setCamera(c)
         }
     }
 }

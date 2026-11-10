@@ -131,7 +131,11 @@ public enum OpenMapTilesSchema {
     static func name(_ tags: [String: MVTValue]) -> String? {
         for key in ["name_en", "name:latin", "name"] {
             guard let raw = tags[key]?.string else { continue }
-            let cleaned = String(String.UnicodeScalarView(raw.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }))
+            // Drop control characters and bidi overrides/isolates (they could reorder neighbouring text).
+            let bidi: ClosedRange<UInt32> = 0x202A...0x202E, iso: ClosedRange<UInt32> = 0x2066...0x2069
+            let cleaned = String(String.UnicodeScalarView(raw.unicodeScalars.filter {
+                !CharacterSet.controlCharacters.contains($0) && !bidi.contains($0.value) && !iso.contains($0.value)
+            }))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if !cleaned.isEmpty { return String(cleaned.prefix(64)) }
         }

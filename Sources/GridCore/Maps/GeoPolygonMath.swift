@@ -185,7 +185,7 @@ extension GeoPolygon {
                 if a <= b {
                     for c in a...b {
                         result.insert(key(rMin + i, c))
-                        if result.count >= limit * 2 { break outer }
+                        if result.count >= limit.doubledSaturating { break outer }
                     }
                 }
                 k += 2
@@ -193,4 +193,9 @@ extension GeoPolygon {
         }
         return finish(result)
     }
+}
+
+private extension Int {
+    /// `self * 2` without overflow (saturates at Int.max).
+    var doubledSaturating: Int { self > Int.max / 2 ? Int.max : self * 2 }
 }

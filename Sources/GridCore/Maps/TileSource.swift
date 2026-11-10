@@ -40,7 +40,8 @@ public struct TileSource: Sendable, Equatable {
         try validate(template: template, host: jsonHost)
 
         func zoom(_ key: String, _ fallback: Int) -> Int {
-            guard let n = root[key] as? NSNumber, !(root[key] is Bool), n.doubleValue.isFinite else { return fallback }
+            // `is Bool` is true for NSNumber 0 and 1, so test for a real CFBoolean instead.
+            guard let n = root[key] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), n.doubleValue.isFinite else { return fallback }
             return Int(max(0, min(22, n.doubleValue.rounded())))
         }
         var lo = zoom("minzoom", 0), hi = zoom("maxzoom", 22)

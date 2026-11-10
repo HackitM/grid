@@ -61,7 +61,23 @@ final class ALPRStore {
     private(set) var lastCheck: Date? = UserDefaults.standard.object(forKey: "map.alpr.lastCheck") as? Date
     private(set) var busy = false
 
+    /// Mirrors "Enable map data": checked again here before any request (defence in depth).
+    @ObservationIgnored var enabled = false
+    @ObservationIgnored private var downloadTask: Task<Void, Never>?
     @ObservationIgnored private var builds: [ALPRSource: (DeFlockBuild, Date)] = [:]
+
+    /// Starts a confirmed download (one at a time); `cancel()` stops it.
+    func start(_ p: DownloadPlan, done: (() -> Void)? = nil) {
+        guard enabled, !busy else { done?(); return }
+        downloadTask = Task { await download(p); done?() }
+    }
+
+    /// Stops the current download. A region that already existed keeps its previous data.
+    func cancel() { downloadTask?.cancel() }
+
+    private func requireEnabled() throws {
+        guard enabled else { throw MapNetwork.NetError.transport("Map data is turned off.") }
+    }
     @ObservationIgnored private var overpassPolicy: FetchPolicy = {
         (UserDefaults.standard.data(forKey: "map.overpass.policy")).flatMap { try? JSONDecoder().decode(FetchPolicy.self, from: $0) } ?? FetchPolicy()
     }()
@@ -109,17 +125,27 @@ final class ALPRStore {
 
     private func folder(_ d: RegionDescriptor) -> URL { MapStorage.alpr.appendingPathComponent(d.storageKey, isDirectory: true) }
 
+    @ObservationIgnored private var indexGeneration = 0
+
+    /// Decodes every stored region and rebuilds the combined index off the main thread.
     private func rebuildIndex() {
-        var seen = Set<OSMElementID>()
-        var all: [ALPRCamera] = []
-        for r in regions {
-            guard let data = MapStorage.read(folder(r.meta.descriptor).appendingPathComponent("cameras.gridalpr"), maxBytes: 256 << 20),
-                  let cams = try? RegionPackage.decode(data) else { continue }
-            for c in cams where seen.insert(c.id).inserted { all.append(c) }
+        indexGeneration &+= 1
+        let gen = indexGeneration
+        let files = regions.map { folder($0.meta.descriptor).appendingPathComponent("cameras.gridalpr") }
+        Task {
+            let built = await Task.detached(priority: .userInitiated) { () -> CameraIndex in
+                var seen = Set<OSMElementID>()
+                var all: [ALPRCamera] = []
+                for f in files {
+                    guard let data = MapStorage.read(f, maxBytes: 256 << 20), let cams = try? RegionPackage.decode(data) else { continue }
+                    for c in cams where seen.insert(c.id).inserted { all.append(c) }
+                }
+                return CameraIndex(all)
+            }.value
+            guard gen == indexGeneration else { return }
+            index = built
+            revision &+= 1
         }
-        let built = CameraIndex(all)
-        index = built
-        revision &+= 1
     }
 
     func remove(_ id: String) {
@@ -130,6 +156,7 @@ final class ALPRStore {
     }
 
     func clearAll() {
+        cancel()
         try? MapStorage.remove(MapStorage.alpr)
         try? MapStorage.remove(MapStorage.regions)
         regions = []; catalog = nil; builds = [:]
@@ -146,6 +173,7 @@ final class ALPRStore {
             .map { Date().timeIntervalSince($0) < 30 * 86400 } ?? false
         var data: Data? = fresh && !forceRefresh ? MapStorage.read(file, maxBytes: 16 << 20) : nil
         if data == nil {
+            guard enabled else { catalogState = "Turn on map data to load the region list."; return }
             catalogState = "Downloading the region list from download.geofabrik.de…"
             do {
                 let r = try await MapNetwork.shared.get(Self.catalogURL, hosts: ["download.geofabrik.de"], maxBytes: 16 << 20, timeout: 60)
@@ -165,6 +193,7 @@ final class ALPRStore {
     // MARK: Planning a download
 
     private func build(_ s: ALPRSource) async throws -> DeFlockBuild {
+        try requireEnabled()
         if let (b, at) = builds[s], Date().timeIntervalSince(at) < 3600 { return b }
         guard let url = Self.buildURLs[s] else { throw MapNetwork.NetError.blockedURL(s.rawValue) }
         let r = try await MapNetwork.shared.get(url, hosts: Self.deflockHosts, maxBytes: 1 << 20)
@@ -178,6 +207,7 @@ final class ALPRStore {
         let file = MapStorage.alpr.appendingPathComponent("_deflock", isDirectory: true)
             .appendingPathComponent("\(s.rawValue)-\(b.build).bin")
         if let d = MapStorage.read(file, maxBytes: 64 << 20), let idx = try? DeFlockIndex(d) { return idx }
+        try requireEnabled()
         let r = try await MapNetwork.shared.get(b.indexURL, hosts: Self.deflockHosts, maxBytes: 64 << 20, timeout: 60)
         guard r.status == 200 else { throw MapNetwork.NetError.http(r.status) }
         let idx = try DeFlockIndex(r.data)
@@ -218,12 +248,14 @@ final class ALPRStore {
     // MARK: Downloading
 
     func download(_ p: DownloadPlan) async {
-        guard !busy else { return }
+        guard !busy, enabled else { return }
         busy = true
-        defer { busy = false }
+        defer { busy = false; downloadTask = nil }
         let total = max(1, p.requests)
         var done = 0
-        setStatus(p.descriptor, .downloading(done: 0, total: total), meta: placeholderMeta(p))
+        // An existing region keeps its stored metadata until the new data is saved.
+        let existing = regions.contains { $0.id == p.descriptor.id }
+        setStatus(p.descriptor, .downloading(done: 0, total: total), meta: existing ? nil : placeholderMeta(p))
         var cameras: [OSMElementID: ALPRCamera] = [:]
         var builds: [String: String] = [:]
         var osmBase: Date?
@@ -233,6 +265,7 @@ final class ALPRStore {
                 // ≤ 4 in flight.
                 var i = 0
                 while i < tiles.count {
+                    try Task.checkCancellation()
                     let batch = Array(tiles[i..<min(i + 4, tiles.count)])
                     i += batch.count
                     let results = try await withThrowingTaskGroup(of: [ALPRCamera].self) { g -> [[ALPRCamera]] in
@@ -255,6 +288,7 @@ final class ALPRStore {
                 }
             }
             for box in p.overpassChunks {
+                try Task.checkCancellation()
                 var attempts = 0
                 while true {
                     while !overpassPolicy.canRequest(now: Date()) {
@@ -285,12 +319,27 @@ final class ALPRStore {
             let list = Array(cameras.values)
             let meta = RegionMeta(descriptor: p.descriptor, polygon: p.polygon, sources: p.sources, builds: builds, osmBase: osmBase,
                                   fetchedAt: Date(), cameraCount: list.count, requests: p.requests, isRectangle: p.isRectangle)
+            try Task.checkCancellation()
             let dir = folder(p.descriptor)
-            try MapStorage.write(RegionPackage.encode(list), to: dir.appendingPathComponent("cameras.gridalpr"))
-            try MapStorage.write(try JSONEncoder().encode(meta), to: dir.appendingPathComponent("meta.json"))
+            do {
+                try MapStorage.write(RegionPackage.encode(list), to: dir.appendingPathComponent("cameras.gridalpr"))
+                try MapStorage.write(try JSONEncoder().encode(meta), to: dir.appendingPathComponent("meta.json"))
+            } catch {
+                // Don't leave a package without metadata (invisible to Remove) for a new region.
+                if !existing { try? MapStorage.remove(dir) }
+                throw error
+            }
             setStatus(p.descriptor, .current, meta: meta)
             rebuildIndex()
         } catch {
+            if error is CancellationError || (error as? MapNetwork.NetError) == .cancelled || Task.isCancelled {
+                if existing {
+                    if let i = regions.firstIndex(where: { $0.id == p.descriptor.id }) { regions[i].status = .idle }
+                } else {
+                    regions.removeAll { $0.id == p.descriptor.id }
+                }
+                return
+            }
             let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             if FileManager.default.fileExists(atPath: folder(p.descriptor).appendingPathComponent("meta.json").path) {
                 setStatus(p.descriptor, .failed(msg), meta: nil)
@@ -332,7 +381,7 @@ final class ALPRStore {
     /// Map page is in use.
     func checkFreshness(manual: Bool) async {
         if !manual, let last = lastCheck, Date().timeIntervalSince(last) < 86400 { return }
-        guard !regions.isEmpty else { return }
+        guard enabled, !regions.isEmpty else { return }
         for i in regions.indices where !regions[i].status.isBusy { regions[i].status = .checking }
         var current: [String: String] = [:]
         for s in [ALPRSource.deflockUS, .deflockCA] where regions.contains(where: { $0.meta.sources.contains(s) }) {

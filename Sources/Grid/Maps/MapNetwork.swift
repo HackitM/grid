@@ -127,7 +127,7 @@ final class MapNetwork: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         let host = lock.withLock { pending[task.taskIdentifier]?.host } ?? ""
-        if let url = request.url, url.scheme == "https", url.host?.lowercased() == host {
+        if let url = request.url, Self.isAllowed(url, hosts: [host]) {
             completionHandler(request)
         } else {
             completionHandler(nil)   // the redirect response itself is returned (and treated as an error status)

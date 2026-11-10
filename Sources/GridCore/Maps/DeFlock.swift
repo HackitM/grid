@@ -13,8 +13,10 @@ public struct DeFlockBuild: Sendable, Equatable {
     public let maxZoom: Int
 
     static func allowedHost(_ h: String?) -> Bool {
+        // Exactly the two published hosts (a wildcard would also admit placeholder or attacker
+        // subdomains of the zone).
         guard let h = h?.lowercased() else { return false }
-        return h == "deflock.dontgetflocked.com" || h == "tiles.dontgetflocked.com" || h.hasSuffix(".dontgetflocked.com")
+        return h == "deflock.dontgetflocked.com" || h == "tiles.dontgetflocked.com"
     }
 
     private static func safeHTTPS(_ c: URLComponents) -> Bool {

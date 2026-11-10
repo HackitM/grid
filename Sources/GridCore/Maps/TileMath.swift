@@ -20,10 +20,16 @@ public enum TileMath {
         return LonLat(lon: lon, lat: lat)
     }
 
+    /// `floor(v)` clamped to 0…count-1, computed in Double so huge or non-finite input can't trap.
+    public static func cell(_ v: Double, count: Int) -> Int {
+        guard v.isFinite, count > 0 else { return 0 }
+        return Int(max(0, min(Double(count - 1), v.rounded(.down))))
+    }
+
     public static func tile(containing m: Mercator, z: Int) -> TileID {
-        let n = Double(1 << z)
-        let x = Int((m.x * n).rounded(.down)), y = Int((m.y * n).rounded(.down))
-        return TileID(z: z, x: max(0, min(Int(n) - 1, x)), y: max(0, min(Int(n) - 1, y)))
+        let z = max(0, min(24, z))
+        let n = 1 << z
+        return TileID(z: z, x: cell(m.x * Double(n), count: n), y: cell(m.y * Double(n), count: n))
     }
 
     /// North-west and south-east corners of a tile in world units.
@@ -56,7 +62,8 @@ public enum TileMath {
     /// nearest to the centre first, at most `limit`. Above `maxZoom` the source tiles are reused
     /// (overzoom).
     public static func cover(_ cam: MapCamera, viewport: SIMD2<Double>, maxZoom: Int, limit: Int = 48) -> [TileID] {
-        let z = max(0, min(maxZoom, Int((cam.zoom + 0.3).rounded(.down))))
+        guard cam.zoom.isFinite, cam.center.x.isFinite, cam.center.y.isFinite else { return [] }
+        let z = max(0, min(min(maxZoom, 24), Int(max(0, min(24, (cam.zoom + 0.3).rounded(.down))))))
         let proj = MapProjection(camera: cam, viewport: viewport)
         // Ground points under the viewport corners (and edge midpoints, for pitch).
         var pts: [Mercator] = []
@@ -65,10 +72,9 @@ public enum TileMath {
         } }
         guard !pts.isEmpty else { return [] }
         let n = Double(1 << z)
-        let minX = max(0, Int((pts.map(\.x).min()! * n).rounded(.down)))
-        let maxX = min(Int(n) - 1, Int((pts.map(\.x).max()! * n).rounded(.down)))
-        let minY = max(0, Int((pts.map(\.y).min()! * n).rounded(.down)))
-        let maxY = min(Int(n) - 1, Int((pts.map(\.y).max()! * n).rounded(.down)))
+        let count = 1 << z
+        let minX = cell(pts.map(\.x).min()! * n, count: count), maxX = cell(pts.map(\.x).max()! * n, count: count)
+        let minY = cell(pts.map(\.y).min()! * n, count: count), maxY = cell(pts.map(\.y).max()! * n, count: count)
         guard minX <= maxX, minY <= maxY else { return [] }
         let cx = cam.center.x * n, cy = cam.center.y * n
         var out: [(TileID, Double)] = []

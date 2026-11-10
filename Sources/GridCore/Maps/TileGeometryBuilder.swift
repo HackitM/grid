@@ -15,11 +15,19 @@ public enum TileGeometryBuilder {
             (a.x <= lo && b.x <= lo) || (a.x >= hi && b.x >= hi) || (a.y <= lo && b.y <= lo) || (a.y >= hi && b.y >= hi)
         }
         for ring in rings where ring.count >= 3 {
-            var run: [SIMD2<Float>] = []
             let n = ring.count
-            for i in 0...n {
-                let a = ring[i % n], b = ring[(i + 1) % n]
-                if i < n && !onEdge(a, b) {
+            // A ring that never touches the border (a lake or island inside the tile) is one closed line.
+            guard let firstEdge = (0..<n).first(where: { onEdge(ring[$0], ring[($0 + 1) % n]) }) else {
+                LineTessellator.append(ring, closed: true, cls: .water, flags: 0, vertices: &vertices, indices: &indices)
+                continue
+            }
+            // Otherwise start just after a border segment, so no run is split at an arbitrary vertex.
+            let start = (firstEdge + 1) % n
+            var run: [SIMD2<Float>] = []
+            for k in 0...n {
+                let i = (start + k) % n
+                let a = ring[i], b = ring[(i + 1) % n]
+                if k < n && !onEdge(a, b) {
                     if run.isEmpty { run.append(a) }
                     run.append(b)
                 } else if run.count >= 2 {
@@ -56,7 +64,8 @@ public enum TileGeometryBuilder {
                     let minH = isBuilding ? min(height, OpenMapTilesSchema.buildingMinHeight(f.tags)) : 0
                     for poly in polys {
                         guard poly.count > 0 else { continue }
-                        if poly.reduce(0, { $0 + $1.count }) > maxVerts { continue }
+                        // Earcut is superlinear on huge polygons; 50k vertices is far beyond real z14 data.
+                        if poly.reduce(0, { $0 + $1.count }) > min(maxVerts, 50_000) { continue }
                         let rings = poly.map { $0.map(norm) }
                         let tris = Earcut.triangulate(rings)
                         guard !tris.isEmpty else { continue }
@@ -133,7 +142,8 @@ public enum TileGeometryBuilder {
                 let d = dx * dx + dy * dy
                 if d > best {
                     best = d
-                    mid = SIMD2((l[i].x + l[i + 1].x) / 2, (l[i].y + l[i + 1].y) / 2)
+                    mid = SIMD2(Int32(truncatingIfNeeded: (Int64(l[i].x) + Int64(l[i + 1].x)) / 2),
+                                Int32(truncatingIfNeeded: (Int64(l[i].y) + Int64(l[i + 1].y)) / 2))
                 }
             }
         }

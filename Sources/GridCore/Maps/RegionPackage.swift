@@ -15,7 +15,9 @@ public enum RegionPackage {
     static let magic: [UInt8] = [0x47, 0x41, 0x4C, 0x50]   // "GALP"
     static let noString: UInt32 = 0xFFFF_FFFF
     static let minCameraBytes = 4 + 4 + 1 + 8 + 1 + 1 + 16 + 8
-    static let maxStringBytes = 1 << 16
+    /// Longest string GRID writes is 120 characters (≤ 480 UTF-8 bytes); anything longer is a
+    /// tampered file.
+    static let maxStringBytes = 512
 
     private static let vendorCodes: [ALPRVendor] = [.unknown, .flock, .motorola, .genetec, .axis, .leonardo, .rekor, .axon, .neology]
     private static let otherCode: UInt8 = 9
@@ -39,7 +41,8 @@ public enum RegionPackage {
         func e7(_ v: Double) -> UInt32 { UInt32(bitPattern: Int32(clamping: Int((v * 1e7).rounded()))) }
 
         out.append(contentsOf: magic)
-        u32(1); u32(UInt32(truncatingIfNeeded: cameras.count))
+        u32(1); u32(UInt32(truncatingIfNeeded: cameras.filter { $0.coordinate.isValid }.count))
+        let cameras = cameras.filter { $0.coordinate.isValid }
         for c in cameras {
             u32(e7(c.coordinate.lat)); u32(e7(c.coordinate.lon))
             switch c.id {

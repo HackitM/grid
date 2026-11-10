@@ -15,7 +15,7 @@ public struct CameraIndex: Sendable {
     private static func key(_ x: Int, _ y: Int) -> UInt32 { UInt32(x * side + y) }
     private static func tileXY(_ m: Mercator) -> (Int, Int) {
         let n = Double(side)
-        return (max(0, min(side - 1, Int((m.x * n).rounded(.down)))), max(0, min(side - 1, Int((m.y * n).rounded(.down)))))
+        return (TileMath.cell(m.x * n, count: side), TileMath.cell(m.y * n, count: side))
     }
 
     public init(_ cameras: [ALPRCamera]) {

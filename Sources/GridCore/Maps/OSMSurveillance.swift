@@ -54,6 +54,8 @@ public enum OSMSurveillance {
 
     private static func parseNumber(_ s: String) -> Double? {
         guard let f = s.unicodeScalars.first, (f >= "0" && f <= "9") || f == "-" || f == "+" || f == "." else { return nil }
+        // Plain decimals only: no exponents ("1e5") or hex ("0x10").
+        guard s.unicodeScalars.allSatisfy({ ($0 >= "0" && $0 <= "9") || $0 == "-" || $0 == "+" || $0 == "." }) else { return nil }
         guard let d = Double(s), d.isFinite else { return nil }
         return d
     }
