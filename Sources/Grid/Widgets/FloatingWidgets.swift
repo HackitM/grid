@@ -11,6 +11,8 @@ import SwiftUI
 final class FloatingWidgets: NSObject, NSWindowDelegate {
     weak var app: AppState?
     private var panels: [UUID: FloatingWidgetPanel] = [:]
+    /// Origins waiting to be saved (see `windowDidMove`).
+    private var pendingOrigins: [UUID: DispatchWorkItem] = [:]
 
     static func canFloat(_ w: WidgetInstance) -> Bool { w.kind != .custom }
     var openIDs: Set<UUID> { Set(panels.keys) }
@@ -21,6 +23,7 @@ final class FloatingWidgets: NSObject, NSWindowDelegate {
         let want = app.widgets.widgets.filter { Self.canFloat($0) && $0.bool("float", false) }
         let ids = Set(want.map(\.id))
         for (id, p) in panels where !ids.contains(id) {
+            pendingOrigins.removeValue(forKey: id)?.cancel()
             panels[id] = nil
             p.delegate = nil
             p.orderOut(nil)
@@ -63,9 +66,21 @@ final class FloatingWidgets: NSObject, NSWindowDelegate {
 
     // MARK: NSWindowDelegate
 
+    /// Remembers where the window was left. A drag posts this for every step; saving each one
+    /// would re-encode the whole deck and redraw every card per mouse move, so the origin is
+    /// written once the window has been still for a moment.
     func windowDidMove(_ n: Notification) {
         guard let p = n.object as? FloatingWidgetPanel, let id = p.widgetID else { return }
-        app?.widgets.set(id, "floatOrigin", NSStringFromPoint(p.frame.origin))
+        pendingOrigins[id]?.cancel()
+        let save = DispatchWorkItem { [weak self, weak p] in
+            MainActor.assumeIsolated {
+                guard let self, let p, self.panels[id] === p else { return }
+                self.pendingOrigins[id] = nil
+                self.app?.widgets.set(id, "floatOrigin", NSStringFromPoint(p.frame.origin))
+            }
+        }
+        pendingOrigins[id] = save
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: save)
     }
 
     #if DEBUG

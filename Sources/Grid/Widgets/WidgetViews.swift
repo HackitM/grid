@@ -57,16 +57,25 @@ private struct ClockWidget: View {
         }
     }
 
-    static func time(_ d: Date, zone: TimeZone, use24: Bool, seconds: Bool) -> String {
+    /// Formatters by "zone|format". Creating a DateFormatter costs far more than using one, and a
+    /// clock showing seconds would otherwise create several every second for as long as it's on screen.
+    @MainActor private static var formatters: [String: DateFormatter] = [:]
+
+    @MainActor private static func formatter(_ format: String, zone: TimeZone) -> DateFormatter {
+        let key = zone.identifier + "|" + format
+        if let f = formatters[key] { return f }
         let f = DateFormatter()
         f.timeZone = zone
-        f.dateFormat = use24 ? (seconds ? "HH:mm:ss" : "HH:mm") : (seconds ? "h:mm:ss a" : "h:mm a")
-        return f.string(from: d)
+        f.dateFormat = format
+        formatters[key] = f
+        return f
     }
-    static func date(_ d: Date) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "EEEE · d MMMM yyyy"
-        return f.string(from: d).uppercased()
+
+    @MainActor static func time(_ d: Date, zone: TimeZone, use24: Bool, seconds: Bool) -> String {
+        formatter(use24 ? (seconds ? "HH:mm:ss" : "HH:mm") : (seconds ? "h:mm:ss a" : "h:mm a"), zone: zone).string(from: d)
+    }
+    @MainActor static func date(_ d: Date) -> String {
+        formatter("EEEE · d MMMM yyyy", zone: .current).string(from: d).uppercased()
     }
     static func city(_ z: TimeZone) -> String {
         (z.identifier.split(separator: "/").last.map(String.init) ?? z.identifier).replacingOccurrences(of: "_", with: " ")
@@ -310,7 +319,7 @@ final class GitWidgetModel {
         self.path = path
         guard let path else { state = .notRepo("no directory"); return }
         guard Self.gitAvailable else { state = .noGit; return }
-        let result = await Task.detached(priority: .utility) { () -> State in
+        let result = await BlockingWork.run { () -> State in
             let (code, out, err) = Self.git(["status", "--porcelain=v2", "--branch", "--ignore-submodules=all"], in: path)
             if code != 0 {
                 return err.contains("not a git repository") ? .notRepo(path) : .error(err.split(separator: "\n").first.map(String.init) ?? "git failed")
@@ -318,7 +327,7 @@ final class GitWidgetModel {
             let status = GitStatus.parse(porcelainV2: out)
             let (lc, log, _) = Self.git(["log", "-1", "--format=%s · %cr"], in: path)
             return .ok(status, lastCommit: lc == 0 ? log.trimmingCharacters(in: .whitespacesAndNewlines) : nil)
-        }.value
+        }
         // A slower refresh for a previous folder must not overwrite the current one.
         guard !Task.isCancelled, self.path == path else { return }
         if result != state { state = result }
@@ -339,12 +348,34 @@ final class GitWidgetModel {
         p.standardOutput = out; p.standardError = err
         p.standardInput = FileHandle.nullDevice
         do { try p.run() } catch { return (-1, "", error.localizedDescription) }
+        // Read both pipes while git runs. A pipe holds 64 KB: a status longer than that (thousands
+        // of changed files) would otherwise block git until the timeout, and the widget would
+        // report "git timed out" on exactly the repositories with the most to show.
+        let reads = DispatchGroup()
+        let collected = PipeOutput()
+        for (pipe, isError) in [(out, false), (err, true)] {
+            reads.enter()
+            DispatchQueue.global(qos: .utility).async {
+                collected.set(pipe.fileHandleForReading.readDataToEndOfFile(), isError: isError)
+                reads.leave()
+            }
+        }
         let deadline = Date().addingTimeInterval(3)
         while p.isRunning && Date() < deadline { usleep(20_000) }
-        if p.isRunning { p.terminate(); return (-1, "", "git timed out") }
-        let o = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        let e = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        return (p.terminationStatus, o, e)
+        if p.isRunning {
+            p.terminate()
+            return (-1, "", "git timed out")
+        }
+        reads.wait()
+        return (p.terminationStatus, collected.text(isError: false), collected.text(isError: true))
+    }
+
+    /// What a child process wrote to stdout and stderr, filled in from two reader threads.
+    private final class PipeOutput: @unchecked Sendable {
+        private let lock = NSLock()
+        private var out = Data(), err = Data()
+        func set(_ d: Data, isError: Bool) { lock.lock(); if isError { err = d } else { out = d }; lock.unlock() }
+        func text(isError: Bool) -> String { lock.lock(); defer { lock.unlock() }; return String(decoding: isError ? err : out, as: UTF8.self) }
     }
 }
 
@@ -399,8 +430,11 @@ private struct GitWidget: View {
         }
         .task(id: target) {
             // Refresh when the folder changes, then every 5 s while the widget is on screen.
+            // Each refresh starts two git processes, so none run while GRID can't be seen.
+            var first = true
             while !Task.isCancelled {
-                await model.refresh(target)
+                if first || AppVisibility.isOnScreen { await model.refresh(target) }
+                first = false
                 try? await Task.sleep(for: .seconds(5))
             }
         }
@@ -421,6 +455,7 @@ private struct NotesWidget: View {
     @Environment(\.theme) private var theme
     let widget: WidgetInstance
     @State private var text = ""
+    @State private var pendingSave: Task<Void, Never>?
 
     var body: some View {
         TextEditor(text: $text)
@@ -432,8 +467,25 @@ private struct NotesWidget: View {
             .background(theme.bg1)
             .overlay(Rectangle().stroke(theme.line, lineWidth: Metrics.hairline))
             .onAppear { text = widget.string("text", "") }
-            .onChange(of: text) { _, t in app.widgets.set(widget.id, "text", t) }
+            .onChange(of: text) { _, _ in scheduleSave() }
+            .onDisappear { saveNow() }
             .accessibilityLabel("Notes")
+    }
+
+    /// Saves shortly after the last keystroke. Saving on every keystroke re-encoded the whole
+    /// deck and redrew every card for each character typed.
+    private func scheduleSave() {
+        pendingSave?.cancel()
+        pendingSave = Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            if !Task.isCancelled { saveNow() }
+        }
+    }
+
+    private func saveNow() {
+        pendingSave?.cancel()
+        pendingSave = nil
+        if text != widget.string("text", "") { app.widgets.set(widget.id, "text", text) }
     }
 }
 
@@ -480,18 +532,25 @@ private struct RecentFilesWidget: View {
                 .lineLimit(1).truncationMode(.head).padding(.top, 4)
         }
         .task(id: folder) {
+            var first = true
             while !Task.isCancelled {
+                // Re-reading the folder every 10 s is pointless while GRID can't be seen.
+                guard first || AppVisibility.isOnScreen else { try? await Task.sleep(for: .seconds(10)); continue }
+                first = false
                 let dir = folder
-                let result = await Task.detached(priority: .utility) { () -> Result<[FileEntry], ListingError> in
+                let result = await BlockingWork.run { () -> Result<[FileEntry], ListingError> in
                     do {
                         let list = try FileListing.list(dir, showHidden: false)
                         return .success(list.sorted { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) })
                     } catch let e as ListingError { return .failure(e) }
                     catch { return .failure(.other(dir.path, error.localizedDescription)) }
-                }.value
+                }
                 guard !Task.isCancelled, dir == folder else { return }   // stale: folder changed meanwhile
                 switch result {
-                case .success(let l): items = Array(l.prefix(12)); failure = nil
+                case .success(let l):
+                    let newest = Array(l.prefix(12))
+                    if newest != items { items = newest }     // unchanged every 10 s: nothing to redraw
+                    if failure != nil { failure = nil }
                 case .failure(let e):
                     items = []
                     if case .permissionDenied = e { failure = "No permission to read this folder" } else { failure = "Can't read folder" }
