@@ -1,6 +1,7 @@
 import AppKit
 import GridCore
 import MetalKit
+import QuartzCore
 import SwiftUI
 
 // The map view: an MTKView subclass that turns AppKit input into `MapGesture`s, a label overlay,
@@ -141,16 +142,52 @@ final class MapContainerView: NSView {
         if paletteChanged { labels.setPalette(f.palette) }
         renderer.setFrame(f)
         // The model publishes gesture cameras at ≤ 30 Hz, so a frame can carry a camera a few
-        // events behind this view's own. Mid-gesture the view's camera wins (no snap-back);
-        // otherwise the model's is authoritative.
-        if let local = camera, Date().timeIntervalSince(lastGestureAt) < 0.25 {
+        // events behind this view's own. A camera that matches one of this view's recent local
+        // cameras is such an echo: keep the local camera (no snap-back). Anything else is a
+        // programmatic change (flyTo, Locate, reset north, pitch toggle, keys): it wins, even
+        // mid-gesture, and the local history starts over from it.
+        pruneRecent()
+        if let local = camera, local != f.camera, let i = recentLocal.lastIndex(where: { Self.matches($0.camera, f.camera) }) {
+            // The model echoes gestures in order, so everything up to the matched camera is behind it
+            // now; dropping it keeps an earlier state from masquerading as an echo later.
+            recentLocal.removeFirst(i + 1)
             renderer.setCamera(local)
         } else {
             camera = f.camera
+            recentLocal.removeAll(keepingCapacity: true)
         }
     }
 
-    private var lastGestureAt = Date.distantPast
+    /// Cameras this view produced from gestures in the last `recentWindow` seconds (newest last).
+    private var recentLocal: [(camera: MapCamera, at: TimeInterval)] = []
+    private static let recentWindow: TimeInterval = 0.3
+    private static let recentLimit = 120
+
+    private func pruneRecent() {
+        let cutoff = CACurrentMediaTime() - Self.recentWindow
+        if let i = recentLocal.firstIndex(where: { $0.at >= cutoff }) { recentLocal.removeFirst(i) } else { recentLocal.removeAll(keepingCapacity: true) }
+    }
+
+    private func rememberLocal(_ c: MapCamera) {
+        recentLocal.append((c, CACurrentMediaTime()))
+        if recentLocal.count > Self.recentLimit { recentLocal.removeFirst(recentLocal.count - Self.recentLimit) }
+    }
+
+    /// Same camera to within half a pixel of centre (at the camera's zoom) and 1e-6 in zoom,
+    /// bearing and pitch: the model and the view run identical gesture math, so an echo is
+    /// (near) exact, while any programmatic move is far outside this.
+    static func matches(_ a: MapCamera, _ b: MapCamera) -> Bool {
+        guard abs(a.zoom - b.zoom) < 1e-6, abs(a.pitch - b.pitch) < 1e-6 else { return false }
+        var db = abs(a.bearing - b.bearing); if db > 180 { db = 360 - db }
+        guard db < 1e-6 else { return false }
+        let worldScale = 256 * pow(2, a.zoom)
+        return abs(a.center.x - b.center.x) * worldScale < 0.5 && abs(a.center.y - b.center.y) * worldScale < 0.5
+    }
+
+    #if DEBUG
+    /// The view-local camera (QA / harness).
+    var debugLocalCamera: MapCamera? { camera }
+    #endif
 
     private var viewportPoints: SIMD2<Double> { SIMD2(Double(max(1, bounds.width)), Double(max(1, bounds.height))) }
 
@@ -177,11 +214,9 @@ final class MapContainerView: NSView {
             case .click, .rectangle, .key:
                 break
             }
-            if case .pan = g { lastGestureAt = Date() }
-            if case .zoom = g { lastGestureAt = Date() }
-            if case .rotate = g { lastGestureAt = Date() }
             if cam != camera {
                 camera = cam
+                rememberLocal(cam)
                 renderer.setCamera(cam)
             }
         }
