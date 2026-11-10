@@ -252,6 +252,8 @@ final class MapModel {
             draftRect = (Mercator(x: min(ga.x, gb.x), y: min(ga.y, gb.y)), Mercator(x: max(ga.x, gb.x), y: max(ga.y, gb.y)))
             frameRevision &+= 1
             if ended { finishRectangle() }
+        case .contextMenu(let p, let screen):
+            showContextMenu(at: p, screen: screen)
         case .key(let k):
             switch k {
             case .left: handle(.pan(SIMD2(120, 0)))
@@ -293,6 +295,45 @@ final class MapModel {
         guard let ground = proj.groundPoint(screen: p) else { select(nil); return }
         let maxWorld = 12 / proj.worldScale
         select(alpr.index.nearest(to: TileMath.unproject(ground), maxWorldDistance: maxWorld))
+    }
+
+    // MARK: Right-click menu
+
+    private func showContextMenu(at p: SIMD2<Double>, screen: SIMD2<Double>) {
+        let proj = mapProjection(camera: camera, viewport: viewport)
+        guard let ground = proj.groundPoint(screen: p) else { return }
+        let ll = TileMath.unproject(ground)
+        let coords = String(format: "%.5f, %.5f", ll.lat, ll.lon)
+        let title = String(format: "%.4f %@ · %.4f %@", abs(ll.lat), ll.lat >= 0 ? "N" : "S", abs(ll.lon), ll.lon >= 0 ? "E" : "W")
+        let camIndex = camera.zoom >= 12 ? alpr.index.nearest(to: ll, maxWorldDistance: 12 / proj.worldScale) : nil
+        let z = Int(camera.zoom.rounded())
+        var items: [GridMenuItem] = []
+        if let i = camIndex {
+            items.append(.action("Inspect Camera") { [weak self] in self?.select(i); self?.app?.inspectorVisible = true })
+            items.append(.divider)
+        }
+        items.append(.action("Centre Map Here") { [weak self] in self?.flyTo(ll) })
+        items.append(.action("Copy Coordinates") { [weak self] in
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(coords, forType: .string)
+            self?.app?.flash(.info, "Copied \(coords)")
+        })
+        items.append(.divider)
+        items.append(.action("Open in Apple Maps") {
+            if let u = URL(string: String(format: "https://maps.apple.com/?ll=%.6f,%.6f&z=%d", ll.lat, ll.lon, max(3, z))) { NSWorkspace.shared.open(u) }
+        })
+        items.append(.action("View on OpenStreetMap") { [weak self] in
+            self?.app?.openURL(String(format: "https://www.openstreetmap.org/#map=%d/%.5f/%.5f", max(3, min(19, z)), ll.lat, ll.lon))
+        })
+        items.append(.divider)
+        items.append(.action("Download Cameras for This View", enabled: enabled && !camera.isGlobe && !alpr.busy) { [weak self] in
+            guard let self, let box = self.visibleBBox(), box.isValid else { return }
+            let key = String(format: "rect-%.3f_%.3f_%.3f_%.3f", box.west, box.south, box.east, box.north)
+            let name = String(format: "Area %.2f°, %.2f°", (box.north + box.south) / 2, (box.east + box.west) / 2)
+            self.requestDownload(RegionDescriptor(id: key, name: name, parent: nil, iso3166_1: [], iso3166_2: []),
+                                 polygon: .rectangle(box), isRectangle: true)
+        })
+        GridMenu.shared.show(items, title: title, anchor: .point(NSPoint(x: screen.x, y: screen.y)), window: NSApp.keyWindow ?? NSApp.mainWindow)
     }
 
     func flyTo(_ p: LonLat, zoom: Double? = nil) {

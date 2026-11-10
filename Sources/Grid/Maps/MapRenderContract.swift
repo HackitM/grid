@@ -88,11 +88,33 @@ struct MapFrame: Equatable {
     var reveal: Float = 1
     /// Draw the procedural grid floor.
     var gridFloor: Bool = true
+    /// Elevation grids for the tiles in view (empty when the terrain layer is off).
+    var terrain: [TerrainGrid] = []
+    /// Metres of elevation → metres drawn: 0 = flat; the model eases it in with the tilt so the
+    /// top-down map stays planimetric.
+    var terrainScale: Float = 0
+    /// Shaded relief and contour styling on.
+    var hillshade: Bool = false
+
+    /// Elevation (metres, already scaled) at a world point, from the deepest grid covering it.
+    func elevation(at p: Mercator) -> Double {
+        guard terrainScale > 0 else { return 0 }
+        var best: TerrainGrid?
+        for g in terrain {
+            let (nw, se) = TileMath.bounds(g.id)
+            if p.x >= nw.x && p.x <= se.x && p.y >= nw.y && p.y <= se.y && g.id.z >= (best?.id.z ?? 0) { best = g }
+        }
+        guard let g = best else { return 0 }
+        let (nw, se) = TileMath.bounds(g.id)
+        return g.height(u: (p.x - nw.x) / (se.x - nw.x), v: (p.y - nw.y) / (se.y - nw.y)) * Double(terrainScale)
+    }
 
     static func == (a: MapFrame, b: MapFrame) -> Bool {
         a.camera == b.camera && a.tileGeneration == b.tileGeneration && a.tiles.map(\.id) == b.tiles.map(\.id) && a.cameras == b.cameras
             && a.clusters == b.clusters && a.location == b.location && a.regions == b.regions && a.palette == b.palette
             && a.glow == b.glow && a.buildings == b.buildings && a.reveal == b.reveal && a.gridFloor == b.gridFloor
+            && a.terrain.map(\.id) == b.terrain.map(\.id) && a.terrainScale == b.terrainScale && a.hillshade == b.hillshade
+            && a.tiles.map(\.revision) == b.tiles.map(\.revision)
     }
 }
 
@@ -110,6 +132,9 @@ enum MapGesture {
     case rectangle(SIMD2<Double>, SIMD2<Double>, ended: Bool)
     /// Keyboard: arrow keys pan, +/- zoom, 0 resets north and pitch.
     case key(MapKey)
+    /// Right-click (or control-click) at a view point; `screen` is the same point in screen
+    /// coordinates (bottom-left origin) for placing the menu.
+    case contextMenu(SIMD2<Double>, screen: SIMD2<Double>)
 }
 
 enum MapKey { case left, right, up, down, zoomIn, zoomOut, resetNorth }
@@ -119,4 +144,6 @@ struct PlacedMapLabel: Equatable, Hashable {
     var text: String
     var kind: LabelKind
     var center: CGPoint
+    /// Rotation in radians (clockwise, screen space) for labels that run along a line.
+    var angle: Double = 0
 }

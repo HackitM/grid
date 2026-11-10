@@ -199,7 +199,7 @@ final class MapContainerView: NSView {
             case .pan(let d): cam = MapGestureMath.pan(cam, by: d, viewport: viewportPoints)
             case .zoom(let dz, let around): cam = MapGestureMath.zoom(cam, by: dz, around: around, viewport: viewportPoints)
             case .rotate(let db, let dp): cam = MapGestureMath.rotate(cam, bearing: db, pitch: dp)
-            case .click, .rectangle, .key: break
+            case .click, .rectangle, .key, .contextMenu: break
             }
             if cam != camera {
                 camera = cam
@@ -300,6 +300,7 @@ final class MapInputView: MTKView {
 
     override func mouseDown(with e: NSEvent) {
         guard interactive else { return }
+        if e.modifierFlags.contains(.control) { rightMouseDown(with: e); return }
         window?.makeFirstResponder(self)
         let p = point(e)
         dragStart = p; dragLast = p; dragMoved = false
@@ -332,6 +333,14 @@ final class MapInputView: MTKView {
         }
         dragStart = nil; dragLast = nil; dragMoved = false
     }
+
+    override func rightMouseDown(with e: NSEvent) {
+        guard interactive else { return super.rightMouseDown(with: e) }
+        let s = GridMenu.screenLocation(of: e)
+        onGesture(.contextMenu(point(e), screen: SIMD2(Double(s.x), Double(s.y))))
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? { nil }
 
     override func keyDown(with e: NSEvent) {
         guard interactive else { return super.keyDown(with: e) }

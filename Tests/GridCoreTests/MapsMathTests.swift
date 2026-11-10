@@ -90,11 +90,21 @@ final class MapsMathTests: XCTestCase {
         // Overzoom reuses z14.
         var deep = cam; deep.zoom = 17
         XCTAssertTrue(TileMath.cover(deep, viewport: SIMD2(1280, 800), maxZoom: 14).allSatisfy { $0.z == 14 })
-        // Pitch adds tiles but respects the limit.
-        var tilted = cam; tilted.pitch = 45
-        let t = TileMath.cover(tilted, viewport: SIMD2(1280, 800), maxZoom: 14, limit: 48)
-        XCTAssertGreaterThan(t.count, flat.count)
-        XCTAssertLessThanOrEqual(t.count, 48)
+        // Tilted: the far edge is covered by coarser tiles (no gaps) within the limit.
+        for pitch in [45.0, 60.0] {
+            var tilted = cam; tilted.pitch = pitch
+            let vp = SIMD2<Double>(1280, 800)
+            let t = TileMath.cover(tilted, viewport: vp, maxZoom: 14, limit: 48)
+            XCTAssertLessThanOrEqual(t.count, 48)
+            if pitch >= 60 { XCTAssertTrue(t.contains { $0.z < 14 }, "pitch \(pitch): far tiles should be coarser") }
+            let proj = MapProjection(camera: tilted, viewport: vp)
+            for sx in stride(from: 0.0, through: 1.0, by: 0.25) {
+                let far = try! XCTUnwrap(proj.groundPoint(screen: SIMD2(sx * vp.x, 2)))
+                XCTAssertTrue(t.contains { id in
+                    let (nw, se) = TileMath.bounds(id); return far.x >= nw.x && far.x <= se.x && far.y >= nw.y && far.y <= se.y
+                }, "pitch \(pitch): top edge at \(sx) uncovered")
+            }
+        }
     }
 
     func testContractLayouts() {

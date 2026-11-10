@@ -23,7 +23,8 @@ final class MapsGeometryTests: XCTestCase {
         XCTAssertEqual(g.fills.count, 1)
         let f = g.fills[0]
         XCTAssertEqual(f.cls, .water)
-        XCTAssertEqual(f.positions.count, 8)
+        // Subdivided (edges ≤ 1/16 tile) so it can follow the terrain; the shape is unchanged.
+        XCTAssertGreaterThanOrEqual(f.positions.count, 8)
         XCTAssertTrue(f.positions.allSatisfy { $0.x >= 0 && $0.x <= 1 && $0.y >= 0 && $0.y <= 1 })
         XCTAssertTrue(f.positions.contains(SIMD2<Float>(0.25, 0.25)))
         // Full tile minus a hole that spans a quarter of the width and height.
@@ -85,7 +86,9 @@ final class MapsGeometryTests: XCTestCase {
         ])])
         XCTAssertEqual(g.lines.map(\.cls), [.path, .minor, .motorway])
         let minor = g.lines.first { $0.cls == .minor }!
-        XCTAssertEqual(minor.vertices.count, 8)
+        // Two lines, each split into ≤ 1/32-tile segments (4 vertices per segment).
+        XCTAssertEqual(minor.vertices.count % 4, 0)
+        XCTAssertGreaterThanOrEqual(minor.vertices.count, 8)
         XCTAssertEqual(Set(minor.vertices.map(\.flags)), [LineVertex.tunnel, LineVertex.bridge])
         XCTAssertTrue(minor.vertices.allSatisfy { $0.cls == RenderClass.minor.rawValue })
         XCTAssertTrue(minor.vertices.allSatisfy { $0.pos.y == 0.5 && $0.pos.x >= 0 && $0.pos.x <= 1 })
@@ -112,9 +115,9 @@ final class MapsGeometryTests: XCTestCase {
             ]),
         ])
         XCTAssertEqual(g.lines.map(\.cls), [.waterway, .boundary, .aeroway])
-        XCTAssertEqual(g.lines[0].vertices.count, 4)
-        XCTAssertEqual(g.lines[1].vertices.count, 8, "admin levels 2 and 4 only")
-        XCTAssertEqual(g.lines[2].vertices.count, 8)
+        // Counts scale with segment splitting; the boundary keeps exactly two lines' worth (levels 2 and 4).
+        XCTAssertEqual(g.lines[1].vertices.count, 2 * g.lines[0].vertices.count, "admin levels 2 and 4 only")
+        XCTAssertEqual(g.lines[2].vertices.count, 2 * g.lines[0].vertices.count)
         XCTAssertEqual(g.fills.map(\.cls), [.aeroway])
     }
 
@@ -339,5 +342,24 @@ final class MapsShorelineTests: XCTestCase {
         var v2: [LineVertex] = [], i2: [UInt32] = []
         TileGeometryBuilder.appendShoreline([[SIMD2(0, 0), SIMD2(1, 0), SIMD2(1, 1), SIMD2(0, 1)]], vertices: &v2, indices: &i2)
         XCTAssertTrue(v2.isEmpty)
+    }
+}
+
+final class MapsSubdivisionTests: XCTestCase {
+    func testSubdivisionKeepsAreaAndIsWatertight() {
+        let square: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(1, 0), SIMD2(1, 1), SIMD2(0, 1)]
+        let tris = Earcut.triangulate([square])
+        let (pos, idx) = TileGeometryBuilder.subdivide(square, tris, maxEdge: 1.0 / 16)
+        XCTAssertEqual(MapsEarcutTests.triangleArea([pos], idx), 1, accuracy: 1e-5)
+        var maxEdge: Float = 0
+        var i = 0
+        while i < idx.count {
+            let a = pos[Int(idx[i])], b = pos[Int(idx[i + 1])], c = pos[Int(idx[i + 2])]
+            maxEdge = max(maxEdge, simd_length(a - b), simd_length(b - c), simd_length(c - a))
+            i += 3
+        }
+        XCTAssertLessThanOrEqual(maxEdge, 1.0 / 16 + 1e-5)
+        // Watertight: no duplicate positions (shared midpoints are reused).
+        XCTAssertEqual(Set(pos.map { "\($0.x),\($0.y)" }).count, pos.count)
     }
 }
