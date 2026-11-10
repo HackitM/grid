@@ -87,8 +87,7 @@ public enum LocalSearch {
 
     /// Search text as sent anywhere: trimmed, control characters removed, at most 200 characters.
     public static func clean(_ q: String) -> String {
-        let s = String(String.UnicodeScalarView(q.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }))
-        return String(s.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
+        String(DisplayText.stripped(q, keepingBidi: true).trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
     }
 
     /// Ground distance in metres between two world positions.
@@ -117,11 +116,12 @@ public enum LocalSearch {
     public static func search(_ query: String, in entries: [SearchEntry], near: Mercator, limit: Int = 20) -> [PlaceResult] {
         let q = fold(clean(query))
         guard !q.isEmpty else { return [] }
+        let matcher = NameMatcher(q)
         var hits: [(score: Double, entry: Int, dist: Double)] = []
         for (i, e) in entries.enumerated() {
-            guard let s = FuzzyMatch.score(q, in: e.folded) else { continue }
-            // Only real substring or initials matches: a scattered subsequence is noise in a map.
-            guard s >= 500 || (s == 600 && q.count >= 2) else { continue }
+            // Only whole-name, prefix, whole-word and initials matches (and long near-matches):
+            // a scattered subsequence is noise in a map.
+            guard let s = matcher.score(e.folded), s >= 500 else { continue }
             let d = meters(e.world, near)
             var score = Double(s)
             switch e.kind {
@@ -149,6 +149,83 @@ public enum LocalSearch {
             if out.count >= limit { break }
         }
         return out
+    }
+
+    /// Scores folded names against one query exactly as `FuzzyMatch.score` does, but without its
+    /// per-name work (two `lowercased()` copies and several Foundation searches for every one of
+    /// 100 000 names on every keystroke). Names and queries that are plain ASCII (nearly all,
+    /// once folded) are compared as bytes; anything else goes to `FuzzyMatch`.
+    struct NameMatcher {
+        private let query: String
+        /// The query lowercased, when it is ASCII (nil: every name takes the slow path).
+        private let ascii: [UInt8]?
+
+        init(_ foldedQuery: String) {
+            query = foldedQuery
+            var bytes: [UInt8] = []
+            for b in foldedQuery.trimmingCharacters(in: .whitespaces).utf8 {
+                guard Self.isPlain(b) else { ascii = nil; return }
+                bytes.append(Self.lower(b))
+            }
+            ascii = bytes.isEmpty ? nil : bytes
+        }
+
+        /// Printable ASCII or a space: one byte is one character, and lowercasing is a bit flip.
+        @inline(__always) private static func isPlain(_ b: UInt8) -> Bool { b >= 0x20 && b < 0x7F }
+        @inline(__always) private static func lower(_ b: UInt8) -> UInt8 { b >= 0x41 && b <= 0x5A ? b | 0x20 : b }
+        /// The characters `FuzzyMatch` treats as starting a new word.
+        @inline(__always) private static func isBoundary(_ b: UInt8) -> Bool {
+            b == 0x20 || b == 0x2D || b == 0x5F || b == 0x2E || b == 0x2F || b == 0x28      // space - _ . / (
+        }
+
+        func score(_ folded: String) -> Int? {
+            if let ascii, let s = folded.utf8.withContiguousStorageIfAvailable({ Self.score(ascii, in: $0) }), let s { return s.value }
+            return FuzzyMatch.score(query, in: folded)
+        }
+
+        /// A score (or "no match"); nil from `score(_:in:)` itself means "not ASCII, ask FuzzyMatch".
+        private struct Outcome { var value: Int? }
+
+        private static func score(_ q: [UInt8], in name: UnsafeBufferPointer<UInt8>) -> Outcome? {
+            for b in name where !isPlain(b) { return nil }
+            let n = name.count, m = q.count
+            @inline(__always) func c(_ i: Int) -> UInt8 { lower(name[i]) }
+            func matches(at i: Int) -> Bool {
+                for k in 0..<m where c(i + k) != q[k] { return false }
+                return true
+            }
+            // Whole name, then prefix.
+            if n >= m, matches(at: 0) { return Outcome(value: n == m ? 1000 : 900 - min(n - m, 100)) }
+            // The first occurrence that starts a word, else the first occurrence anywhere.
+            var first = -1
+            if n > m {
+                for i in 1...(n - m) where c(i) == q[0] && matches(at: i) {
+                    if isBoundary(c(i - 1)) { return Outcome(value: 700 - min(i, 100)) }
+                    if first < 0 { first = i }
+                }
+            }
+            if first >= 0 { return Outcome(value: 500 - min(first, 100)) }
+            // The words' initials ("mlk" for "martin luther king").
+            var initial = 0, previous: UInt8 = 0x20
+            var isInitials = true
+            for i in 0..<n {
+                let ch = c(i)
+                if isBoundary(previous) && !isBoundary(ch) {
+                    if initial < m && ch != q[initial] { isInitials = false; break }
+                    initial += 1
+                    if initial >= m { break }
+                }
+                previous = ch
+            }
+            if isInitials && initial >= m { return Outcome(value: 600) }
+            // The letters in order, scattered.
+            var matched = 0, score = 100, run = 0
+            for i in 0..<n {
+                guard matched < m else { break }
+                if c(i) == q[matched] { run += 1; score += run * 2; matched += 1 } else { run = 0; score -= 1 }
+            }
+            return Outcome(value: matched == m ? max(score, 1) : nil)
+        }
     }
 
     /// Search entries for one decoded tile: its place, water and road names and its POIs.

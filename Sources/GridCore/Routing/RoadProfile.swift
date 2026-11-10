@@ -89,10 +89,10 @@ public enum RoadProfile {
         return mph ? n * 1.609344 : n
     }
 
+    /// A name fit to show: no control or bidi characters, trimmed, at most 80 characters; nil when nothing is left.
     static func clean(_ s: String?) -> String? {
         guard let s else { return nil }
-        let c = String(String.UnicodeScalarView(s.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) && !(0x202A...0x202E).contains($0.value) && !(0x2066...0x2069).contains($0.value) }))
-            .trimmingCharacters(in: .whitespaces)
+        let c = DisplayText.stripped(s).trimmingCharacters(in: .whitespaces)
         return c.isEmpty ? nil : String(c.prefix(80))
     }
 }
