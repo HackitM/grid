@@ -391,8 +391,6 @@ private struct BrowserFindBar: View {
     private func close() { app.browser.findVisible = false }
 }
 
-// MARK: - New tab page
-
 // MARK: - Page view
 
 /// Hosts the active tab's WKWebView (each tab keeps its own web view; only the active one is attached).
