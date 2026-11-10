@@ -1,7 +1,7 @@
 /* grid-site-theme
 id: youtube
 name: YouTube
-version: 2
+version: 3
 hosts: youtube.com
 description: A full GRID HUD for YouTube: framed video panels, numbered feeds, a framed player and the grid floor.
 */
@@ -164,9 +164,11 @@ html[data-grid-theme="youtube"] ytd-thumbnail::after, html[data-grid-theme="yout
     repeating-linear-gradient(0deg, color-mix(in srgb, var(--grid-bg0) 22%, transparent) 0 1px, transparent 1px 3px);
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
-/* Panel index (feeds and results): ◤ 01, ◤ 02 … in the top-left corner. */
-html[data-grid-theme="youtube"] ytd-rich-item-renderer ytd-thumbnail::before, html[data-grid-theme="youtube"] ytd-rich-item-renderer yt-thumbnail-view-model::before,
-html[data-grid-theme="youtube"] ytd-video-renderer ytd-thumbnail::before {
+/* Panel index (feeds and results): ◤ 01, ◤ 02 … in the top-left corner. Never on ytd-thumbnail's own
+   ::before: YouTube sizes the thumbnail with it (an aspect-ratio spacer), and taking it over leaves the
+   thumbnail 0 px tall, so its image never loads. Search results put the label on the row instead. */
+html[data-grid-theme="youtube"] ytd-rich-item-renderer yt-thumbnail-view-model::before,
+html[data-grid-theme="youtube"] ytd-video-renderer > #dismissible::before {
   content: "◤ " counter(grid-panel, decimal-leading-zero); position: absolute; top: 6px; left: 8px; z-index: 3; pointer-events: none;
   padding: 1px 6px; font: 600 10px var(--grid-mono); letter-spacing: 0.14em; color: var(--grid-accent);
   background: color-mix(in srgb, var(--grid-bg0) 82%, transparent); border: 1px solid var(--grid-line-strong);

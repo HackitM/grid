@@ -3,13 +3,13 @@
   "packs": [
     {"id": "duckduckgo", "version": 1, "file": "duckduckgo.css", "sha256": "75532b30c70fd07359499f650af4017c5993622d67c0ba220819d8e19935fefa"},
     {"id": "github", "version": 3, "file": "github.css", "sha256": "7545668831501fa6d6d14e31e820cf612fbdb517cb08d5fc41e44df10f71771d"},
-    {"id": "google", "version": 1, "file": "google.css", "sha256": "e64f6586754cc5d3e628a1be9310e030535bae0b79b584d52ed4a04b2988c069"},
+    {"id": "google", "version": 2, "file": "google.css", "sha256": "efa9960516deee3df8e2e552e3c202ac9eb0346a1a3f49c8200d5b6a5143a41c"},
     {"id": "hackernews", "version": 1, "file": "hackernews.css", "sha256": "22bd1e995bac370bd2acc9e5209caee096c5c7533ea30b6b8c4923d9304da1a9"},
     {"id": "mdn", "version": 1, "file": "mdn.css", "sha256": "db8b33aceab0e3d96ade057c39cce8876b47831c318f2ac9ec3f313d441aaf3b"},
     {"id": "reddit", "version": 1, "file": "reddit.css", "sha256": "4a30b4fb0ef91611994d9d6a2a97f3d48ab3d30a2fe7c6fe7df7fbb7ee086543"},
     {"id": "stackoverflow", "version": 1, "file": "stackoverflow.css", "sha256": "38a4361daad882b36c033cd6c8aa4406e3236c619c19128319d1c20fa352dcd8"},
     {"id": "twitch", "version": 1, "file": "twitch.css", "sha256": "316f3ddace0a6732c05fee88c7acf69692535c0ee7f3df384a09ab06776169ec"},
     {"id": "wikipedia", "version": 1, "file": "wikipedia.css", "sha256": "524436f42e44e420717386640b475973f4f3073d157a82aff2261467f7138dd9"},
-    {"id": "youtube", "version": 2, "file": "youtube.css", "sha256": "01534092388ae948878bf535909c06b7aaa82b467c5c821dea5f4d078738af90"}
+    {"id": "youtube", "version": 3, "file": "youtube.css", "sha256": "755f5fde4993c56241bf30d0332ff3ea216b397685b4797038a23eea55656c2c"}
   ]
 }
