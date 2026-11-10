@@ -169,3 +169,40 @@ final class MapsGlobeTests: XCTestCase {
         XCTAssertEqual(MapGestureMath.rotate(flat, bearing: -30, pitch: 0).bearing, 350, accuracy: 1e-9)
     }
 }
+
+final class MapsBlendTests: XCTestCase {
+    let vp = SIMD2<Double>(1200, 800)
+
+    func testBlendIsContinuousAcrossTheMorph() throws {
+        let center = TileMath.project(LonLat(lon: -75, lat: 40))
+        let probe = TileMath.project(LonLat(lon: -60, lat: 48))
+        XCTAssertEqual(MapCamera(center: center, zoom: 2.9).flatness, 0)
+        XCTAssertEqual(MapCamera(center: center, zoom: 4.0).flatness, 1)
+        // The projection type follows the zoom.
+        XCTAssertTrue(mapProjection(camera: MapCamera(center: center, zoom: 2.5), viewport: vp) is GlobeProjection)
+        XCTAssertTrue(mapProjection(camera: MapCamera(center: center, zoom: 3.4), viewport: vp) is BlendedProjection)
+        XCTAssertTrue(mapProjection(camera: MapCamera(center: center, zoom: 4.2), viewport: vp) is MapProjection)
+        // A point moves smoothly: no step bigger than a few points between nearby zooms.
+        var last: SIMD2<Double>?
+        var z = 2.85
+        while z <= 4.05 {
+            let cam = MapCamera(center: center, zoom: z)
+            let s = try XCTUnwrap(mapProjection(camera: cam, viewport: vp).screen(probe), "zoom \(z)")
+            if let last { XCTAssertLessThan(simd_length(s - last), 12, "jump at zoom \(z)") }
+            last = s
+            // The centre stays put.
+            let c = try XCTUnwrap(mapProjection(camera: cam, viewport: vp).screen(center))
+            XCTAssertEqual(c.x, 600, accuracy: 1e-6); XCTAssertEqual(c.y, 400, accuracy: 1e-6)
+            z += 0.01
+        }
+    }
+
+    func testFarSideAppearsOnlyLateInTheMorph() {
+        let center = TileMath.project(LonLat(lon: 0, lat: 0))
+        let antipode = TileMath.project(LonLat(lon: 179, lat: 0))
+        let early = BlendedProjection(camera: MapCamera(center: center, zoom: 3.1), viewport: vp)
+        XCTAssertNil(early.screen(antipode))
+        let late = BlendedProjection(camera: MapCamera(center: center, zoom: 3.98), viewport: vp)
+        XCTAssertGreaterThan(late.visibility(antipode), 0)
+    }
+}

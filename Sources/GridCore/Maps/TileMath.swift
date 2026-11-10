@@ -62,7 +62,9 @@ public enum TileMath {
     /// nearest to the centre first, at most `limit`. Above `maxZoom` the source tiles are reused
     /// (overzoom).
     public static func cover(_ cam: MapCamera, viewport: SIMD2<Double>, maxZoom: Int, limit: Int = 48) -> [TileID] {
-        if cam.isGlobe { return GlobeProjection(camera: cam, viewport: viewport).cover(maxZoom: maxZoom, limit: limit) }
+        if cam.isMostlyGlobe { return GlobeProjection(camera: cam, viewport: viewport).cover(maxZoom: maxZoom, limit: limit) }
+        var cam = cam
+        if cam.isGlobe { cam.pitch *= cam.flatness }
         guard cam.zoom.isFinite, cam.center.x.isFinite, cam.center.y.isFinite else { return [] }
         let z = max(0, min(min(maxZoom, 24), Int(max(0, min(24, (cam.zoom + 0.3).rounded(.down))))))
         let proj = MapProjection(camera: cam, viewport: viewport)
@@ -108,9 +110,61 @@ public extension MapScreenProjection {
     func screen(_ p: Mercator) -> SIMD2<Double>? { screen(p, heightMeters: 0) }
 }
 
-/// The projection for a camera: the globe below `MapCamera.globeZoom`, the flat map above.
+/// The projection for a camera: the globe at or below `MapCamera.globeZoom`, the flat map at or
+/// above `flatZoom`, and a blend of the two in between.
 public func mapProjection(camera: MapCamera, viewport: SIMD2<Double>) -> any MapScreenProjection {
-    camera.isGlobe ? GlobeProjection(camera: camera, viewport: viewport) : MapProjection(camera: camera, viewport: viewport)
+    let t = camera.flatness
+    if t >= 1 { return MapProjection(camera: camera, viewport: viewport) }
+    if t <= 0 { return GlobeProjection(camera: camera, viewport: viewport) }
+    return BlendedProjection(camera: camera, viewport: viewport)
+}
+
+/// Mid-morph between the globe and the flat map: every point's screen position is the mix of its
+/// globe and flat positions by `t` (0 = globe, 1 = flat), exactly as the shaders mix them. The
+/// flat side's pitch is scaled by `t`, since the globe has none. Points on the far side of the
+/// globe stay hidden until the morph is far enough along (`visible`).
+public struct BlendedProjection: MapScreenProjection {
+    public let camera: MapCamera
+    public let viewport: SIMD2<Double>
+    public let worldScale: Double
+    public let t: Double
+    public let flat: MapProjection
+    public let globe: GlobeProjection
+
+    public init(camera: MapCamera, viewport: SIMD2<Double>) {
+        self.camera = camera
+        self.viewport = viewport
+        worldScale = 256 * pow(2, camera.zoom)
+        t = camera.flatness
+        var fc = camera
+        fc.pitch *= t
+        flat = MapProjection(camera: fc, viewport: viewport)
+        globe = GlobeProjection(camera: camera, viewport: viewport)
+    }
+
+    /// Mixed facing test (matches the shaders): > 0 when the point should be drawn.
+    public func visibility(_ p: Mercator) -> Double {
+        let facing = globe.rotated(p).z - globe.horizonZ
+        return facing + (1 - facing) * t * t           // matches the shader: the far side shows late
+    }
+
+    /// The globe position even on the far side (projected through the sphere), for blending.
+    func globeScreenUnclipped(_ p: Mercator) -> SIMD2<Double>? {
+        let v = globe.rotated(p)
+        let c = globe.viewProjection * SIMD4(v, 1)
+        guard c.w > 1e-9 else { return nil }
+        return SIMD2((c.x / c.w + 1) / 2 * viewport.x, (1 - c.y / c.w) / 2 * viewport.y)
+    }
+
+    public func screen(_ p: Mercator, heightMeters: Double = 0) -> SIMD2<Double>? {
+        guard visibility(p) > 0, let g = globeScreenUnclipped(p), let f = flat.screen(p, heightMeters: heightMeters) else { return nil }
+        return g + (f - g) * t
+    }
+
+    /// The globe's ground point while mostly globe, the flat map's after.
+    public func groundPoint(screen s: SIMD2<Double>) -> Mercator? {
+        t < 0.5 ? globe.groundPoint(screen: s) : flat.groundPoint(screen: s)
+    }
 }
 
 public struct MapProjection: MapScreenProjection {
@@ -348,7 +402,7 @@ public enum MapGestureMath {
     /// Content moved by `delta` points.
     public static func pan(_ cam: MapCamera, by delta: SIMD2<Double>, viewport: SIMD2<Double>) -> MapCamera {
         var c = cam
-        if cam.isGlobe {
+        if cam.isMostlyGlobe {
             // Spin the globe: a drag of one radius turns it by one radian (bearing-aware).
             let g = GlobeProjection(camera: cam, viewport: viewport)
             let b = cam.bearing * .pi / 180

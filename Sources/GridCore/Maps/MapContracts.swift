@@ -61,9 +61,19 @@ public struct MapCamera: Equatable, Sendable, Codable {
     public static let maxPitch: Double = 45
     public static let minZoom: Double = 0.6
     public static let maxZoom: Double = 18
-    /// Below this zoom the map is drawn as a globe (GlobeProjection) instead of a flat map.
-    public static let globeZoom: Double = 3.5
-    public var isGlobe: Bool { zoom < Self.globeZoom }
+    /// The map is a globe at or below `globeZoom`, flat at or above `flatZoom`, and morphs between
+    /// the two in between (no sudden switch).
+    public static let globeZoom: Double = 2.9
+    public static let flatZoom: Double = 4.0
+    /// 0 = globe, 1 = flat map, smooth in between.
+    public var flatness: Double {
+        let x = min(1, max(0, (zoom - Self.globeZoom) / (Self.flatZoom - Self.globeZoom)))
+        return x * x * (3 - 2 * x)
+    }
+    /// Any part of the globe is showing (fully or mid-morph).
+    public var isGlobe: Bool { zoom < Self.flatZoom }
+    /// Mostly globe: gestures spin the globe and tiles follow the globe cover.
+    public var isMostlyGlobe: Bool { flatness < 0.5 }
     public var center: Mercator
     public var zoom: Double
     public var bearing: Double

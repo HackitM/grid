@@ -43,7 +43,8 @@ struct MapFrameScalars {
     var globeVP: simd_float4x4 = matrix_identity_float4x4
     var invGlobeVP: simd_float4x4 = matrix_identity_float4x4
     var invRot: simd_float4x4 = matrix_identity_float4x4
-    /// x on (0/1), y lon0 (rad), z horizon (rotated z above which a point faces the camera), w lat0 (rad).
+    /// x on (0/1), y lon0 (rad), z horizon (rotated z above which a point faces the camera),
+    /// w flatness: 0 = globe, 1 = flat, in between = morphing (positions are mixed).
     var globe: SIMD4<Float> = .zero
     /// Third row of the rotation (sphere frame → rotated z), for the facing test in the vertex shader.
     var rotZRow: SIMD4<Float> = .zero
@@ -128,17 +129,25 @@ struct OverlayInst { float2 center; float2 size; float4 color; float4 p; uint ki
 static float4 premul(float4 c, float a) { float k = c.a * a; return float4(c.rgb * k, k); }
 static float4 over(float4 dst, float4 src) { return src + dst * (1.0 - src.a); }
 
-// Tile-local position → clip: the flat matrix, or (globe mode) onto the sphere. `facing` > 0
-// when the point is on the side of the globe facing the camera (always 1 when flat).
+// Tile-local position → clip: the flat matrix, the sphere (globe), or mid-morph the mix of the
+// two screen positions by flatness (BlendedProjection does the same on the CPU). `facing` > 0
+// when the point should be drawn: the far side of the globe appears only late in the morph.
 static float4 tileClip(float2 tp, constant TileU& t, constant FrameU& u, thread float& facing) {
     facing = 1.0;
-    if (u.globe.x < 0.5) return t.mvp * float4(tp, 0.0, 1.0);
+    float4 flatC = t.mvp * float4(tp, 0.0, 1.0);
+    if (u.globe.x < 0.5) return flatC;
     float2 m = t.merc.xy + tp * t.merc.zw;
     float lon = m.x * 6.28318530718 - 3.14159265359 - u.globe.y;
     float lat = atan(sinh(3.14159265359 * (1.0 - 2.0 * m.y)));
     float3 v = float3(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
-    facing = dot(u.rotZRow.xyz, v) - u.globe.z;
-    return u.globeVP * float4(v, 1.0);
+    float f = dot(u.rotZRow.xyz, v) - u.globe.z;
+    float bt = u.globe.w;
+    facing = f + (1.0 - f) * bt * bt;          // the far side shows only late in the morph
+    float4 g = u.globeVP * float4(v, 1.0);
+    if (bt <= 0.0) return g;
+    if (flatC.w <= 1e-4) { facing = -1.0; return g; }
+    float2 n = mix(g.xy / max(g.w, 1e-6), flatC.xy / flatC.w, bt);
+    return float4(n, 0.5, 1.0);
 }
 
 // Globe body for a pixel: dark sphere, latitude/longitude graticule, luminous limb and a halo.
@@ -226,9 +235,10 @@ fragment float4 floor_fragment(FloorOut in [[stage_in]], constant FrameU& u [[bu
                 }
             }
         }
-        return col;
+        return u.globe.x > 0.5 ? col * u.globe.w : col;      // the lattice fades in with the flat map
     }
-    float4 col = u.globe.x > 0.5 ? globeBody(in.ndc, u) : float4(u.bg0.rgb, 1.0);
+    float4 col = float4(u.bg0.rgb, 1.0);
+    if (u.globe.x > 0.5) col = mix(col, globeBody(in.ndc, u), 1.0 - u.globe.w);   // the globe fades out
     if (u.revealY < u.viewportPx.y) {
         float dd = abs(in.pos.y - u.revealY);
         col = over(col, premul(u.accent, 0.85 * (1.0 - smoothstep(0.0, 2.0 * u.scale, dd))));
@@ -239,16 +249,18 @@ fragment float4 floor_fragment(FloorOut in [[stage_in]], constant FrameU& u [[bu
 
 // ---------------------------------------------------------------- fills and stencil mask
 
-struct FillOut { float4 pos [[position]]; };
+struct FillOut { float4 pos [[position]]; float facing; };
 
-vertex FillOut fill_vertex(uint vid [[vertex_id]], const device float2* v [[buffer(0)]], constant TileU& t [[buffer(1)]]) {
-    FillOut o; o.pos = t.mvp * float4(v[vid], 0.0, 1.0); return o;
+vertex FillOut fill_vertex(uint vid [[vertex_id]], const device float2* v [[buffer(0)]], constant TileU& t [[buffer(1)]],
+                           constant FrameU& u [[buffer(2)]]) {
+    FillOut o; float f; o.pos = tileClip(v[vid], t, u, f); o.facing = f; return o;
 }
 
 fragment float4 fill_fragment(FillOut in [[stage_in]], constant FrameU& u [[buffer(0)]], constant DrawU& d [[buffer(1)]]) {
-    if (in.pos.y > u.revealY) discard_fragment();
+    if (in.pos.y > u.revealY || in.facing < 0.0) discard_fragment();
     float4 c = u.fillColor[min(d.cls, uint(CLASSES - 1))];
-    return float4(c.rgb * c.a, c.a);
+    float a = c.a * (u.globe.x > 0.5 ? u.globe.w : 1.0);    // land and water fade in with the flat map
+    return float4(c.rgb * a, a);
 }
 
 fragment float4 stencil_fragment(FillOut in [[stage_in]]) { return float4(0.0); }

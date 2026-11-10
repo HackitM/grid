@@ -320,7 +320,7 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         #endif
         let viewportPt = SIMD2<Double>(drawableSize.width / scale, drawableSize.height / scale)
         let proj = mapProjection(camera: camera, viewport: viewportPt)
-        let globe = proj as? GlobeProjection
+        let globe = proj as? GlobeProjection          // fully a globe (no fills, no masks)
         let px = SIMD2<Float>(Float(drawableSize.width), Float(drawableSize.height))
         let pitched = globe == nil && frame.buildings && camera.pitch > 5
         fillUniforms(frame: frame, proj: proj, viewportPx: px, scale: Float(scale), flat: !pitched)
@@ -392,7 +392,7 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         enc.setStencilReferenceValue(0)
         for level in levels {
             enc.setRenderPipelineState(pipes.fill)
-            bindFrame(enc, vertex: nil, fragment: 0)
+            bindFrame(enc, vertex: 2, fragment: 0)
             for cls in Self.fillOrder {
                 let water = cls == .water || cls == .waterway
                 var d = UInt32(cls.rawValue)
@@ -470,7 +470,8 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         let (nw, se) = TileMath.bounds(id)
         let wupm = MapProjection.worldUnitsPerMeter(y: (nw.y + se.y) / 2)
         let tilePx = Float(proj.worldScale * (se.x - nw.x))
-        let mvp = (proj as? MapProjection)?.tileMatrix(id) ?? matrix_identity_float4x4
+        let flat = (proj as? MapProjection) ?? (proj as? BlendedProjection)?.flat
+        let mvp = flat?.tileMatrix(id) ?? matrix_identity_float4x4
         return MapTileUniforms(mvp: mvp, worldUnitsPerMeter: Float(wupm), tilePx: tilePx,
                                merc: SIMD4(Float(nw.x), Float(nw.y), Float(se.x - nw.x), Float(se.y - nw.y)))
     }
@@ -493,15 +494,16 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         let cam = proj.camera
         let style = MapStyle(palette: p, zoom: cam.zoom, glow: frame.glow, scale: scale)
         var s = MapFrameScalars()
-        if let flatProj = proj as? MapProjection { s.invCenteredVP = Self.centeredInverse(flatProj) }
-        if let g = proj as? GlobeProjection {
+        let blended = proj as? BlendedProjection
+        if let flatProj = (proj as? MapProjection) ?? blended?.flat { s.invCenteredVP = Self.centeredInverse(flatProj) }
+        if let g = (proj as? GlobeProjection) ?? blended?.globe {
             func f(_ m: simd_double4x4) -> simd_float4x4 {
                 simd_float4x4(columns: (SIMD4<Float>(m.columns.0), SIMD4<Float>(m.columns.1), SIMD4<Float>(m.columns.2), SIMD4<Float>(m.columns.3)))
             }
             s.globeVP = f(g.shaderMatrix)
             s.invGlobeVP = f(g.inverse)
             s.invRot = f(GlobeProjection.embed(g.inverseRotation))
-            s.globe = SIMD4(1, Float(g.lon0), Float(g.horizonZ), Float(g.lat0))
+            s.globe = SIMD4(1, Float(g.lon0), Float(g.horizonZ), Float(blended?.t ?? 0))
             let r = g.rotation
             s.rotZRow = SIMD4(Float(r[0][2]), Float(r[1][2]), Float(r[2][2]), 0)
         }
@@ -721,11 +723,9 @@ struct MapStyle {
         // Thin bright cores with a soft halo for the top three classes only; everything below is
         // pure accent at falling alpha, no glow, so a city at z13 reads as a graded lattice.
         // On the globe the coastline is what shows the land, so it is a brighter, glowing thread.
-        if zoom < MapCamera.globeZoom {
-            setLine(.water, hw: 0.5, p.accent, alpha: 0.85, glow: 0.5)
-        } else {
-            setLine(.water, hw: 0.45, p.accent, alpha: 0.35, glow: 0)
-        }
+        // (blended across the globe → flat morph so nothing pops).
+        let flatness = Float(MapCamera(center: Mercator(x: 0.5, y: 0.5), zoom: zoom).flatness)
+        setLine(.water, hw: 0.5 - 0.05 * flatness, p.accent, alpha: 0.85 - 0.5 * flatness, glow: 0.5 * (1 - flatness))
         setLine(.waterway, hw: 0.6, mapMix(p.accent, p.bg3, 0.45), alpha: 0.6, glow: 0)
         setLine(.path, hw: 0.25, p.textMute, alpha: 0.35, glow: 0, dash: 3)
         setLine(.rail, hw: 0.35, p.textMute, alpha: 0.45, glow: 0, dash: 6)
