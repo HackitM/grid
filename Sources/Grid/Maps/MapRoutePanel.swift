@@ -186,6 +186,12 @@ private struct RouteResults: View {
                         Text("Passes no mapped cameras.").font(GridFont.small).foregroundStyle(theme.ok)
                     }
                 }
+                HStack(spacing: 6) {
+                    Button("Print…") { MapRouteExport.printRoute(model) }.help("Print the map and the turn list")
+                    Button("GPX…") { MapRouteExport.saveGPX(model) }.help("Save for a GPS unit or an offline navigator")
+                    Button("Copy") { MapRouteExport.copyText(model) }.help("Copy the directions as text")
+                }
+                .buttonStyle(GridButtonStyle(compact: true))
                 if let leg = r.shownLeg { StepList(model: model, leg: leg) }
                 Text("Only cameras mapped in OpenStreetMap and downloaded to GRID count. Coverage is incomplete; GRID can't promise a route is unseen.")
                     .font(GridFont.small).foregroundStyle(theme.textMute).fixedSize(horizontal: false, vertical: true)

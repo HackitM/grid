@@ -14,6 +14,16 @@ struct MapPalette: Equatable {
     var text, textDim, textMute: SIMD4<Float>
     var accent, glow, line, lineStrong: SIMD4<Float>
     var warn, danger, ok: SIMD4<Float>
+    /// The chosen route's colour when it must differ from the roads (paper).
+    var route: SIMD4<Float>? = nil
+
+    /// Black on white for printing: roads in greys, water pale blue, the route in strong blue.
+    static let paper = MapPalette(
+        bg0: SIMD4(1, 1, 1, 1), bg1: SIMD4(0.97, 0.97, 0.96, 1), bg2: SIMD4(0.86, 0.86, 0.85, 1), bg3: SIMD4(0.78, 0.86, 0.93, 1),
+        text: SIMD4(0.05, 0.05, 0.05, 1), textDim: SIMD4(0.25, 0.25, 0.25, 1), textMute: SIMD4(0.5, 0.5, 0.5, 1),
+        accent: SIMD4(0.35, 0.35, 0.38, 1), glow: SIMD4(0, 0, 0, 0), line: SIMD4(0.8, 0.8, 0.8, 1), lineStrong: SIMD4(0.6, 0.6, 0.6, 1),
+        warn: SIMD4(0.85, 0.35, 0.0, 1), danger: SIMD4(0.8, 0.1, 0.1, 1), ok: SIMD4(0.1, 0.55, 0.2, 1),
+        route: SIMD4(0.05, 0.35, 0.85, 1))
 
     @MainActor private static var cache: (ThemeID, MapPalette)?
 

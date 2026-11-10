@@ -127,6 +127,8 @@ display is awake.
 - [ ] Map: Return with no local match (or ⌘Return) asks SEARCH-NET the first time, then shows online results; Settings › Map turns it off; the same search again from the same view within a day sends nothing
 - [ ] Map: right-click › Directions from Here, then to Here in a city with no road data → "Download Road Data for <state>…" → ROUTE-DATA confirmation with size → download and build progress, Cancel works → the route appears
 - [ ] Map: with cameras downloaded, AVOID and FASTEST both show distance, time and mapped cameras; switching redraws; steps fly the map; hovering a step rings it; cameras on the shown route are drawn in the warning colour
+- [ ] Map: Print… shows the print panel; the preview has the paper map (roads in grey, the route in blue, A/B, cameras it passes) and the turn list over as many pages as needed, on Letter and A4
+- [ ] Map: GPX… saves a file that opens in a GPX viewer (start, destination and cameras as waypoints, steps as a route, the line as a track); Copy puts the turn list on the clipboard
 - [ ] Map: Settings › Map lists road data with Remove; Clear Map Data removes it; routing works with the network off once the data is installed
 - [ ] Map: two-finger click and Control-click open the map's menu and it stays open; a real scroll or a click elsewhere closes it
 - [ ] Map: theme switch recolours instantly; Effects › Glow off removes the glow; with the window unfocused the map stops drawing (0% CPU)

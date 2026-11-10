@@ -14,6 +14,8 @@ import simd
 private struct MapPipelines {
     let device: MTLDevice
     let floor, lattice, fill, stencil, line, extrusion, overlay, label: MTLRenderPipelineState
+    /// Lines over a light (paper) palette: source-over, since max blending can't darken white.
+    let lineOver: MTLRenderPipelineState
     let terrainGround, terrainShade, terrainMask: MTLRenderPipelineState
     // Stencil bit planes: 0x01 fill-phase level mask, 0x02 water, 0x04 line-phase level mask.
     let dsNone, dsFill, dsFillWrite, dsWater, dsLattice, dsLine, dsLineWrite, dsExtrusion: MTLDepthStencilState
@@ -79,6 +81,7 @@ private struct MapPipelines {
               let fill = pso("fill_vertex", "fill_fragment", blend: true),
               let stencil = pso("fill_vertex", "stencil_fragment", blend: false, colorWrite: false),
               let line = pso("line_vertex", "line_fragment", blend: true, maxBlend: true),
+              let lineOver = pso("line_vertex", "line_fragment", blend: true),
               let extrusion = pso("ext_vertex", "ext_fragment", blend: false),
               let overlay = pso("overlay_vertex", "overlay_fragment", blend: true),
               let label = pso("label_vertex", "label_fragment", blend: true),
@@ -86,6 +89,7 @@ private struct MapPipelines {
               let terrainShade = pso("terrain_vertex", "terrain_shade_fragment", blend: true),
               let terrainMask = pso("terrain_vertex", "terrain_mask_fragment", blend: false, colorWrite: false) else { return nil }
         self.floor = floor; self.lattice = lattice; self.fill = fill; self.stencil = stencil; self.line = line; self.extrusion = extrusion; self.overlay = overlay; self.label = label
+        self.lineOver = lineOver
         self.terrainGround = terrainGround; self.terrainShade = terrainShade; self.terrainMask = terrainMask
 
         func ds(depth: Bool, test: Bool = false, stencil: MTLStencilDescriptor?) -> MTLDepthStencilState? {
@@ -353,6 +357,10 @@ final class MapRenderer: NSObject, MTKViewDelegate {
     // MARK: Frame input
 
     /// Marks the view for display; uploads new tiles lazily (here, once per new TileID).
+    /// Seconds of tile uploads per frame on the main thread (the rest wait a turn). A renderer
+    /// that draws one image (printing) uploads everything at once.
+    var uploadBudget: Double = 0.006
+
     func setFrame(_ f: MapFrame) {
         if f.tileGeneration != tileGeneration {
             gpuTiles.removeAll()
@@ -370,7 +378,7 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         for t in f.tiles {
             let gpu: GPUTile
             if let g = gpuTiles[t.id], g.revision == t.revision { gpu = g } else {
-                if CACurrentMediaTime() - started > 0.006 {
+                if CACurrentMediaTime() - started > uploadBudget {
                     deferred = true
                     // The copy already on the GPU (older contours) still draws meanwhile.
                     guard let stale = gpuTiles[t.id] else { continue }
@@ -629,7 +637,7 @@ final class MapRenderer: NSObject, MTKViewDelegate {
                     for t in level { for b in t.fills where b.cls == cls.rawValue { drawTile(enc, t, b) } }
                 }
             }
-            enc.setRenderPipelineState(pipes.line)
+            enc.setRenderPipelineState(frame.palette.bg0.x > 0.5 ? pipes.lineOver : pipes.line)
             bindFrame(enc, vertex: 2, fragment: 0)
             for level in levels.reversed() {
                 for cls in Self.lineOrder {
@@ -691,7 +699,7 @@ final class MapRenderer: NSObject, MTKViewDelegate {
 
         // 4. Lines and buildings, deepest level first (bit 2 masks ancestors).
         for level in levels {
-            enc.setRenderPipelineState(pipes.line)
+            enc.setRenderPipelineState(frame.palette.bg0.x > 0.5 ? pipes.lineOver : pipes.line)
             bindFrame(enc, vertex: 2, fragment: 0)
             for cls in Self.lineOrder {
                 let contour = cls == .contour || cls == .contourIndex
@@ -1031,7 +1039,7 @@ final class MapRenderer: NSObject, MTKViewDelegate {
 
         // Routes: the alternative dim and dashed, the chosen one bright with a glow (on the terrain).
         for r in frame.routes where r.points.count >= 2 {
-            var color = r.primary ? p.accent : p.textMute
+            var color = r.primary ? (p.route ?? p.accent) : p.textMute
             color.w = r.primary ? 1 : 0.75
             let half: Float = (r.primary ? 2.0 : 1.3) * s
             let glow: Float = r.primary && frame.glow ? 4 * s : 0
@@ -1146,12 +1154,11 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         10 + min(8, log2(Double(max(1, count)))) * 1.5
     }
 
-    // MARK: DEBUG harness
+    // MARK: Offscreen
 
-    #if DEBUG
-    /// Renders the current frame into an offscreen texture and returns it as an image (QA, tests
-    /// in the scratch harness). Blocks until the GPU finishes.
-    func debugRenderOffscreen(size: CGSize, scale: Double = 2) -> CGImage? {
+    /// Renders the current frame into an offscreen texture and returns it as an image (printing,
+    /// and QA). Blocks until the GPU finishes.
+    func renderImage(size: CGSize, scale: Double = 2) -> CGImage? {
         guard let frame, let camera else { return nil }
         let w = Int(size.width * scale), h = Int(size.height * scale)
         guard w > 0, h > 0 else { return nil }
@@ -1185,7 +1192,6 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         return CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4, space: cs, bitmapInfo: info,
                        provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
     }
-    #endif
 }
 
 /// Per-class colour and width tables for one frame (theme + zoom + glow), in pixels.

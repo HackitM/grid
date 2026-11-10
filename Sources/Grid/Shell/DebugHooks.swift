@@ -807,6 +807,14 @@ enum DebugHooks {
                 if let t = c["to"] as? [Double], t.count == 2 { r.to = .init(name: "QA to", coordinate: LonLat(lon: t[0], lat: t[1])) }
                 if let w = c["show"] as? String { r.show(w == "fastest" ? .fastest : .avoiding) }
                 if c["clear"] as? Bool == true { r.clear() }
+            case "routeExport":
+                // {"op":"routeExport","dir":"/tmp/x"} writes route.pdf, route.gpx and route.txt there (no panels).
+                if let dir = c["dir"] as? String {
+                    let d = URL(fileURLWithPath: dir)
+                    if let t = MapRouteExport.text(m) { try? Data(t.utf8).write(to: d.appendingPathComponent("route.txt")) }
+                    if let g = MapRouteExport.gpx(m) { try? Data(g.utf8).write(to: d.appendingPathComponent("route.gpx")) }
+                    MapRouteExport.operation(m, pdf: d.appendingPathComponent("route.pdf"))?.run()
+                }
             case "routeData":
                 if let id = c["region"] as? String {
                     Task {

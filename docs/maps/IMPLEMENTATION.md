@@ -688,5 +688,13 @@ trip leaves the Mac, and there is no helper runtime.
   step where they are passed.
 - **Checked against Valhalla** (FOSSGIS public server, four Birmingham trips): the downtown →
   Galleria route matched step for step; distances within 0–10 %, times within 0–10 %.
+- **Export** (`CueSheet`, `GPXWriter` in GridCore; `MapRouteExport`): Print renders the route's
+  area offscreen with a renderer of its own in `MapPalette.paper` (all tiles uploaded at once, a
+  level finer than the page's zoom, 3× resolution; lines use source-over blending on the light
+  palette) and lays out title, summary, map, the turn list in 13 pt with camera notes, the
+  disclaimer and attribution as text, so the print system paginates for any paper size. GPX 1.1
+  has the ends and passed cameras as `wpt`, the steps as `rte`, the line as `trk`; text is XML
+  escaped (characters XML forbids dropped) and coordinates always use a decimal point. Copy puts
+  the same turn list on the clipboard.
 - **Not yet**: routes that cross from one region's data into another's, way-via turn
-  restrictions, traffic, time-dependent access, print/GPX export.
+  restrictions, traffic, time-dependent access.

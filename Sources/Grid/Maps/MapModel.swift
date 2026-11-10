@@ -353,6 +353,34 @@ final class MapModel {
         setCamera(c)
     }
 
+    /// A frame of the whole route in the paper palette, for printing: flat, north up, no
+    /// buildings or terrain, the route, its ends and the cameras it passes.
+    func printFrame(leg: RouteService.Leg, viewport: SIMD2<Double>) -> MapFrame? {
+        let pts = leg.path.points.map(TileMath.project)
+        guard pts.count >= 2 else { return nil }
+        let x0 = pts.map(\.x).min()!, x1 = pts.map(\.x).max()!, y0 = pts.map(\.y).min()!, y1 = pts.map(\.y).max()!
+        let sx = max(1e-9, x1 - x0) * 256, sy = max(1e-9, y1 - y0) * 256
+        let zoom = min(16.5, max(3, log2(min((viewport.x - 60) / sx, (viewport.y - 60) / sy))))
+        let cam = MapCamera(center: Mercator(x: (x0 + x1) / 2, y: (y0 + y1) / 2), zoom: zoom)
+        // Tiles a level finer than the page's zoom (it prints at 3× resolution); missing ones fall
+        // back to loaded ancestors.
+        var fine = cam; fine.zoom += 1
+        let cover = TileMath.cover(fine, viewport: viewport * 2, maxZoom: tiles.source?.maxZoom ?? 14, limit: 96)
+        var f = MapFrame(camera: cam, tileGeneration: tiles.generation, tiles: tiles.geometry(for: cover),
+                         palette: .paper, glow: false, buildings: false, reveal: 1, gridFloor: false)
+        f.stamp = 0
+        f.routes = [RouteLine(points: pts, primary: true)]
+        if let a = routing.from { f.routeMarks.append(RouteMark(world: TileMath.project(a.coordinate), label: "A")) }
+        if let b = routing.to { f.routeMarks.append(RouteMark(world: TileMath.project(b.coordinate), label: "B")) }
+        let cams = alpr.index.cameras
+        for h in leg.hits where cams.indices.contains(h.camera) {
+            let c = cams[h.camera]
+            f.cameras.append(CameraMarker(world: TileMath.project(c.coordinate), directions: c.directions, isFlock: c.vendor == .flock,
+                                          selected: false, index: h.camera, onRoute: true))
+        }
+        return f
+    }
+
     /// Bits of the place categories drawn (0 when the Places layer is off).
     var poiMask: UInt16 {
         guard showPlaces else { return 0 }

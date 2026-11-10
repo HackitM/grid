@@ -95,7 +95,8 @@ A real terminal, a file browser, an app launcher, a widget deck and a web browse
   OpenStreetMap road data once (asking first, with the size), builds its own road network from it,
   and routes offline. It shows the fastest route and one that avoids the mapped ALPR cameras it
   can, with distance, time, the cameras each passes and turn-by-turn steps. Right-click the map
-  for Directions from / to Here, or use Directions in a place's card.
+  for Directions from / to Here, or use Directions in a place's card. **Print** a route (map and
+  large-type turn list), save it as **GPX** for a GPS unit or offline navigator, or copy it as text.
 - **Right-click the map** to inspect a camera, centre the map, copy coordinates, open the spot in
   Apple Maps or OpenStreetMap, or download the cameras in view.
   - **Each download asks first,** with the host, the number of requests and the size. Settings ›

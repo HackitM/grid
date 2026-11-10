@@ -284,3 +284,54 @@ final class CameraExposureTests: XCTestCase {
         XCTAssertEqual(ExposureLevel(count: 5), .high); XCTAssertEqual(ExposureLevel(count: 6), .extreme)
     }
 }
+
+final class RouteExportTests: XCTestCase {
+    private func path() throws -> RoutePath {
+        let (w, _) = Town.ways()
+        let (g, _) = try RoadGraphBuilder.build(pbf: PBFTestEncoder.encode(nodes: Town.nodes, ways: w))
+        let e = RouteEngine(graph: g)
+        return try XCTUnwrap(e.route(from: XCTUnwrap(e.snap(Town.ll(0, 0))), to: XCTUnwrap(e.snap(Town.ll(3, 3)))))
+    }
+
+    func testCueSheetRowsAndText() throws {
+        let p = try path()
+        let hit = CameraExposure.Hit(camera: 4, along: p.distance - 10, distance: 30)
+        let sheet = CueSheet(path: p, hits: [hit])
+        XCTAssertEqual(sheet.rows.count, p.steps.count)
+        XCTAssertEqual(sheet.rows.first?.total, 0)
+        XCTAssertEqual(sheet.rows.map(\.number), Array(1...p.steps.count))
+        // The camera belongs to the step whose stretch contains it.
+        XCTAssertEqual(sheet.rows.filter { !$0.cameras.isEmpty }.count, 1)
+        XCTAssertEqual(sheet.rows.firstIndex { !$0.cameras.isEmpty }, sheet.rows.count - 2, "the last stretch before arriving")
+        let t = sheet.text(title: "A to B", distance: { String(format: "%.0f m", $0) }, duration: { String(format: "%.0f s", $0) },
+                           camera: { "camera \(Int($0.distance)) m away" })
+        XCTAssertTrue(t.hasPrefix("A to B\n"))
+        XCTAssertTrue(t.contains("01  Head"))
+        XCTAssertTrue(t.contains("⌗ camera 30 m away"))
+    }
+
+    func testGPXDocument() throws {
+        let p = try path()
+        let doc = GPXWriter.document(name: "Home <to> \"Work\" & back", steps: p.steps, track: p.points,
+                                     waypoints: [.init(at: Town.ll(0, 0), name: "A"), .init(at: Town.ll(1, 1), name: "ALPR camera", detail: "facing 90°")],
+                                     created: Date(timeIntervalSince1970: 0))
+        XCTAssertTrue(doc.contains("<name>Home &lt;to&gt; &quot;Work&quot; &amp; back</name>"))
+        XCTAssertTrue(doc.contains("<time>1970-01-01T00:00:00Z</time>"))
+        XCTAssertEqual(doc.components(separatedBy: "<trkpt ").count - 1, p.points.count)
+        XCTAssertEqual(doc.components(separatedBy: "<rtept ").count - 1, p.steps.count)
+        XCTAssertEqual(doc.components(separatedBy: "<wpt ").count - 1, 2)
+        XCTAssertTrue(doc.contains("lat=\"33.500000\" lon=\"-86.800000\""))
+        // Well-formed XML.
+        XCTAssertNoThrow(try XMLDocument(xmlString: doc, options: []))
+    }
+
+    func testEscapeDropsForbiddenCharacters() {
+        XCTAssertEqual(GPXWriter.escape("a\u{0}b\u{1}c\td'"), "abc\td&apos;")
+        XCTAssertEqual(GPXWriter.escape("Zürich 🚗"), "Zürich 🚗")
+    }
+
+    func testDecimalPointWhateverTheLocale() {
+        XCTAssertEqual(GPXWriter.fixed(-86.8), "-86.800000")
+        XCTAssertEqual(GPXWriter.fixed(.nan), "0")
+    }
+}
