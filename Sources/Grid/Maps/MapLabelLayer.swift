@@ -42,6 +42,38 @@ final class MapLabelPlanner {
         return kind == .place ? capped.uppercased() : capped
     }
 
+    /// A tile's labels with their display text, dedup key, width and world positions worked out
+    /// once (per tile revision) instead of every frame.
+    private struct Prepared {
+        let text: String, key: String, kind: LabelKind, priority: Int, minZoom: Float
+        let world: Mercator, ahead: Mercator?, width: Double
+    }
+    private var preparedCache: [TileID: (revision: Int, labels: [Prepared])] = [:]
+
+    private func prepared(_ t: TileGeometry) -> [Prepared] {
+        if let c = preparedCache[t.id], c.revision == t.revision { return c.labels }
+        let (nw, se) = TileMath.bounds(t.id)
+        let w = se.x - nw.x, h = se.y - nw.y
+        var out: [Prepared] = []
+        out.reserveCapacity(t.labels.count)
+        for a in t.labels where !a.text.isEmpty {
+            let text = Self.display(a.text, kind: a.kind)
+            guard !text.isEmpty else { continue }
+            let world = Mercator(x: nw.x + Double(a.pos.x) * w, y: nw.y + Double(a.pos.y) * h)
+            let ahead = a.dir == .zero ? nil : Mercator(x: world.x + Double(a.dir.x) * w * 0.02, y: world.y + Double(a.dir.y) * h * 0.02)
+            out.append(Prepared(text: text, key: "\(a.kind.rawValue)|\(text)", kind: a.kind, priority: a.priority, minZoom: a.minZoom,
+                                world: world, ahead: ahead, width: width(of: text)))
+        }
+        preparedCache[t.id] = (t.revision, out)
+        return out
+    }
+
+    private func pruneCache(keeping tiles: [TileGeometry]) {
+        guard preparedCache.count > 2 * tiles.count + 64 else { return }
+        let keep = Set(tiles.map(\.id))
+        preparedCache = preparedCache.filter { keep.contains($0.key) }
+    }
+
     /// Marks a cluster-count candidate so it can be told apart after placement.
     private static let countMark = "\u{1}"
 
@@ -60,37 +92,31 @@ final class MapLabelPlanner {
         }
         for t in tiles.sorted(by: { $0.id.z > $1.id.z }) {
             guard !t.labels.isEmpty else { continue }
-            let (nw, se) = TileMath.bounds(t.id)
-            let w = se.x - nw.x, h = se.y - nw.y
-            for a in t.labels where a.minZoom <= zoom && !a.text.isEmpty {
-                let text = Self.display(a.text, kind: a.kind)
-                guard !text.isEmpty else { continue }
-                let key = "\(a.kind.rawValue)|\(text)"
-                guard !seen.contains(key) else { continue }
-                let world = Mercator(x: nw.x + Double(a.pos.x) * w, y: nw.y + Double(a.pos.y) * h)
-                let z = elevation(world)
-                guard let s = proj.screen(world, heightMeters: z) else { continue }
+            for a in prepared(t) where a.minZoom <= zoom {
+                guard !seen.contains(a.key) else { continue }
+                // Cheap cull on the ground plane first (raised terrain moves points by less than this).
+                if let g = proj.screen(a.world), g.x < -700 || g.y < -900 || g.x > proj.viewport.x + 700 || g.y > proj.viewport.y + 700 { continue }
+                let z = elevation(a.world)
+                guard let s = proj.screen(a.world, heightMeters: z) else { continue }
                 guard s.x > -200, s.y > -50, s.x < proj.viewport.x + 200, s.y < proj.viewport.y + 50 else { continue }
-                seen.insert(key)
-                let tw = width(of: text) + 8
+                seen.insert(a.key)
+                let tw = a.width + 8
                 var size = SIMD2(tw, Self.labelHeight)
                 var center = s + SIMD2(0, a.kind == .place ? 10 : 0)
                 // Labels that belong to a line (road names, contour heights) run along it.
-                if a.dir != .zero {
-                    let ahead = Mercator(x: world.x + Double(a.dir.x) * w * 0.02, y: world.y + Double(a.dir.y) * h * 0.02)
-                    if let s2 = proj.screen(ahead, heightMeters: z) {
-                        var ang = atan2(s2.y - s.y, s2.x - s.x)
-                        if ang > .pi / 2 { ang -= .pi } else if ang < -.pi / 2 { ang += .pi }   // keep it readable
-                        angles[text] = ang
-                        let c = abs(cos(ang)), sn = abs(sin(ang))
-                        size = SIMD2(tw * c + Self.labelHeight * sn, tw * sn + Self.labelHeight * c)
-                        center = s
-                    }
+                if let ahead = a.ahead, let s2 = proj.screen(ahead, heightMeters: z) {
+                    var ang = atan2(s2.y - s.y, s2.x - s.x)
+                    if ang > .pi / 2 { ang -= .pi } else if ang < -.pi / 2 { ang += .pi }   // keep it readable
+                    angles[a.text] = ang
+                    let c = abs(cos(ang)), sn = abs(sin(ang))
+                    size = SIMD2(tw * c + Self.labelHeight * sn, tw * sn + Self.labelHeight * c)
+                    center = s
                 }
-                candidates.append(LabelCandidate(text: text, kind: a.kind, priority: a.priority, center: center, size: size))
+                candidates.append(LabelCandidate(text: a.text, kind: a.kind, priority: a.priority, center: center, size: size))
                 if candidates.count >= 2000 { break }
             }
         }
+        pruneCache(keeping: tiles)
         let placed = LabelPlacer.place(candidates, viewport: proj.viewport, keep: lastTexts, max: Self.maxLabels + counts.count, padding: 4)
         lastTexts = Set(placed.map(\.text))
         var labels: [PlacedMapLabel] = []

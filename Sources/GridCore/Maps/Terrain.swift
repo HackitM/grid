@@ -4,13 +4,16 @@ import simd
 /// Elevation data: AWS Terrain Tiles in the "Terrarium" encoding (256 px PNG, RGB), decoded by the
 /// app (ImageIO) and handed here as raw bytes. Pure math: decoding, per-tile grids, contours.
 public enum Terrarium {
-    /// The tile that holds elevation for a map tile: the same tile, or its z12 ancestor for deeper
-    /// tiles (elevation sources are ~30 m; z12 is ~38 m per pixel at the equator).
+    /// The tile that holds elevation for a map tile: its ancestor two levels up, whose 256 px
+    /// cover the map tile with 64 px, exactly what its 65×65 grid samples (one download serves
+    /// 16 map tiles), and never deeper than z12 (sources are ~30 m; z12 is ~38 m per pixel).
     public static let maxDEMZoom = 12
+    public static let demLevelsUp = 2
 
     public static func demTile(for t: TileID) -> TileID {
+        let z = min(maxDEMZoom, max(0, Int(t.z) - demLevelsUp))
         var d = t
-        while Int(d.z) > maxDEMZoom, let p = TileMath.parent(d) { d = p }
+        while Int(d.z) > z, let p = TileMath.parent(d) { d = p }
         return d
     }
 
@@ -32,7 +35,8 @@ public enum Terrarium {
     }
 
     /// The `TerrainGrid` for map tile `t` from its DEM tile's elevations (`demSize²` samples).
-    /// Samples sit at tile-local (i/(n−1), j/(n−1)), read bilinearly from the DEM.
+    /// Samples sit at tile-local (i/(n−1), j/(n−1)), read with Catmull-Rom (smooth slopes when a
+    /// DEM pixel spans many grid cells, so close-up relief doesn't facet).
     public static func grid(for t: TileID, dem: TileID, heights: [Float], demSize: Int) -> TerrainGrid? {
         guard demSize >= 2, heights.count == demSize * demSize, dem.z <= t.z else { return nil }
         let dz = Int(t.z) - Int(dem.z)
@@ -42,13 +46,23 @@ public enum Terrarium {
         let n = TerrainGrid.size
         var out = [Float](repeating: 0, count: n * n)
         let last = Double(demSize - 1)
-        func sample(_ px: Double, _ py: Double) -> Float {
-            let x = min(max(px, 0), last), y = min(max(py, 0), last)
+        func px(_ i: Int, _ j: Int) -> Float {
+            heights[min(max(j, 0), demSize - 1) * demSize + min(max(i, 0), demSize - 1)]
+        }
+        func cr(_ p0: Float, _ p1: Float, _ p2: Float, _ p3: Float, _ t: Float) -> Float {
+            let t2 = t * t, t3 = t2 * t
+            return 0.5 * (2 * p1 + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (3 * p1 - p0 - 3 * p2 + p3) * t3)
+        }
+        func sample(_ sx: Double, _ sy: Double) -> Float {
+            let x = min(max(sx, 0), last), y = min(max(sy, 0), last)
             let x0 = min(Int(x), demSize - 2), y0 = min(Int(y), demSize - 2)
             let fx = Float(x - Double(x0)), fy = Float(y - Double(y0))
-            let a = heights[y0 * demSize + x0], b = heights[y0 * demSize + x0 + 1]
-            let c = heights[(y0 + 1) * demSize + x0], d = heights[(y0 + 1) * demSize + x0 + 1]
-            return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy
+            func row(_ j: Int) -> Float { cr(px(x0 - 1, j), px(x0, j), px(x0 + 1, j), px(x0 + 2, j), fx) }
+            let r0 = row(y0 - 1), r1 = row(y0), r2 = row(y0 + 1), r3 = row(y0 + 2)
+            // Catmull-Rom overshoots a little at cliffs; keep it within the four middle samples.
+            let lo = min(px(x0, y0), px(x0 + 1, y0), px(x0, y0 + 1), px(x0 + 1, y0 + 1))
+            let hi = max(px(x0, y0), px(x0 + 1, y0), px(x0, y0 + 1), px(x0 + 1, y0 + 1))
+            return min(hi, max(lo, cr(r0, r1, r2, r3, fy)))
         }
         for j in 0..<n {
             for i in 0..<n {

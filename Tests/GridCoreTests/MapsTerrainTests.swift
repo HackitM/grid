@@ -11,7 +11,9 @@ final class MapsTerrainTests: XCTestCase {
         XCTAssertEqual(h[1], 1000.5, accuracy: 1e-3)
         XCTAssertNil(Terrarium.decode([1, 2], width: 2, height: 1, bytesPerPixel: 3))
         XCTAssertEqual(Terrarium.demTile(for: TileID(z: 14, x: 3406, y: 6202)), TileID(z: 12, x: 851, y: 1550))
-        XCTAssertEqual(Terrarium.demTile(for: TileID(z: 9, x: 100, y: 200)), TileID(z: 9, x: 100, y: 200))
+        XCTAssertEqual(Terrarium.demTile(for: TileID(z: 9, x: 100, y: 200)), TileID(z: 7, x: 25, y: 50))
+        XCTAssertEqual(Terrarium.demTile(for: TileID(z: 13, x: 1703, y: 3101)), TileID(z: 11, x: 425, y: 775))
+        XCTAssertEqual(Terrarium.demTile(for: TileID(z: 1, x: 1, y: 0)), TileID(z: 0, x: 0, y: 0))
     }
 
     /// A DEM where elevation = x pixel index, to check cropping and shared edges.

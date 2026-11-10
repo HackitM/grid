@@ -591,7 +591,7 @@ cache) and draws them in `MapLabelLayer` (pooled `CATextLayer`s).
   elevation labels. Contours join the tile's geometry (`TileGeometry.revision` 1 → re-upload).
 - **Drawing:** `TerrainLift` (GridCore) is the single height rule shared by the GPU and CPU:
   sea-level clamp (Terrarium holds ocean depths), heights relative to the ground under the
-  camera centre, and a soft ceiling at 85% of the camera's height. Its scale eases in from 4° to
+  camera centre, and a soft ceiling at 92% of the camera's height. Its scale eases in from 4° to
   20° of tilt, so the top-down map stays planimetric. The renderer uploads each grid as an
   R32Float texture and displaces fills, lines, buildings and a 65×65 skirted terrain mesh in the
   vertex shaders. The mesh writes depth pushed back by 0.6% of the view distance, so draped

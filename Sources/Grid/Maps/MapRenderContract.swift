@@ -89,31 +89,39 @@ struct MapFrame: Equatable {
     /// Draw the procedural grid floor.
     var gridFloor: Bool = true
     /// Elevation grids for the tiles in view (empty when the terrain layer is off).
-    var terrain: [TerrainGrid] = [] { didSet { terrainIndex = Dictionary(terrain.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { a, _ in a }) } }
+    var terrain: [TerrainGrid] = [] {
+        didSet {
+            terrainIndex = Dictionary(terrain.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { a, _ in a })
+            terrainZooms = Set(terrain.map { Int($0.id.z) }).sorted(by: >)
+        }
+    }
     private var terrainIndex: [TileID: Int] = [:]
+    /// Zoom levels present in `terrain`, deepest first (lookups try only these).
+    private var terrainZooms: [Int] = []
     /// How elevation is drawn (flat until the view is tilted; see `TerrainLift`).
     var lift: TerrainLift = .flat
     /// Shaded relief and contour styling on.
     var hillshade: Bool = false
+    /// Lowest ground in view (metres, ≥ 0): high ground glows relative to it.
+    var terrainFloor: Float = 0
 
     /// Raw elevation (metres) at a world point from the deepest grid covering it; nil if none.
     func rawElevation(at p: Mercator) -> Double? {
-        guard !terrainIndex.isEmpty else { return nil }
-        for z in stride(from: 18, through: 0, by: -1) {
+        guard p.x >= 0, p.y >= 0, p.x < 1, p.y < 1 else { return nil }
+        for z in terrainZooms {
             let n = Double(1 << z)
-            let x = Int((p.x * n).rounded(.down)), y = Int((p.y * n).rounded(.down))
-            guard x >= 0, y >= 0, Double(x) < n, Double(y) < n else { return nil }
-            let id = TileID(z: z, x: x, y: y)
-            guard let i = terrainIndex[id] else { continue }
-            let (nw, se) = TileMath.bounds(id)
-            return terrain[i].height(u: (p.x - nw.x) / (se.x - nw.x), v: (p.y - nw.y) / (se.y - nw.y))
+            let fx = p.x * n, fy = p.y * n
+            let x = fx.rounded(.down), y = fy.rounded(.down)
+            guard let i = terrainIndex[TileID(z: z, x: Int(x), y: Int(y))] else { continue }
+            return terrain[i].height(u: fx - x, v: fy - y)
         }
         return nil
     }
 
     /// Metres drawn above the ground plane at a world point (0 while flat).
     func elevation(at p: Mercator) -> Double {
-        guard !lift.isFlat, let h = rawElevation(at: p) else { return lift.isFlat ? 0 : lift.lift(0) }
+        // No elevation yet: at the camera's ground level (where the GPU draws such tiles too).
+        guard !lift.isFlat, let h = rawElevation(at: p) else { return 0 }
         return lift.lift(h)
     }
 
@@ -121,7 +129,7 @@ struct MapFrame: Equatable {
         a.camera == b.camera && a.tileGeneration == b.tileGeneration && a.tiles.map(\.id) == b.tiles.map(\.id) && a.cameras == b.cameras
             && a.clusters == b.clusters && a.location == b.location && a.regions == b.regions && a.palette == b.palette
             && a.glow == b.glow && a.buildings == b.buildings && a.reveal == b.reveal && a.gridFloor == b.gridFloor
-            && a.terrain.map(\.id) == b.terrain.map(\.id) && a.lift == b.lift && a.hillshade == b.hillshade
+            && a.terrain.map(\.id) == b.terrain.map(\.id) && a.lift == b.lift && a.hillshade == b.hillshade && a.terrainFloor == b.terrainFloor
             && a.tiles.map(\.revision) == b.tiles.map(\.revision)
     }
 }

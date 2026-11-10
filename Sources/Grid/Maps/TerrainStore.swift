@@ -17,6 +17,8 @@ final class TerrainStore {
         let grid: TerrainGrid
         let contours: [LineBatch]
         let labels: [LabelAnchor]
+        /// Borrowed from a coarser elevation tile until this tile's own arrives (no contours).
+        var provisional = false
     }
 
     /// Bumped when terrain for a wanted tile becomes available.
@@ -43,18 +45,43 @@ final class TerrainStore {
 
     func terrain(for t: TileID) -> TileTerrain? { tiles[t] }
 
-    /// The map tiles in view; loads what's missing.
+    /// The map tiles in view (nearest first); loads what's missing. Until a tile's own elevation
+    /// arrives it borrows a coarser one already in memory, so nothing sits at the wrong height.
     func want(_ ids: [TileID]) {
         wanted = Set(ids); wantedList = ids
         guard enabled else { return }
-        for t in ids where tiles[t] == nil && !building.contains(t) {
+        var borrowed = false
+        for t in ids where !building.contains(t) {
             let d = Terrarium.demTile(for: t)
-            if let heights = dem[d] { build(t, from: d, heights) }
-            else if !loadingDEM.contains(d), !(failed[d].map { Date().timeIntervalSince($0) < 60 } ?? false), loadingDEM.count < 6 {
+            if let have = tiles[t], !have.provisional { continue }
+            if let heights = dem[d] { build(t, from: d, heights); continue }
+            if tiles[t] == nil, let (a, h) = loadedAncestor(of: d) {
+                if let grid = Terrarium.grid(for: t, dem: a, heights: h, demSize: 256) {
+                    insert(t, TileTerrain(grid: grid, contours: [], labels: [], provisional: true))
+                    borrowed = true
+                }
+            }
+            if !loadingDEM.contains(d), !(failed[d].map { Date().timeIntervalSince($0) < 60 } ?? false), loadingDEM.count < 6 {
                 loadingDEM.insert(d)
                 Task { await self.loadDEM(d) }
             }
         }
+        if borrowed { revision &+= 1 }
+    }
+
+    private func loadedAncestor(of d: TileID) -> (TileID, [Float])? {
+        var p = TileMath.parent(d), steps = 0
+        while let q = p, steps < 6 {
+            if let h = dem[q] { return (q, h) }
+            p = TileMath.parent(q); steps += 1
+        }
+        return nil
+    }
+
+    private func insert(_ t: TileID, _ terrain: TileTerrain) {
+        tiles[t] = terrain
+        tileOrder.removeAll { $0 == t }; tileOrder.append(t)
+        while tileOrder.count > Self.maxTiles { tiles[tileOrder.removeFirst()] = nil }
     }
 
     func clear() {
@@ -81,7 +108,15 @@ final class TerrainStore {
     private func loadDEM(_ d: TileID) async {
         // Afterwards, start whatever the in-flight cap held back.
         defer { loadingDEM.remove(d); if enabled { want(wantedList) } }
-        var data = MapStorage.read(file(d), maxBytes: 2 << 20)
+        // Disk read and decode together, off the main thread.
+        let url = file(d)
+        if let cached = await Task.detached(priority: .userInitiated, operation: { () -> [Float]? in
+            MapStorage.read(url, maxBytes: 2 << 20).flatMap(Self.decodePNG)
+        }).value {
+            store(d, cached)
+            return
+        }
+        var data: Data?
         var fromNetwork = false
         if data == nil {
             guard enabled, d.isValid,
@@ -104,10 +139,14 @@ final class TerrainStore {
             bytesSinceTrim += bytes.count
             if bytesSinceTrim > 8 << 20 { bytesSinceTrim = 0; Task.detached(priority: .utility) { Self.trimDisk() } }
         }
+        store(d, heights)
+    }
+
+    private func store(_ d: TileID, _ heights: [Float]) {
         dem[d] = heights
         demOrder.removeAll { $0 == d }; demOrder.append(d)
         while demOrder.count > Self.maxDEM { dem[demOrder.removeFirst()] = nil }
-        for t in wanted where Terrarium.demTile(for: t) == d && tiles[t] == nil { build(t, from: d, heights) }
+        for t in wantedList where Terrarium.demTile(for: t) == d && (tiles[t]?.provisional ?? true) { build(t, from: d, heights) }
     }
 
     private func build(_ t: TileID, from d: TileID, _ heights: [Float]) {
@@ -121,9 +160,7 @@ final class TerrainStore {
             }.value
             building.remove(t)
             guard let result, feet == self.feet else { return }
-            tiles[t] = result
-            tileOrder.removeAll { $0 == t }; tileOrder.append(t)
-            while tileOrder.count > Self.maxTiles { tiles[tileOrder.removeFirst()] = nil }
+            insert(t, result)
             if wanted.contains(t) { revision &+= 1 }
         }
     }

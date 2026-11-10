@@ -713,8 +713,9 @@ final class MapRenderer: NSObject, MTKViewDelegate {
             let l = terrain3D ? frame.lift : .flat
             s.terrain = SIMD4(l.scale, l.base, l.ceiling, 1)
             // Relief reads at every zoom: steeper exaggeration for the shading as you zoom out.
-            let shadeExaggeration = Float(min(4, max(1.5, 1.5 + (13 - cam.zoom) * 0.6)))
+            let shadeExaggeration = Float(min(2, max(1.2, 1.2 + (13 - cam.zoom) * 0.2)))
             s.depthK = SIMD4(Float(Self.depthFactor(cam: cam, viewport: proj.viewport)), 0.006, shadeExaggeration, frame.gridFloor ? 1 : 0)
+            s.tint = SIMD4(frame.terrainFloor, 2600, 0.15, 0)
         }
         if frame.gridFloor && !(proj is GlobeProjection) {
             // A power-of-two Mercator lattice: minor cells 1/8 tile at floor(zoom) (32…64 pt), majors every 4.

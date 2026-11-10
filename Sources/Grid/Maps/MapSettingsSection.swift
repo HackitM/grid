@@ -25,7 +25,7 @@ struct MapSettingsSection: View {
             HStack(spacing: 12) {
                 Text("Terrain height").font(GridFont.body).foregroundStyle(theme.textDim).frame(width: 150, alignment: .leading)
                 ForEach([1.0, 1.5, 2.0, 3.0], id: \.self) { x in
-                    Button(x == 1 ? "True scale" : String(format: "%g×", x)) { m.terrainExaggeration = x }
+                    Button(String(format: "%g×", x)) { m.terrainExaggeration = x }
                         .buttonStyle(GridButtonStyle(prominent: m.terrainExaggeration == x, compact: true))
                 }
             }

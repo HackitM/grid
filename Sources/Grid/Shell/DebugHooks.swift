@@ -670,7 +670,8 @@ enum DebugHooks {
                             "catalog": m.alpr.catalog?.regions.count ?? 0, "catalogState": m.alpr.catalogState ?? "",
                             "regions": m.alpr.regions.map { ["id": $0.id, "name": $0.meta.descriptor.name, "count": $0.meta.cameraCount,
                                                              "status": "\($0.status)", "sources": $0.meta.sources.map(\.rawValue), "requests": $0.meta.requests] },
-                            "location": Self.locationCase(m.location.state), "inView": m.camerasInViewCount()]
+                            "location": Self.locationCase(m.location.state), "inView": m.camerasInViewCount(),
+                            "loader": m.tiles.debugStats]
                 } ?? [:],
                 "updates": ["current": app.updates.current.description, "latest": app.updates.latest?.tagName ?? "",
                             "available": app.updates.available?.tagName ?? "", "notice": app.updates.showsNotice,

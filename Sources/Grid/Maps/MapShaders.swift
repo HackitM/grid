@@ -53,6 +53,8 @@ struct MapFrameScalars {
     /// x projection depth factor far/(near − far), y ground depth push (fraction of view
     /// distance), z hillshade vertical exaggeration, w draw the lattice on the terrain (0/1).
     var depthK: SIMD4<Float> = .zero
+    /// Elevation glow: x lowest ground in view (m), y metres above it for full glow, z strength.
+    var tint: SIMD4<Float> = .zero
 }
 
 /// Per-tile uniforms (`TileU`): tile-local 0…1 → clip, plus the height scale and tile size.
@@ -94,7 +96,7 @@ enum MapOverlayKind: UInt32 {
 enum MapUniformLayout {
     /// The Swift structs must match the MSL structs byte for byte (checked once in DEBUG).
     static func checkLayouts() {
-        assert(MemoryLayout<MapFrameScalars>.size == 512 && MemoryLayout<MapFrameScalars>.stride == 512, "FrameU scalars")
+        assert(MemoryLayout<MapFrameScalars>.size == 528 && MemoryLayout<MapFrameScalars>.stride == 528, "FrameU scalars")
         assert(MemoryLayout<MapTileUniforms>.stride == 112, "TileU")
         assert(MemoryLayout<MapOverlayInstance>.stride == 64, "OverlayInst")
         assert(MemoryLayout<LineVertex>.stride == 32 && MemoryLayout<ExtrusionVertex>.stride == 16, "vertex structs")
@@ -114,6 +116,8 @@ using namespace metal;
 #define CLASSES 24
 #define WATER_CLASS \(RenderClass.water.rawValue)u
 #define WATERWAY_CLASS \(RenderClass.waterway.rawValue)u
+#define CONTOUR_CLASS \(RenderClass.contour.rawValue)u
+#define CONTOUR_INDEX_CLASS \(RenderClass.contourIndex.rawValue)u
 
 struct FrameU {
     float4 fillColor[CLASSES];
@@ -127,7 +131,7 @@ struct FrameU {
     float gridFadeStart; float gridFadeEnd; float flat; float glowOn;
     float4x4 globeVP; float4x4 invGlobeVP; float4x4 invRot;
     float4 globe; float4 rotZRow;
-    float4 terrain; float4 depthK;
+    float4 terrain; float4 depthK; float4 tint;
 };
 
 struct TileU { float4x4 mvp; float wupm; float tilePx; float2 pad; float4 merc; float4 terr; };
@@ -151,8 +155,9 @@ static float2 demUV(float2 tp) { return (tp * 64.0 + 0.5) / 65.0; }
 // World z of the terrain under tile-local tp: `TerrainLift.lift` on the GPU (sea-level clamp,
 // relative to the ground under the camera, soft ceiling), in world units.
 static float terrainZ(float2 tp, constant TileU& t, constant FrameU& u, texture2d<float> dem) {
-    if (u.terrain.x <= 0.0) return 0.0;
-    float h = t.terr.x > 0.5 ? dem.sample(demSampler, demUV(tp), level(0)).r : 0.0;
+    // No elevation for this tile yet: draw it at the camera's ground level (lift 0).
+    if (u.terrain.x <= 0.0 || t.terr.x < 0.5) return 0.0;
+    float h = dem.sample(demSampler, demUV(tp), level(0)).r;
     float r = (max(h, 0.0) - u.terrain.y) * u.terrain.x;
     if (r > 0.0 && u.terrain.z > 0.0) r = r * u.terrain.z / (u.terrain.z + r);
     return r * t.wupm;
@@ -317,7 +322,8 @@ fragment float4 stencil_fragment(FillOut in [[stage_in]]) { return float4(0.0); 
 struct LineOut {
     float4 pos [[position]];
     float facing;            // globe: < 0 on the far side
-    float d;                 // signed distance from the centre line, px (± (half width + glow))
+    float fade;              // contours thin out with distance (they'd shimmer far away)
+    float d;                 // signed distance from the centre line, px (± (half width + glow + AA margin))
     float along;             // px along the line
     uint cls [[flat]];
     uint flags [[flat]];
@@ -331,9 +337,16 @@ vertex LineOut line_vertex(uint vid [[vertex_id]], const device LineVertex* v [[
     float facing;
     float z = terrainZ(a.pos, t, u, dem);
     float4 c0 = tileClip(a.pos, z, t, u, facing);
-    float ext = style.x + style.y;
+    // One extra pixel beyond the core and glow, so the anti-aliased edge isn't cut off by the quad.
+    float ext = style.x + style.y + 1.0;
     LineOut o;
     o.facing = facing;
+    o.fade = 1.0;
+    if (cls == CONTOUR_CLASS || cls == CONTOUR_INDEX_CLASS) {
+        float centreDist = 1.5 * u.viewportPx.y / u.scale;           // MapProjection's camera distance, points
+        float r = c0.w / max(centreDist, 1.0);
+        o.fade = cls == CONTOUR_CLASS ? 1.0 - smoothstep(1.2, 2.0, r) : 1.0 - smoothstep(1.6, 2.8, r);
+    }
     if (c0.w > 1e-4 && ext > 0.0) {
         float f1;
         float4 c1 = tileClip(a.pos + a.normal * 1e-3, z, t, u, f1);
@@ -358,10 +371,15 @@ fragment float4 line_fragment(LineOut in [[stage_in]], constant FrameU& u [[buff
     if (in.pos.y > u.revealY || in.facing < 0.0) discard_fragment();
     float4 st = u.lineStyle[in.cls];
     float4 col = u.lineColor[in.cls];
+    if (in.fade <= 0.001) discard_fragment();
     float hw = st.x, gl = st.y;
     float d = abs(in.d);
     float aa = 0.75;
-    float core = 1.0 - smoothstep(hw - aa, hw + aa, d);
+    // Hairlines: draw at least ~1.6 px wide and lower the alpha instead, so they stay smooth
+    // rather than breaking into stair steps.
+    float hwEff = max(hw, 0.8);
+    float thin = hw / hwEff;
+    float core = (1.0 - smoothstep(hwEff - aa, hwEff + aa, d)) * thin;
     float glow = 0.0;
     if (gl > 0.0) { float g = 1.0 - smoothstep(hw * 0.5, hw + gl, d); glow = g * g * st.z; }
     float dash = 1.0;
@@ -372,7 +390,7 @@ fragment float4 line_fragment(LineOut in [[stage_in]], constant FrameU& u [[buff
         dash = smoothstep(0.0, e, f) * (1.0 - smoothstep(0.5 - e, 0.5, f));
     }
     float dim = (in.flags & 1u) ? 0.35 : 1.0;   // tunnel
-    float k = dash * dim;
+    float k = dash * dim * in.fade;
     float4 c = float4(col.rgb * col.a, col.a) * (core * k);
     float4 g = float4(u.glow.rgb, 1.0) * (glow * k);
     return c + g * (1.0 - c.a);
@@ -420,8 +438,13 @@ fragment float4 terrain_shade_fragment(TerrainOut in [[stage_in]], constant Fram
         float3 n = normalize(float3(-(hr - hl) * k, -(hs - hn) * k, 1.0));   // x east, y south
         const float3 L = float3(-0.5, -0.5, 0.70710678);
         float sh = dot(n, L) - L.z;
-        col = float4(0.0, 0.0, 0.0, clamp(-sh * 0.85, 0.0, 0.6));
-        col = over(col, premul(u.accent, clamp(sh * 0.9, 0.0, 0.16)));
+        // High ground glows: metres above the lowest ground in view, so a range two kilometres
+        // tall reads differently from rolling hills at the same zoom.
+        float hc = max(dem.sample(demSampler, uv).r, 0.0);
+        float rise = smoothstep(0.0, u.tint.y, hc - u.tint.x);
+        col = premul(mix(u.accent, u.text, 0.3), u.tint.z * rise * rise);
+        col = over(col, float4(0.0, 0.0, 0.0, clamp(-sh * 0.9, 0.0, 0.62)));
+        col = over(col, premul(u.accent, clamp(sh * 1.1, 0.0, 0.2)));
     }
     if (u.depthK.w > 0.5 && u.gridMinorPx > 0.0) {
         float2 gPt = t.terr.zw + in.tp * t.tilePx;                    // points from the camera centre

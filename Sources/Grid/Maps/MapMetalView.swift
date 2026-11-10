@@ -54,7 +54,6 @@ final class MapContainerView: NSView {
     private var observers: [NSObjectProtocol] = []
     private var viewportWork: DispatchWorkItem?
     private var lastReportedViewport = SIMD2<Double>(0, 0)
-    private var labelFrameSkip = 0
 
     static let supported: Bool = {
         guard let device = MTLCreateSystemDefaultDevice() else { return false }
@@ -216,12 +215,31 @@ final class MapContainerView: NSView {
 
     // MARK: Labels
 
+    private var lastLabelTime: CFTimeInterval = 0
+    private var pendingLabels: (any MapScreenProjection, MapFrame)?
+
+    /// Labels follow the map at up to 40 Hz (placement is the heaviest main-thread work while the
+    /// map moves, and the main thread also delivers loaded tiles); the last frame is always placed.
     private func placeLabels(_ proj: any MapScreenProjection, _ frame: MapFrame) {
-        // While dragging, re-place at most every other frame.
-        if renderer.dragging {
-            labelFrameSkip += 1
-            if labelFrameSkip % 2 == 1 { return }
-        } else { labelFrameSkip = 0 }
+        let interval = 1.0 / 40, now = CACurrentMediaTime()
+        if now - lastLabelTime < interval {
+            let scheduled = pendingLabels != nil
+            pendingLabels = (proj, frame)
+            if !scheduled {
+                DispatchQueue.main.asyncAfter(deadline: .now() + interval - (now - lastLabelTime)) { [weak self] in
+                    guard let self, let (p, f) = self.pendingLabels else { return }
+                    self.pendingLabels = nil
+                    self.placeLabelsNow(p, f)
+                }
+            }
+            return
+        }
+        pendingLabels = nil
+        placeLabelsNow(proj, frame)
+    }
+
+    private func placeLabelsNow(_ proj: any MapScreenProjection, _ frame: MapFrame) {
+        lastLabelTime = CACurrentMediaTime()
         var counts: [MapCountLabel] = []
         counts.reserveCapacity(frame.clusters.count)
         for c in frame.clusters {

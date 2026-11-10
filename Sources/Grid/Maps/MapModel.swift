@@ -50,7 +50,7 @@ final class MapModel {
 
     init() {
         d.register(defaults: ["map.layer.alpr": true, "map.layer.regions": true, "map.layer.buildings": true, "map.layer.grid": true,
-                              "map.layer.terrain": true, "map.terrain.exaggeration": 1.0,
+                              "map.layer.terrain": true, "map.terrain.exaggeration": 1.5,
                               "map.enabled": false, "map.rememberView": false])
         showCameras = d.bool(forKey: "map.layer.alpr")
         showRegions = d.bool(forKey: "map.layer.regions")
@@ -132,11 +132,13 @@ final class MapModel {
     var terrainScale: Float {
         guard terrainActive else { return 0 }
         let x = min(1, max(0, (camera.pitch - 4) / 16))
-        return Float(terrainExaggeration * x * x * (3 - 2 * x))
+        // Zoomed out the camera is far away and relief flattens, so it gets up to 1.5× more.
+        let zoomBoost = 1 + 0.5 * min(1, max(0, (13 - camera.zoom) / 3))
+        return Float(terrainExaggeration * zoomBoost * x * x * (3 - 2 * x))
     }
 
     /// The lift for a frame: relative to the ground under the camera centre, with peaks kept
-    /// below 85% of the camera's height.
+    /// below 92% of the camera's height.
     private func terrainLift(_ f: MapFrame) -> TerrainLift {
         let s = terrainScale
         guard s > 0 else { return .flat }
@@ -144,7 +146,7 @@ final class MapModel {
         let dist = 0.5 * max(1, viewport.y) / tan(MapProjection.fovY / 2)
         let lat = TileMath.unproject(camera.center).lat
         let camHeight = dist * cos(camera.pitch * .pi / 180) * TileMath.metersPerPoint(lat: lat, zoom: camera.zoom)
-        return TerrainLift(scale: s, base: Float(base), ceiling: Float(camHeight * 0.85))
+        return TerrainLift(scale: s, base: Float(base), ceiling: Float(camHeight * 0.92))
     }
 
     func frame(palette: MapPalette, glow: Bool) -> MapFrame {
@@ -159,13 +161,14 @@ final class MapModel {
         var geometry = enabled ? tiles.geometry(for: ordered) : []
         var grids: [TerrainGrid] = []
         if terrainActive {
-            // Contours join their tile's geometry (revision 1 tells the renderer to re-upload it).
+            // Contours join their tile's geometry (a new revision tells the renderer to re-upload it).
             for k in geometry.indices {
                 guard let t = terrain.terrain(for: geometry[k].id) else { continue }
+                grids.append(t.grid)
+                guard !t.contours.isEmpty || !t.labels.isEmpty else { continue }
                 geometry[k].lines = t.contours + geometry[k].lines
                 geometry[k].labels += t.labels
-                geometry[k].revision = 1
-                grids.append(t.grid)
+                geometry[k].revision = 2
             }
         }
         var f = MapFrame(camera: camera, tileGeneration: tiles.generation, tiles: geometry,
@@ -173,6 +176,7 @@ final class MapModel {
         f.terrain = grids
         f.lift = terrainLift(f)
         f.hillshade = terrainActive
+        f.terrainFloor = max(0, grids.map(\.minHeight).min() ?? 0)
         if showCameras, let box = visibleBBox() {
             if camera.zoom >= 12 {
                 for i in alpr.index.query(box).prefix(4000) {

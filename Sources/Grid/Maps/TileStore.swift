@@ -110,7 +110,15 @@ final class TileStore {
         defer { inFlight.remove(t); pump() }
         guard let source, let cache else { return }
         let gen = generation
-        var data = await cache.read(t)
+        // Cached tiles are read and decoded in one trip off the main thread: each hop back to the
+        // main actor waits behind drawing while the map moves, which made tiles arrive late.
+        let cached = await Task.detached(priority: .userInitiated) { () -> TileGeometry?? in
+            guard let bytes = await cache.read(t) else { return .none }
+            return .some(Self.decode(bytes, t))
+        }.value
+        guard gen == generation else { return }
+        if case .some(let g?) = cached { insertLoaded(g); return }
+        var data: Data?
         var fromNetwork = false
         if data == nil {
             guard wanted.contains(t), let url = source.url(for: t) else { return }
@@ -127,22 +135,50 @@ final class TileStore {
             }
         }
         guard let bytes = data, gen == generation else { return }
-        let result = await Task.detached(priority: .userInitiated) { () -> TileGeometry? in
-            if bytes.isEmpty { return TileGeometry(id: t, fills: [], lines: [], extrusion: nil, labels: [], byteCount: 64) }
-            guard let tile = try? MVTDecoder.decode(bytes, layers: OpenMapTilesSchema.layers) else { return nil }
-            return TileGeometryBuilder.build(tile, id: t)
-        }.value
+        #if DEBUG
+        let t0 = CFAbsoluteTimeGetCurrent()
+        defer {
+            let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            statLoads += 1; statDecodeMs += ms; statMaxDecodeMs = max(statMaxDecodeMs, ms)
+            if fromNetwork { statNetwork += 1 }
+        }
+        #endif
+        let result = await Task.detached(priority: .userInitiated) { Self.decode(bytes, t) }.value
         guard gen == generation else { return }
         guard let geometry = result else {
             // Not a vector tile (a captive portal page, a truncated body…): don't cache it, retry later.
             failed[t] = Date(); errorCount += 1
             return
         }
-        if fromNetwork && !bytes.isEmpty { await cache.write(t, bytes) }
+        if fromNetwork && !bytes.isEmpty { Task.detached(priority: .utility) { await cache.write(t, bytes) } }
+        insertLoaded(geometry)
+    }
+
+    private func insertLoaded(_ geometry: TileGeometry) {
         insert(geometry)
-        if wanted.contains(t) { loadedCount = wanted.filter { decoded[$0] != nil }.count }
+        if wanted.contains(geometry.id) { loadedCount = wanted.filter { decoded[$0] != nil }.count }
         revision &+= 1
     }
+
+    /// MVT bytes → geometry (empty bytes = outside coverage); nil when it isn't a vector tile.
+    nonisolated static func decode(_ bytes: Data, _ t: TileID) -> TileGeometry? {
+        if bytes.isEmpty { return TileGeometry(id: t, fills: [], lines: [], extrusion: nil, labels: [], byteCount: 64) }
+        guard let tile = try? MVTDecoder.decode(bytes, layers: OpenMapTilesSchema.layers) else { return nil }
+        return TileGeometryBuilder.build(tile, id: t)
+    }
+
+    #if DEBUG
+    @ObservationIgnored private var statLoads = 0
+    @ObservationIgnored private var statNetwork = 0
+    @ObservationIgnored private var statEvictWanted = 0
+    @ObservationIgnored private var statDecodeMs = 0.0
+    @ObservationIgnored private var statMaxDecodeMs = 0.0
+    var debugStats: [String: Any] {
+        ["decoded": decoded.count, "decodedMB": decodedBytes >> 20, "inFlight": inFlight.count, "queue": queue.count,
+         "loads": statLoads, "network": statNetwork, "evictedWanted": statEvictWanted,
+         "avgDecodeMs": statLoads > 0 ? statDecodeMs / Double(statLoads) : 0, "maxDecodeMs": statMaxDecodeMs]
+    }
+    #endif
 
     private func insert(_ g: TileGeometry) {
         if let old = decoded[g.id] { decodedBytes -= old.byteCount }
@@ -152,6 +188,9 @@ final class TileStore {
         while decodedBytes > Self.maxDecodedBytes, let victim = lru.first(where: { !wanted.contains($0) }) ?? lru.first {
             lru.removeAll { $0 == victim }
             if let v = decoded.removeValue(forKey: victim) { decodedBytes -= v.byteCount }
+            #if DEBUG
+            if wanted.contains(victim) { statEvictWanted += 1 }
+            #endif
             if victim == g.id { break }
         }
     }
