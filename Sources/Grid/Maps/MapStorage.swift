@@ -13,6 +13,7 @@ enum MapStorage {
     static var tiles: URL { root.appendingPathComponent("tiles", isDirectory: true) }
     static var alpr: URL { root.appendingPathComponent("alpr", isDirectory: true) }
     static var regions: URL { root.appendingPathComponent("regions", isDirectory: true) }
+    static var terrain: URL { root.appendingPathComponent("terrain", isDirectory: true) }
 
     enum StorageError: LocalizedError {
         case unsafePath(String), noSpace, denied(String), io(String)

@@ -241,7 +241,8 @@ cache) and draws them in `MapLabelLayer` (pooled `CATextLayer`s).
 - **URLs:**
   - https only; no userinfo or ports.
   - Hosts are pinned per source: `tiles.openfreemap.org` (or a user tile URL after re-consent),
-    `*.dontgetflocked.com`, `download.geofabrik.de`, and the user-chosen Overpass endpoint.
+    `*.dontgetflocked.com`, `download.geofabrik.de`, `elevation-tiles-prod.s3.amazonaws.com`
+    (terrain, only while the Terrain layer is on), and the user-chosen Overpass endpoint.
   - Tile URLs come only from validated templates with `{z}/{x}/{y}` substitution.
   - Redirects are followed only within the same host.
   - Inspector links are built from numeric OSM ids only.
@@ -576,3 +577,25 @@ cache) and draws them in `MapLabelLayer` (pooled `CATextLayer`s).
 10. **Escalate:** any contract change (e.g. `MapFrame` fields), needing a new framework, or a
     performance target unreachable.
 11. **Handoff:** as Brief A, plus screenshots or notes on the look and measured GPU times.
+
+## Addendum — terrain (0.8)
+
+- **Source:** AWS Terrain Tiles, Terrarium PNGs (`(R·256 + G + B/256) − 32768` m), 256 px, z0–12;
+  deeper map tiles read their z12 ancestor. Fetched by `TerrainStore` only while map data is
+  enabled and the Terrain layer is on, cached under `Maps/terrain/z/x/y.png` (written only after
+  a successful decode; trimmed to 150 MB). ImageIO decodes; the raw pixel bytes are read without
+  colour management, because the channels are data.
+- **Per tile:** `Terrarium.grid` resamples to a 65×65 `TerrainGrid` (shared edges); `Contours`
+  traces marching squares (saddles by centre value) into stitched polylines with zoom-based
+  intervals in feet or metres (from the locale), index lines every fifth level, and up to 24
+  elevation labels. Contours join the tile's geometry (`TileGeometry.revision` 1 → re-upload).
+- **Drawing:** `TerrainLift` (GridCore) is the single height rule shared by the GPU and CPU:
+  sea-level clamp (Terrarium holds ocean depths), heights relative to the ground under the
+  camera centre, and a soft ceiling at 85% of the camera's height. Its scale eases in from 4° to
+  20° of tilt, so the top-down map stays planimetric. The renderer uploads each grid as an
+  R32Float texture and displaces fills, lines, buildings and a 65×65 skirted terrain mesh in the
+  vertex shaders. The mesh writes depth pushed back by 0.6% of the view distance, so draped
+  geometry never fights it but ridges still hide what's behind. Shaded relief (light from the
+  north-west) and the draped lattice are a blended pass per level, kept off water by the stencil;
+  contours also stay off water. Markers and labels use `MapFrame.elevation(at:)`; clicks refine
+  the ground hit by the lift's screen offset.

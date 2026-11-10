@@ -241,7 +241,18 @@ final class ALPRStore {
                 }
             }
         }
-        return DownloadPlan(descriptor: d, polygon: polygon, isRectangle: isRectangle, sources: sources,
+        // A drawn area that DeFlock's US/Canada index has nothing for (e.g. just across the border,
+        // which its coarse bounds include) falls back to Overpass, which covers everywhere.
+        var finalSources = sources
+        if isRectangle, chunks.isEmpty, !tiles.isEmpty, tiles.allSatisfy({ $0.2.isEmpty }) {
+            chunks = OverpassQuery.chunks(polygon, z: 7, limit: 61)
+            if chunks.count > 60 {
+                throw MapNetwork.NetError.transport("This area is too large to download from Overpass in one go. Draw a smaller area.")
+            }
+            tiles = []
+            finalSources = [.overpass]
+        }
+        return DownloadPlan(descriptor: d, polygon: polygon, isRectangle: isRectangle, sources: finalSources,
                             deflockTiles: tiles, overpassChunks: chunks, estimatedCameras: estimate)
     }
 

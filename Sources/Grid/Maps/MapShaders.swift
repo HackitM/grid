@@ -48,6 +48,11 @@ struct MapFrameScalars {
     var globe: SIMD4<Float> = .zero
     /// Third row of the rotation (sphere frame → rotated z), for the facing test in the vertex shader.
     var rotZRow: SIMD4<Float> = .zero
+    /// Terrain (`TerrainLift`): x scale (0 = flat), y base metres, z ceiling metres, w hillshade on.
+    var terrain: SIMD4<Float> = .zero
+    /// x projection depth factor far/(near − far), y ground depth push (fraction of view
+    /// distance), z hillshade vertical exaggeration, w draw the lattice on the terrain (0/1).
+    var depthK: SIMD4<Float> = .zero
 }
 
 /// Per-tile uniforms (`TileU`): tile-local 0…1 → clip, plus the height scale and tile size.
@@ -60,6 +65,9 @@ struct MapTileUniforms {
     var pad: SIMD2<Float> = .zero
     /// Globe mode: the tile's north-west corner and size in world (Mercator) units.
     var merc: SIMD4<Float> = .zero
+    /// Terrain: x 1 when the tile has an elevation grid, zw the tile's north-west corner relative
+    /// to the camera centre in points (lattice phase and distance fade on the draped grid).
+    var terr: SIMD4<Float> = .zero
 }
 
 /// One instanced overlay quad (`OverlayInst`). Pixels, top-left origin.
@@ -69,13 +77,13 @@ struct MapOverlayInstance {
     var color: SIMD4<Float>
     var p: SIMD4<Float>
     var kind: UInt32
-    // Three scalar pads (a SIMD3 would align to 16 and break the 64-byte stride).
-    var pad0: UInt32 = 0, pad1: UInt32 = 0, pad2: UInt32 = 0
+    // Three scalars (a SIMD3 would align to 16 and break the 64-byte stride).
+    var q0: Float = 0, q1: Float = 0, q2: Float = 0
 }
 
 enum MapOverlayKind: UInt32 {
     case reticle = 0      // p.x tick length px, p.y selected (0/1)
-    case wedge = 1        // p.x centre angle (rad, clockwise from up), p.y half angle; radius = size.x/2
+    case wedge = 1        // on the ground: p.xy / p.zw screen px of the radius east / north; q0 centre angle (rad, clockwise from north), q1 half angle
     case cluster = 2      // ▣ block
     case locationDot = 3
     case ring = 4         // p.x thickness px
@@ -86,8 +94,8 @@ enum MapOverlayKind: UInt32 {
 enum MapUniformLayout {
     /// The Swift structs must match the MSL structs byte for byte (checked once in DEBUG).
     static func checkLayouts() {
-        assert(MemoryLayout<MapFrameScalars>.size == 480 && MemoryLayout<MapFrameScalars>.stride == 480, "FrameU scalars")
-        assert(MemoryLayout<MapTileUniforms>.stride == 96, "TileU")
+        assert(MemoryLayout<MapFrameScalars>.size == 512 && MemoryLayout<MapFrameScalars>.stride == 512, "FrameU scalars")
+        assert(MemoryLayout<MapTileUniforms>.stride == 112, "TileU")
         assert(MemoryLayout<MapOverlayInstance>.stride == 64, "OverlayInst")
         assert(MemoryLayout<LineVertex>.stride == 32 && MemoryLayout<ExtrusionVertex>.stride == 16, "vertex structs")
     }
@@ -104,6 +112,8 @@ let mapShaderSource = """
 using namespace metal;
 
 #define CLASSES 24
+#define WATER_CLASS \(RenderClass.water.rawValue)u
+#define WATERWAY_CLASS \(RenderClass.waterway.rawValue)u
 
 struct FrameU {
     float4 fillColor[CLASSES];
@@ -117,14 +127,15 @@ struct FrameU {
     float gridFadeStart; float gridFadeEnd; float flat; float glowOn;
     float4x4 globeVP; float4x4 invGlobeVP; float4x4 invRot;
     float4 globe; float4 rotZRow;
+    float4 terrain; float4 depthK;
 };
 
-struct TileU { float4x4 mvp; float wupm; float tilePx; float2 pad; float4 merc; };
+struct TileU { float4x4 mvp; float wupm; float tilePx; float2 pad; float4 merc; float4 terr; };
 struct DrawU { uint cls; };
 
 struct LineVertex { float2 pos; float2 normal; float side; float along; ushort cls; ushort flags; };
 struct ExtrusionVertex { float2 pos; float height; ushort shade; ushort flags; };
-struct OverlayInst { float2 center; float2 size; float4 color; float4 p; uint kind; uint pad0; uint pad1; uint pad2; };
+struct OverlayInst { float2 center; float2 size; float4 color; float4 p; uint kind; float q0; float q1; float q2; };
 
 static float4 premul(float4 c, float a) { float k = c.a * a; return float4(c.rgb * k, k); }
 static float4 over(float4 dst, float4 src) { return src + dst * (1.0 - src.a); }
@@ -132,9 +143,24 @@ static float4 over(float4 dst, float4 src) { return src + dst * (1.0 - src.a); }
 // Tile-local position → clip: the flat matrix, the sphere (globe), or mid-morph the mix of the
 // two screen positions by flatness (BlendedProjection does the same on the CPU). `facing` > 0
 // when the point should be drawn: the far side of the globe appears only late in the morph.
-static float4 tileClip(float2 tp, constant TileU& t, constant FrameU& u, thread float& facing) {
+constexpr sampler demSampler(filter::linear, address::clamp_to_edge);
+
+// Elevation grid texel for tile-local tp: grid samples sit at i/64, texel centres at (i+0.5)/65.
+static float2 demUV(float2 tp) { return (tp * 64.0 + 0.5) / 65.0; }
+
+// World z of the terrain under tile-local tp: `TerrainLift.lift` on the GPU (sea-level clamp,
+// relative to the ground under the camera, soft ceiling), in world units.
+static float terrainZ(float2 tp, constant TileU& t, constant FrameU& u, texture2d<float> dem) {
+    if (u.terrain.x <= 0.0) return 0.0;
+    float h = t.terr.x > 0.5 ? dem.sample(demSampler, demUV(tp), level(0)).r : 0.0;
+    float r = (max(h, 0.0) - u.terrain.y) * u.terrain.x;
+    if (r > 0.0 && u.terrain.z > 0.0) r = r * u.terrain.z / (u.terrain.z + r);
+    return r * t.wupm;
+}
+
+static float4 tileClip(float2 tp, float z, constant TileU& t, constant FrameU& u, thread float& facing) {
     facing = 1.0;
-    float4 flatC = t.mvp * float4(tp, 0.0, 1.0);
+    float4 flatC = t.mvp * float4(tp, z, 1.0);
     if (u.globe.x < 0.5) return flatC;
     float2 m = t.merc.xy + tp * t.merc.zw;
     float lon = m.x * 6.28318530718 - 3.14159265359 - u.globe.y;
@@ -150,28 +176,25 @@ static float4 tileClip(float2 tp, constant TileU& t, constant FrameU& u, thread 
     return float4(n, 0.5, 1.0);
 }
 
-// Globe body for a pixel: dark sphere, latitude/longitude graticule, luminous limb and a halo.
-static float4 globeBody(float2 ndc, constant FrameU& u) {
+// The globe under a pixel: the ray's hit `h` on the unit sphere (rotated frame, +z toward the
+// camera) and the ray's closest approach to the centre `r` (> 1 outside, for the halo).
+static bool globeHit(float2 ndc, constant FrameU& u, thread float3& h, thread float& r) {
     float4 a = u.invGlobeVP * float4(ndc, 0.0, 1.0);
     float4 b = u.invGlobeVP * float4(ndc, 1.0, 1.0);
     float3 p0 = a.xyz / a.w, p1 = b.xyz / b.w;
     float3 d = normalize(p1 - p0);
     float bq = dot(p0, d), cq = dot(p0, p0) - 1.0;
     float disc = bq * bq - cq;
-    float4 col = float4(u.bg0.rgb, 1.0);
-    // Closest approach of the ray to the centre: > 1 outside the globe (halo falloff).
-    float3 closest = p0 - d * bq;
-    float r = length(closest);
-    if (disc < 0.0) {
-        float halo = exp(-(r - 1.0) * 14.0);
-        return over(col, premul(u.glow, 0.32 * halo));
-    }
-    float t = -bq - sqrt(disc);
-    float3 h = p0 + d * t;                                   // rotated frame, +z toward the camera
+    r = length(p0 - d * bq);
+    if (disc < 0.0) return false;
+    h = p0 + d * (-bq - sqrt(disc));
+    return true;
+}
+
+// Graticule every 15° (majors every 30°, the equator brightest) and the luminous limb at a
+// sphere point, premultiplied.
+static float4 graticule(float3 h, constant FrameU& u) {
     float rim = pow(clamp(1.0 - h.z, 0.0, 1.0), 3.0);
-    float3 body = mix(u.bg3.rgb * 0.85, u.bg0.rgb, 0.35);
-    col = float4(body, 1.0);
-    // Graticule: every 15°, majors every 30°, the equator brightest.
     float3 s = (u.invRot * float4(h, 0.0)).xyz;
     float lat = asin(clamp(s.y, -1.0, 1.0)) * 57.2957795;
     float lon = (atan2(s.x, s.z) + u.globe.y) * 57.2957795;
@@ -183,10 +206,22 @@ static float4 globeBody(float2 ndc, constant FrameU& u) {
     float major = max(1.0 - smoothstep(0.0, 1.6 * fwLat, dLat30), (1.0 - smoothstep(0.0, 1.6 * fwLon, dLon30)) * step(abs(lat), 80.0));
     float eq = 1.0 - smoothstep(0.0, 2.0 * fwLat, abs(lat));
     float limbFade = smoothstep(0.0, 0.25, h.z);             // lines thin out toward the limb
-    col = over(col, premul(u.line, (0.35 * minor + 0.55 * major) * limbFade));
+    float4 col = premul(u.line, (0.35 * minor + 0.55 * major) * limbFade);
     col = over(col, premul(u.accent, 0.35 * eq * limbFade));
-    col = over(col, premul(u.accent, 0.55 * rim));
-    return col;
+    return over(col, premul(u.accent, 0.55 * rim));
+}
+
+// Globe body for a pixel: solid land (water is drawn over it from the tiles), the graticule, a
+// luminous limb and a halo.
+static float4 globeBody(float2 ndc, constant FrameU& u) {
+    float4 col = float4(u.bg0.rgb, 1.0);
+    float3 h; float r;
+    if (!globeHit(ndc, u, h, r)) {
+        float halo = exp(-(r - 1.0) * 14.0);
+        return over(col, premul(u.glow, 0.32 * halo));
+    }
+    col = float4(mix(u.roof.rgb, u.accent.rgb, 0.2), 1.0);  // land: a step above the oceans
+    return over(col, graticule(h, u));
 }
 
 // ---------------------------------------------------------------- floor
@@ -252,14 +287,26 @@ fragment float4 floor_fragment(FloorOut in [[stage_in]], constant FrameU& u [[bu
 struct FillOut { float4 pos [[position]]; float facing; };
 
 vertex FillOut fill_vertex(uint vid [[vertex_id]], const device float2* v [[buffer(0)]], constant TileU& t [[buffer(1)]],
-                           constant FrameU& u [[buffer(2)]]) {
-    FillOut o; float f; o.pos = tileClip(v[vid], t, u, f); o.facing = f; return o;
+                           constant FrameU& u [[buffer(2)]], texture2d<float> dem [[texture(0)]]) {
+    float2 tp = v[vid];
+    FillOut o; float f; o.pos = tileClip(tp, terrainZ(tp, t, u, dem), t, u, f); o.facing = f; return o;
 }
 
 fragment float4 fill_fragment(FillOut in [[stage_in]], constant FrameU& u [[buffer(0)]], constant DrawU& d [[buffer(1)]]) {
     if (in.pos.y > u.revealY || in.facing < 0.0) discard_fragment();
-    float4 c = u.fillColor[min(d.cls, uint(CLASSES - 1))];
-    float a = c.a * (u.globe.x > 0.5 ? u.globe.w : 1.0);    // land and water fade in with the flat map
+    uint cls = min(d.cls, uint(CLASSES - 1));
+    float4 c = u.fillColor[cls];
+    bool water = cls == WATER_CLASS || cls == WATERWAY_CLASS;
+    if (u.globe.x > 0.5 && water) {
+        // Oceans on the globe: opaque over the land-coloured sphere, with the graticule on top
+        // (fading out with the globe as the map flattens).
+        float4 col = float4(c.rgb, 1.0);
+        float2 ndc = float2(in.pos.x / u.viewportPx.x * 2.0 - 1.0, 1.0 - in.pos.y / u.viewportPx.y * 2.0);
+        float3 h; float r;
+        if (u.globe.w < 1.0 && globeHit(ndc, u, h, r)) col = over(col, graticule(h, u) * (1.0 - u.globe.w));
+        return col;
+    }
+    float a = c.a * (u.globe.x > 0.5 ? u.globe.w : 1.0);    // land tints fade in with the flat map
     return float4(c.rgb * a, a);
 }
 
@@ -277,18 +324,19 @@ struct LineOut {
 };
 
 vertex LineOut line_vertex(uint vid [[vertex_id]], const device LineVertex* v [[buffer(0)]],
-                           constant TileU& t [[buffer(1)]], constant FrameU& u [[buffer(2)]]) {
+                           constant TileU& t [[buffer(1)]], constant FrameU& u [[buffer(2)]], texture2d<float> dem [[texture(0)]]) {
     LineVertex a = v[vid];
     uint cls = min(uint(a.cls), uint(CLASSES - 1));
     float4 style = u.lineStyle[cls];
     float facing;
-    float4 c0 = tileClip(a.pos, t, u, facing);
+    float z = terrainZ(a.pos, t, u, dem);
+    float4 c0 = tileClip(a.pos, z, t, u, facing);
     float ext = style.x + style.y;
     LineOut o;
     o.facing = facing;
     if (c0.w > 1e-4 && ext > 0.0) {
         float f1;
-        float4 c1 = tileClip(a.pos + a.normal * 1e-3, t, u, f1);
+        float4 c1 = tileClip(a.pos + a.normal * 1e-3, z, t, u, f1);
         if (c1.w > 1e-4) {
             float2 dir = (c1.xy / c1.w - c0.xy / c0.w) * u.viewportPx * 0.5;   // px
             float len = length(dir);
@@ -330,6 +378,66 @@ fragment float4 line_fragment(LineOut in [[stage_in]], constant FrameU& u [[buff
     return c + g * (1.0 - c.a);
 }
 
+// ---------------------------------------------------------------- terrain
+
+struct TerrainOut { float4 pos [[position]]; float2 tp; float skirt; };
+
+// The 65×65 terrain mesh of one tile (xy tile-local, z 1 for the skirt hanging off each edge,
+// which hides cracks against neighbours drawn from coarser grids).
+vertex TerrainOut terrain_vertex(uint vid [[vertex_id]], const device float4* v [[buffer(0)]], constant TileU& t [[buffer(1)]],
+                                 constant FrameU& u [[buffer(2)]], texture2d<float> dem [[texture(0)]]) {
+    float4 a = v[vid];
+    float z = terrainZ(a.xy, t, u, dem);
+    if (a.z > 0.5 && u.terrain.x > 0.0) z -= 0.03 * t.merc.z;
+    float4 c = t.mvp * float4(a.xy, z, 1.0);
+    // The ground's depth sits a little behind its true distance, so fills and lines draped on it
+    // (sampled at their own vertices) never fight it, while real ridges still hide what's behind.
+    if (u.terrain.x > 0.0) { float e = u.depthK.y; c.z = (c.z - u.depthK.x * e * c.w) / (1.0 + e); }
+    TerrainOut o; o.pos = c; o.tp = a.xy; o.skirt = a.z; return o;
+}
+
+// The ground in the 3D view (opaque; writes the depth everything else is tested against).
+fragment float4 terrain_ground_fragment(TerrainOut in [[stage_in]], constant FrameU& u [[buffer(0)]]) {
+    if (in.pos.y > u.revealY) discard_fragment();
+    return float4(u.bg0.rgb, 1.0);
+}
+
+fragment float4 terrain_mask_fragment() { return float4(0.0); }
+
+// Shaded relief (light from the north-west, 45° up; flat ground unchanged) and the grid lattice
+// draped over the terrain, above the fills.
+fragment float4 terrain_shade_fragment(TerrainOut in [[stage_in]], constant FrameU& u [[buffer(0)]], constant TileU& t [[buffer(1)]],
+                                       texture2d<float> dem [[texture(0)]]) {
+    if (in.pos.y > u.revealY || in.skirt > 0.5) discard_fragment();
+    float4 col = float4(0.0);
+    if (u.terrain.w > 0.5 && t.terr.x > 0.5) {
+        float2 uv = demUV(in.tp);
+        const float tx = 1.0 / 65.0;
+        float hl = max(dem.sample(demSampler, uv - float2(tx, 0.0)).r, 0.0), hr = max(dem.sample(demSampler, uv + float2(tx, 0.0)).r, 0.0);
+        float hn = max(dem.sample(demSampler, uv - float2(0.0, tx)).r, 0.0), hs = max(dem.sample(demSampler, uv + float2(0.0, tx)).r, 0.0);
+        float texelM = t.merc.z / max(t.wupm, 1e-12) / 64.0;          // metres between grid samples
+        float k = u.depthK.z / (2.0 * texelM);
+        float3 n = normalize(float3(-(hr - hl) * k, -(hs - hn) * k, 1.0));   // x east, y south
+        const float3 L = float3(-0.5, -0.5, 0.70710678);
+        float sh = dot(n, L) - L.z;
+        col = float4(0.0, 0.0, 0.0, clamp(-sh * 0.85, 0.0, 0.6));
+        col = over(col, premul(u.accent, clamp(sh * 0.9, 0.0, 0.16)));
+    }
+    if (u.depthK.w > 0.5 && u.gridMinorPx > 0.0) {
+        float2 gPt = t.terr.zw + in.tp * t.tilePx;                    // points from the camera centre
+        float2 gp = gPt * u.scale;
+        float dist = length(gPt) / max(1.0, u.viewportPx.y / u.scale);
+        float fade = 1.0 - smoothstep(u.gridFadeStart, u.gridFadeEnd, dist);
+        float minor = max(gridLine(gp.x + u.phaseMinor.x, u.gridMinorPx, u.scale * 0.5),
+                          gridLine(gp.y + u.phaseMinor.y, u.gridMinorPx, u.scale * 0.5));
+        float major = max(gridLine(gp.x + u.phaseMajor.x, u.gridMajorPx, u.scale * 0.5),
+                          gridLine(gp.y + u.phaseMajor.y, u.gridMajorPx, u.scale * 0.5));
+        col = over(col, premul(u.line, 0.45 * minor * fade));
+        col = over(col, premul(u.line, 0.9 * major * fade));
+    }
+    return col;
+}
+
 // ---------------------------------------------------------------- buildings
 
 struct ExtOut {
@@ -341,9 +449,9 @@ struct ExtOut {
 };
 
 vertex ExtOut ext_vertex(uint vid [[vertex_id]], const device ExtrusionVertex* v [[buffer(0)]],
-                         constant TileU& t [[buffer(1)]], constant FrameU& u [[buffer(2)]]) {
+                         constant TileU& t [[buffer(1)]], constant FrameU& u [[buffer(2)]], texture2d<float> dem [[texture(0)]]) {
     ExtrusionVertex a = v[vid];
-    float z = u.flat > 0.5 ? 0.0 : max(0.0, a.height) * t.wupm;
+    float z = (u.flat > 0.5 ? 0.0 : max(0.0, a.height) * t.wupm) + terrainZ(a.pos, t, u, dem);
     ExtOut o;
     o.pos = t.mvp * float4(a.pos, z, 1.0);
     o.shade = float(a.shade) / 65535.0;
@@ -375,6 +483,7 @@ fragment float4 ext_fragment(ExtOut in [[stage_in]], constant FrameU& u [[buffer
 struct OverlayOut {
     float4 pos [[position]];
     float2 local;                 // px from the instance centre, unrotated frame
+    float4 ground [[flat]];       // wedge: screen px → ground units (inverse of [east north])
     float4 color [[flat]];
     float4 p [[flat]];
     float2 size [[flat]];
@@ -394,6 +503,12 @@ vertex OverlayOut overlay_vertex(uint vid [[vertex_id]], uint iid [[instance_id]
     o.pos = float4(ndc.x, -ndc.y, 0.0, 1.0);
     o.local = local;
     o.color = i.color; o.p = i.p; o.size = i.size; o.kind = i.kind;
+    o.ground = float4(0.0);
+    if (i.kind == 1) {
+        float det = i.p.x * i.p.w - i.p.z * i.p.y;
+        if (abs(det) > 1e-6) o.ground = float4(i.p.w, -i.p.y, -i.p.z, i.p.x) / det;   // columns of the inverse
+        o.p = float4(i.q0, i.q1, 0.0, 0.0);
+    }
     return o;
 }
 
@@ -424,16 +539,17 @@ fragment float4 overlay_fragment(OverlayOut in [[stage_in]], constant FrameU& u 
             a = max(a, stroke(e2, 1.0 * s) * 0.6);
         }
         break; }
-    case 1: {   // FOV wedge: sector of radius size.x/2 around p.x with half angle p.y, brighter arc
-        float R = in.size.x * 0.5 - 1.0 * s;
-        float r = length(q);
-        float ang = atan2(q.x, -q.y);                     // clockwise from up
+    case 1: {   // FOV wedge on the ground: unit-radius sector around p.x (clockwise from north), half angle p.y
+        float2 g = float2(in.ground.x * q.x + in.ground.z * q.y, in.ground.y * q.x + in.ground.w * q.y);   // x east, y north
+        float r = length(g);
+        float fw = max(fwidth(r), 1e-4);                  // ground units per pixel
+        float ang = atan2(g.x, g.y);
         float da = ang - in.p.x;
         da = da - 6.28318530718 * round(da / 6.28318530718);
         float sector = 1.0 - smoothstep(in.p.y - 0.02, in.p.y + 0.02, abs(da));
-        float inside = (1.0 - smoothstep(R - 1.5 * s, R, r)) * sector;
-        float radial = mix(1.0, 0.45, clamp(r / max(R, 1.0), 0.0, 1.0));
-        float arc = stroke(r - R + 0.7 * s, 1.0 * s) * sector;
+        float inside = (1.0 - smoothstep(1.0 - 1.5 * fw, 1.0, r)) * sector;
+        float radial = mix(1.0, 0.45, clamp(r, 0.0, 1.0));
+        float arc = stroke((r - 1.0) / fw + 0.7 * s, 1.0 * s) * sector;
         a = min(1.0, 0.28 * inside * radial + 0.85 * arc);
         break; }
     case 2: {   // cluster block ▣

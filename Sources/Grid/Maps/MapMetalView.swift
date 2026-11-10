@@ -225,11 +225,11 @@ final class MapContainerView: NSView {
         var counts: [MapCountLabel] = []
         counts.reserveCapacity(frame.clusters.count)
         for c in frame.clusters {
-            guard c.count > 0, let s = proj.screen(c.world), s.x > -40, s.y > -20, s.x < proj.viewport.x + 40, s.y < proj.viewport.y + 20 else { continue }
+            guard c.count > 0, let s = proj.screen(c.world, heightMeters: frame.elevation(at: c.world)), s.x > -40, s.y > -20, s.x < proj.viewport.x + 40, s.y < proj.viewport.y + 20 else { continue }
             let side = MapRenderer.clusterSide(c.count)
             counts.append(MapCountLabel(text: Self.countText(c.count), center: CGPoint(x: s.x + side / 2 + 3, y: s.y)))
         }
-        let placed = planner.place(tiles: frame.tiles, projection: proj, counts: counts)
+        let placed = planner.place(tiles: frame.tiles, projection: proj, counts: counts, elevation: { frame.elevation(at: $0) })
         labels.apply(placed.labels, counts: placed.counts) { [planner] in planner.width(of: $0) }
     }
 

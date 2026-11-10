@@ -154,6 +154,10 @@ struct MapAttribution: View {
             link("OpenFreeMap", "https://openfreemap.org/")
             Text("·")
             link("ALPR: DeFlock/OSM", "https://deflock.org/")
+            if app.maps.showTerrain {
+                Text("·")
+                link("Terrain: Mapzen/AWS", "https://github.com/tilezen/joerd/blob/master/docs/attribution.md")
+            }
         }
         .font(.system(size: 9, weight: .medium, design: .monospaced))
         .foregroundStyle(theme.textMute)
@@ -219,7 +223,7 @@ private struct ConsentBlock: View {
             VStack {
                 Spacer()
                 StateBlock(code: "MAP-NET", title: "Enable map data?",
-                           message: "The map downloads data only after you enable it:\n· Map tiles for the area you view, from tiles.openfreemap.org (it learns roughly where you're looking).\n· The region list, from download.geofabrik.de, when you open Regions.\n· ALPR camera locations for regions you choose, from deflock.dontgetflocked.com in the US and Canada, or your Overpass server elsewhere (they learn which region). Each download asks first.\nYour location is only read when you click Locate, and is never stored or sent by GRID.") {
+                           message: "The map downloads data only after you enable it:\n· Map tiles for the area you view, from tiles.openfreemap.org (it learns roughly where you're looking).\n· Elevation for the area you view, from elevation-tiles-prod.s3.amazonaws.com (Amazon learns roughly where you're looking), while the Terrain layer is on.\n· The region list, from download.geofabrik.de, when you open Regions.\n· ALPR camera locations for regions you choose, from deflock.dontgetflocked.com in the US and Canada, or your Overpass server elsewhere (they learn which region). Each download asks first.\nYour location is only read when you click Locate, and is never stored or sent by GRID.") {
                     Button("Enable Map Data") { model.enabled = true; model.appeared() }
                     Button("Settings…") { app.settingsSection = "map"; app.show(.settings) }
                 }

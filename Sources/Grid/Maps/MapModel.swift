@@ -10,6 +10,7 @@ import SwiftUI
 final class MapModel {
     let tiles = TileStore()
     let alpr = ALPRStore()
+    let terrain = TerrainStore()
     let location = LocationProvider()
     @ObservationIgnored weak var app: AppState?
 
@@ -21,6 +22,10 @@ final class MapModel {
     var showRegions: Bool { didSet { d.set(showRegions, forKey: "map.layer.regions"); refresh() } }
     var showBuildings: Bool { didSet { d.set(showBuildings, forKey: "map.layer.buildings"); refresh() } }
     var showGrid: Bool { didSet { d.set(showGrid, forKey: "map.layer.grid"); refresh() } }
+    /// Elevation: shaded relief, contour lines, and 3D terrain when tilted.
+    var showTerrain: Bool { didSet { d.set(showTerrain, forKey: "map.layer.terrain"); terrain.enabled = enabledStore && showTerrain; refresh() } }
+    /// Vertical exaggeration of the 3D terrain (1 = true scale).
+    var terrainExaggeration: Double { didSet { d.set(terrainExaggeration, forKey: "map.terrain.exaggeration"); frameRevision &+= 1 } }
 
     /// ⇧-drag draws a download rectangle while on.
     var drawingRegion = false
@@ -45,11 +50,14 @@ final class MapModel {
 
     init() {
         d.register(defaults: ["map.layer.alpr": true, "map.layer.regions": true, "map.layer.buildings": true, "map.layer.grid": true,
+                              "map.layer.terrain": true, "map.terrain.exaggeration": 1.0,
                               "map.enabled": false, "map.rememberView": false])
         showCameras = d.bool(forKey: "map.layer.alpr")
         showRegions = d.bool(forKey: "map.layer.regions")
         showBuildings = d.bool(forKey: "map.layer.buildings")
         showGrid = d.bool(forKey: "map.layer.grid")
+        showTerrain = d.bool(forKey: "map.layer.terrain")
+        terrainExaggeration = min(3, max(1, d.double(forKey: "map.terrain.exaggeration")))
         enabledStore = d.bool(forKey: "map.enabled")
         // Start over the continental US (or the remembered view, if that setting is on).
         if d.bool(forKey: "map.rememberView"), let data = d.data(forKey: "map.lastView"),
@@ -61,6 +69,7 @@ final class MapModel {
         }
         tiles.enabled = enabledStore
         alpr.enabled = enabledStore
+        terrain.enabled = enabledStore && showTerrain
     }
 
     /// Set once Locate has centred the map this session: the remembered view must never hold the
@@ -99,6 +108,7 @@ final class MapModel {
     private func onEnabledChange() {
         tiles.enabled = enabledStore
         alpr.enabled = enabledStore
+        terrain.enabled = enabledStore && showTerrain
         if !enabledStore { alpr.cancel() }
         if enabledStore { Task { await tiles.loadSource(); refresh() } }
     }
@@ -110,11 +120,35 @@ final class MapModel {
         let cover = TileMath.cover(camera, viewport: viewport, maxZoom: tiles.source?.maxZoom ?? 14, limit: 48)
         lastCover = Set(cover)
         tiles.want(cover)
+        if showTerrain && !camera.isGlobe { terrain.want(cover) }
         frameRevision &+= 1
     }
 
+    /// Terrain draws on the flat map only (not on the globe or mid-morph).
+    var terrainActive: Bool { enabled && showTerrain && !camera.isGlobe }
+
+    /// Exaggeration × tilt ease: 0 when looking straight down (so the flat map stays true to
+    /// scale), easing to the exaggeration by 20° of tilt.
+    var terrainScale: Float {
+        guard terrainActive else { return 0 }
+        let x = min(1, max(0, (camera.pitch - 4) / 16))
+        return Float(terrainExaggeration * x * x * (3 - 2 * x))
+    }
+
+    /// The lift for a frame: relative to the ground under the camera centre, with peaks kept
+    /// below 85% of the camera's height.
+    private func terrainLift(_ f: MapFrame) -> TerrainLift {
+        let s = terrainScale
+        guard s > 0 else { return .flat }
+        let base = max(0, f.rawElevation(at: camera.center) ?? 0)
+        let dist = 0.5 * max(1, viewport.y) / tan(MapProjection.fovY / 2)
+        let lat = TileMath.unproject(camera.center).lat
+        let camHeight = dist * cos(camera.pitch * .pi / 180) * TileMath.metersPerPoint(lat: lat, zoom: camera.zoom)
+        return TerrainLift(scale: s, base: Float(base), ceiling: Float(camHeight * 0.85))
+    }
+
     func frame(palette: MapPalette, glow: Bool) -> MapFrame {
-        _ = tiles.revision; _ = alpr.revision; _ = frameRevision
+        _ = tiles.revision; _ = alpr.revision; _ = frameRevision; _ = terrain.revision
         let cover = Array(lastCover)
         let ordered = cover.sorted { a, b in
             let ca = TileMath.bounds(a), cb = TileMath.bounds(b)
@@ -122,8 +156,23 @@ final class MapModel {
             let db = hypot((cb.nw.x + cb.se.x) / 2 - camera.center.x, (cb.nw.y + cb.se.y) / 2 - camera.center.y)
             return da < db
         }
-        var f = MapFrame(camera: camera, tileGeneration: tiles.generation, tiles: enabled ? tiles.geometry(for: ordered) : [],
+        var geometry = enabled ? tiles.geometry(for: ordered) : []
+        var grids: [TerrainGrid] = []
+        if terrainActive {
+            // Contours join their tile's geometry (revision 1 tells the renderer to re-upload it).
+            for k in geometry.indices {
+                guard let t = terrain.terrain(for: geometry[k].id) else { continue }
+                geometry[k].lines = t.contours + geometry[k].lines
+                geometry[k].labels += t.labels
+                geometry[k].revision = 1
+                grids.append(t.grid)
+            }
+        }
+        var f = MapFrame(camera: camera, tileGeneration: tiles.generation, tiles: geometry,
                          palette: palette, glow: glow, buildings: showBuildings, reveal: reveal, gridFloor: showGrid)
+        f.terrain = grids
+        f.lift = terrainLift(f)
+        f.hillshade = terrainActive
         if showCameras, let box = visibleBBox() {
             if camera.zoom >= 12 {
                 for i in alpr.index.query(box).prefix(4000) {
@@ -147,6 +196,7 @@ final class MapModel {
         if let (a, b) = draftRect {
             f.regions.append(RegionOutline(rings: [[a, Mercator(x: b.x, y: a.y), b, Mercator(x: a.x, y: b.y)]], highlighted: true))
         }
+        lastFrame = f
         return f
     }
 
@@ -273,13 +323,34 @@ final class MapModel {
         Mercator(x: min(1, max(0, c.x)), y: min(1, max(0, c.y)))
     }
 
+    /// The last frame built (its terrain lift places markers for hit-testing).
+    @ObservationIgnored private var lastFrame: MapFrame?
+
+    /// Screen point of a world point on the drawn terrain.
+    private func screenOnTerrain(_ w: Mercator, _ proj: any MapScreenProjection) -> SIMD2<Double>? {
+        proj.screen(w, heightMeters: lastFrame?.elevation(at: w) ?? 0)
+    }
+
+    /// The world point under a screen point on the drawn terrain: the ground-plane hit, refined a
+    /// few times by the lift's screen offset there.
+    private func pick(_ p: SIMD2<Double>, _ proj: any MapScreenProjection) -> Mercator? {
+        guard var g = proj.groundPoint(screen: p) else { return nil }
+        guard let f = lastFrame, !f.lift.isFlat else { return g }
+        for _ in 0..<4 {
+            guard let lifted = proj.screen(g, heightMeters: f.elevation(at: g)), let flat = proj.screen(g),
+                  let next = proj.groundPoint(screen: p - (lifted - flat)) else { break }
+            g = next
+        }
+        return g
+    }
+
     private func click(_ p: SIMD2<Double>, _ proj: any MapScreenProjection) {
         if camera.zoom < 12 {
             // A cluster: zoom in on it.
             if let box = visibleBBox() {
                 let cell = 44 / (256 * pow(2, camera.zoom))
                 let hit = alpr.index.clusters(box, cellWorld: cell).compactMap { c -> (CameraCluster, Double)? in
-                    guard let s = proj.screen(TileMath.project(c.center)) else { return nil }
+                    guard let s = screenOnTerrain(TileMath.project(c.center), proj) else { return nil }
                     let dist = hypot(s.x - p.x, s.y - p.y)
                     return dist < 18 ? (c, dist) : nil
                 }.min { $0.1 < $1.1 }
@@ -292,7 +363,7 @@ final class MapModel {
             select(nil)
             return
         }
-        guard let ground = proj.groundPoint(screen: p) else { select(nil); return }
+        guard let ground = pick(p, proj) else { select(nil); return }
         let maxWorld = 12 / proj.worldScale
         select(alpr.index.nearest(to: TileMath.unproject(ground), maxWorldDistance: maxWorld))
     }
@@ -301,7 +372,7 @@ final class MapModel {
 
     private func showContextMenu(at p: SIMD2<Double>, screen: SIMD2<Double>) {
         let proj = mapProjection(camera: camera, viewport: viewport)
-        guard let ground = proj.groundPoint(screen: p) else { return }
+        guard let ground = pick(p, proj) else { return }
         let ll = TileMath.unproject(ground)
         let coords = String(format: "%.5f, %.5f", ll.lat, ll.lon)
         let title = String(format: "%.4f %@ · %.4f %@", abs(ll.lat), ll.lat >= 0 ? "N" : "S", abs(ll.lon), ll.lon >= 0 ? "E" : "W")
@@ -423,6 +494,8 @@ final class MapModel {
     func clearAllData() {
         alpr.clearAll()
         try? MapStorage.remove(MapStorage.tiles)
+        try? MapStorage.remove(MapStorage.terrain)
+        terrain.clear()
         tiles.clearMemory()
         select(nil)
         Task { await tiles.loadSource(); refresh() }

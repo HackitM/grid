@@ -75,15 +75,19 @@ A real terminal, a file browser, an app launcher, a widget deck and a web browse
   - glowing roads graded by class
   - a faint grid floor over dark land and water
   - wireframe buildings when you tilt it (⌥ + two-finger swipe up/down, or ⌥-drag)
-  - a rotatable 3D globe when you zoom out far (drag to spin it)
-  - labels in GRID's type
+  - a rotatable 3D globe when you zoom out far (drag to spin it), with solid land and oceans
+  - **terrain:** shaded relief and contour lines with elevation labels, and real 3D mountains and
+    valleys when you tilt (roads, buildings and cameras follow the ground)
+  - labels in GRID's type, with street names running along their roads
 
   It follows your theme and only draws when something changes.
 - **ALPR cameras mapped by OpenStreetMap volunteers** (via [DeFlock](https://deflock.org)):
   - **Choosing what to download:** a US state, a Canadian province, another country's region, or
     an area you draw. GRID keeps them on your Mac and shows them offline.
-  - **Display:** each camera shows its facing direction. Zoomed out, they gather into counted
-    clusters. Click one for its vendor, operator and OpenStreetMap entry.
+  - **Display:** each camera shows its facing direction as a wedge on the ground. Zoomed out, they
+    gather into counted clusters. Click one for its vendor, operator and OpenStreetMap entry.
+- **Right-click the map** to inspect a camera, centre the map, copy coordinates, open the spot in
+  Apple Maps or OpenStreetMap, or download the cameras in view.
   - **Each download asks first,** with the host, the number of requests and the size. Settings ›
     Updates shows how current each region is.
 - **Locate** centres the map on you after asking. Your position stays in memory only.
@@ -194,6 +198,9 @@ Use the `.app` bundle for real use rather than `swift run`, since macOS privacy 
 - **Maps are opt-in.** The Map page downloads nothing until you click **Enable Map Data**. After that:
   - **Map tiles** for the area you view come from OpenFreeMap, which learns roughly where you're
     looking.
+  - **Elevation** for the area you view comes from the public AWS Terrain Tiles dataset
+    (elevation-tiles-prod.s3.amazonaws.com) while the Terrain layer is on; Amazon learns roughly
+    where you're looking.
   - **The region list** comes from Geofabrik, when you open it.
   - **Cameras** come from DeFlock's camera host for the regions you choose (US and Canada), or from
     an Overpass server elsewhere. That host learns which region you downloaded, and each download

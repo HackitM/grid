@@ -64,3 +64,31 @@ final class MapsTerrainTests: XCTestCase {
         _ = Contours.lines(TerrainGrid(id: TileID(z: 12, x: 0, y: 0), heights: noisy), step: 100, indexStep: 500)
     }
 }
+
+final class MapsTerrainLiftTests: XCTestCase {
+    func testFlatAndRelative() {
+        XCTAssertEqual(TerrainLift.flat.lift(4000), 0)
+        let l = TerrainLift(scale: 1, base: 1600, ceiling: 0)
+        XCTAssertEqual(l.lift(1600), 0, accuracy: 1e-9)
+        XCTAssertEqual(l.lift(2600), 1000, accuracy: 1e-9)
+        XCTAssertEqual(l.lift(600), -1000, accuracy: 1e-9)
+    }
+
+    func testSeaLevelClamp() {
+        let l = TerrainLift(scale: 2, base: 0, ceiling: 0)
+        XCTAssertEqual(l.lift(-4000), 0)
+        XCTAssertEqual(l.lift(100), 200, accuracy: 1e-9)
+    }
+
+    func testCeilingIsSoftAndMonotonic() {
+        let l = TerrainLift(scale: 1, base: 0, ceiling: 2000)
+        var last = -1.0
+        for h in stride(from: 0.0, through: 50_000, by: 250) {
+            let v = l.lift(h)
+            XCTAssertGreaterThan(v, last)
+            XCTAssertLessThan(v, 2000)
+            last = v
+        }
+        XCTAssertEqual(l.lift(10), 10, accuracy: 0.1)   // small rises are nearly true
+    }
+}

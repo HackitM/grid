@@ -218,3 +218,35 @@ public enum Contours {
         return (batches, labels)
     }
 }
+
+/// How elevation is drawn in the tilted 3D view, shared by the GPU (vertex displacement) and the
+/// CPU (labels, markers) so both agree exactly.
+/// - Heights below sea level draw at sea level (Terrarium holds ocean depths; water stays flat).
+/// - Heights are relative to the terrain under the camera centre, so the camera's height above
+///   the ground doesn't change as you fly over mountains.
+/// - Rises ease toward `ceiling` (metres) instead of passing it, so a nearby peak never climbs
+///   above the camera and cuts through the near plane.
+public struct TerrainLift: Sendable, Equatable {
+    /// Exaggeration × tilt ease; 0 draws the map flat.
+    public var scale: Float
+    /// Elevation under the camera centre (metres, ≥ 0).
+    public var base: Float
+    /// Soft upper bound for lifts (metres); 0 = none.
+    public var ceiling: Float
+
+    public static let flat = TerrainLift(scale: 0, base: 0, ceiling: 0)
+
+    public init(scale: Float, base: Float, ceiling: Float) {
+        self.scale = max(0, scale); self.base = max(0, base); self.ceiling = max(0, ceiling)
+    }
+
+    public var isFlat: Bool { scale <= 0 }
+
+    /// Metres drawn above the ground plane for an elevation in metres.
+    public func lift(_ h: Double) -> Double {
+        guard scale > 0 else { return 0 }
+        let r = (max(h, 0) - Double(base)) * Double(scale)
+        guard r > 0, ceiling > 0 else { return r }
+        return r * Double(ceiling) / (Double(ceiling) + r)
+    }
+}

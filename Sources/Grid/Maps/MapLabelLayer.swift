@@ -47,7 +47,9 @@ final class MapLabelPlanner {
 
     /// Places labels for the tiles on screen. Deepest tiles win duplicates (same text and kind).
     /// Cluster counts (left-anchored at their block) are placed first so names never cover them.
-    func place(tiles: [TileGeometry], projection proj: any MapScreenProjection, counts: [MapCountLabel] = []) -> (labels: [PlacedMapLabel], counts: [MapCountLabel]) {
+    func place(tiles: [TileGeometry], projection proj: any MapScreenProjection, counts: [MapCountLabel] = [],
+               elevation: (Mercator) -> Double = { _ in 0 }) -> (labels: [PlacedMapLabel], counts: [MapCountLabel]) {
+        var angles: [String: Double] = [:]
         let zoom = Float(proj.camera.zoom)
         var candidates: [LabelCandidate] = []
         var seen: Set<String> = []
@@ -66,12 +68,26 @@ final class MapLabelPlanner {
                 let key = "\(a.kind.rawValue)|\(text)"
                 guard !seen.contains(key) else { continue }
                 let world = Mercator(x: nw.x + Double(a.pos.x) * w, y: nw.y + Double(a.pos.y) * h)
-                guard let s = proj.screen(world) else { continue }
+                let z = elevation(world)
+                guard let s = proj.screen(world, heightMeters: z) else { continue }
                 guard s.x > -200, s.y > -50, s.x < proj.viewport.x + 200, s.y < proj.viewport.y + 50 else { continue }
                 seen.insert(key)
-                let tw = width(of: text)
-                candidates.append(LabelCandidate(text: text, kind: a.kind, priority: a.priority, center: s + SIMD2(0, 10),
-                                                  size: SIMD2(tw + 8, Self.labelHeight)))
+                let tw = width(of: text) + 8
+                var size = SIMD2(tw, Self.labelHeight)
+                var center = s + SIMD2(0, a.kind == .place ? 10 : 0)
+                // Labels that belong to a line (road names, contour heights) run along it.
+                if a.dir != .zero {
+                    let ahead = Mercator(x: world.x + Double(a.dir.x) * w * 0.02, y: world.y + Double(a.dir.y) * h * 0.02)
+                    if let s2 = proj.screen(ahead, heightMeters: z) {
+                        var ang = atan2(s2.y - s.y, s2.x - s.x)
+                        if ang > .pi / 2 { ang -= .pi } else if ang < -.pi / 2 { ang += .pi }   // keep it readable
+                        angles[text] = ang
+                        let c = abs(cos(ang)), sn = abs(sin(ang))
+                        size = SIMD2(tw * c + Self.labelHeight * sn, tw * sn + Self.labelHeight * c)
+                        center = s
+                    }
+                }
+                candidates.append(LabelCandidate(text: text, kind: a.kind, priority: a.priority, center: center, size: size))
                 if candidates.count >= 2000 { break }
             }
         }
@@ -83,7 +99,7 @@ final class MapLabelPlanner {
             if c.text.hasPrefix(Self.countMark) {
                 placedCounts.append(MapCountLabel(text: String(c.text.dropFirst()), center: CGPoint(x: c.center.x - c.size.x / 2, y: c.center.y)))
             } else if labels.count < Self.maxLabels {
-                labels.append(PlacedMapLabel(text: c.text, kind: c.kind, center: CGPoint(x: c.center.x, y: c.center.y)))
+                labels.append(PlacedMapLabel(text: c.text, kind: c.kind, center: CGPoint(x: c.center.x, y: c.center.y), angle: angles[c.text] ?? 0))
             }
         }
         return (labels, placedCounts)
@@ -148,12 +164,14 @@ final class MapLabelLayer: NSView {
             let w = widthOf(l.text) + 8
             t.bounds = CGRect(x: 0, y: 0, width: w, height: MapLabelPlanner.labelHeight)
             t.position = l.center
+            t.setAffineTransform(l.angle == 0 ? .identity : CGAffineTransform(rotationAngle: CGFloat(l.angle)))
             t.isHidden = false
         }
         for c in counts {
             let t = layer(at: i); i += 1
             t.string = c.text
             t.font = MapLabelPlanner.countFont
+            t.setAffineTransform(.identity)
             t.foregroundColor = colors.count
             let w = widthOf(c.text) + 6
             t.bounds = CGRect(x: 0, y: 0, width: w, height: MapLabelPlanner.labelHeight)

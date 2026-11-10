@@ -737,9 +737,13 @@ enum DebugHooks {
             case "catalog": Task { await m.alpr.loadCatalog() }
             case "check": Task { await m.alpr.checkFreshness(manual: true) }
             case "locate": m.locate()
+            case "exaggeration": if let x = c["value"] as? Double { m.terrainExaggeration = x }
+            case "context":
+                // Right-click menu at a view point (QA of the menu and terrain picking).
+                if let x = c["x"] as? Double, let y = c["y"] as? Double { m.handle(.contextMenu(SIMD2(x, y), screen: SIMD2(400, 400))) }
             case "layer":
                 if let k = c["key"] as? String, let on = c["value"] as? Bool {
-                    switch k { case "cameras": m.showCameras = on; case "regions": m.showRegions = on; case "buildings": m.showBuildings = on; case "grid": m.showGrid = on; default: break }
+                    switch k { case "cameras": m.showCameras = on; case "regions": m.showRegions = on; case "buildings": m.showBuildings = on; case "grid": m.showGrid = on; case "terrain": m.showTerrain = on; default: break }
                 }
             default: break
             }
