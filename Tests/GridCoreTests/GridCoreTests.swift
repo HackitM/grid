@@ -1629,18 +1629,18 @@ final class BrowserCoreTests: XCTestCase {
 
     func testSiteKeysAndThemes() {
         XCTAssertEqual(SiteKey.of(URL(string: "https://www.GitHub.com/x")), "github.com")
-        XCTAssertEqual(SiteThemeCatalog.entry(for: URL(string: "https://github.com/apple/swift"))?.id, "github")
-        XCTAssertEqual(SiteThemeCatalog.entry(for: URL(string: "https://en.wikipedia.org/wiki/Tron"))?.id, "wikipedia")
-        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://notgithub.com/")))
-        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://evilwikipedia.org/")))
+        XCTAssertEqual(SiteThemeCatalog.entry(for: URL(string: "https://github.com/apple/swift"), in: SiteThemePackTests.shippedEntries())?.id, "github")
+        XCTAssertEqual(SiteThemeCatalog.entry(for: URL(string: "https://en.wikipedia.org/wiki/Tron"), in: SiteThemePackTests.shippedEntries())?.id, "wikipedia")
+        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://notgithub.com/"), in: SiteThemePackTests.shippedEntries()))
+        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://evilwikipedia.org/"), in: SiteThemePackTests.shippedEntries()))
         // Google: search pages only, never Maps, Gmail or Docs.
-        XCTAssertEqual(SiteThemeCatalog.entry(for: URL(string: "https://www.google.com/"))?.id, "google")
-        XCTAssertEqual(SiteThemeCatalog.entry(for: URL(string: "https://www.google.com/search?q=tron"))?.id, "google")
-        XCTAssertEqual(SiteThemeCatalog.entry(for: URL(string: "https://www.google.co.uk/search?q=tron"))?.id, "google")
-        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://www.google.com/maps/@0,0,3z")))
-        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://mail.google.com/mail/u/0/")))
-        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://docs.google.com/")))
-        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://notgoogle.com/search")))
+        XCTAssertEqual(SiteThemeCatalog.entry(for: URL(string: "https://www.google.com/"), in: SiteThemePackTests.shippedEntries())?.id, "google")
+        XCTAssertEqual(SiteThemeCatalog.entry(for: URL(string: "https://www.google.com/search?q=tron"), in: SiteThemePackTests.shippedEntries())?.id, "google")
+        XCTAssertEqual(SiteThemeCatalog.entry(for: URL(string: "https://www.google.co.uk/search?q=tron"), in: SiteThemePackTests.shippedEntries())?.id, "google")
+        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://www.google.com/maps/@0,0,3z"), in: SiteThemePackTests.shippedEntries()))
+        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://mail.google.com/mail/u/0/"), in: SiteThemePackTests.shippedEntries()))
+        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://docs.google.com/"), in: SiteThemePackTests.shippedEntries()))
+        XCTAssertNil(SiteThemeCatalog.entry(for: URL(string: "https://notgoogle.com/search"), in: SiteThemePackTests.shippedEntries()))
     }
 }
 

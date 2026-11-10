@@ -360,7 +360,7 @@ final class BrowserTab: Identifiable {
     /// Whether a GRID theme is currently applied to this page.
     private(set) var themeActive = false
 
-    var themeEntry: SiteThemeEntry? { SiteThemeCatalog.entry(for: url) }
+    var themeEntry: SiteThemeEntry? { model?.themes.entry(for: url) }
 
     private func themeScript(_ model: BrowserModel) -> WKUserScript {
         model.themes.userScript(theme: model.app?.settings.themeValue ?? Theme.make(.legacy))

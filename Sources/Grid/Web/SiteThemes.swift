@@ -4,9 +4,9 @@ import Observation
 import SwiftUI
 import WebKit
 
-/// Per-site GRID themes for well-known sites. Each pack is plain CSS that maps the site's own
-/// design tokens (CSS variables) to GRID's palette, so layouts stay intact and only colours and
-/// type change. Packs are opt-in per site, toggled from the toolbar, and remembered.
+/// Per-site GRID themes. Each pack is plain CSS (from `SiteThemeLibrary`: built in, downloaded
+/// from GRID's repository, or the user's own) that restyles a site with GRID's palette. Packs are
+/// opt-in per site, toggled from the toolbar, and remembered.
 ///
 /// Injection: one user script in an isolated content world (`grid.themes`) adds the pack as a
 /// constructed stylesheet (`adoptedStyleSheets`, which strict `style-src` policies don't block),
@@ -20,11 +20,24 @@ final class SiteThemes {
     /// Turn themes on automatically for every supported site (individual sites can still opt out).
     var allByDefault: Bool { didSet { UserDefaults.standard.set(allByDefault, forKey: "browser.themes.all"); onChange?() } }
     @ObservationIgnored var onChange: (() -> Void)?
+    /// Where the packs come from (and their updates).
+    let library = SiteThemeLibrary()
+
+    /// Shared by every pack: selection, scrollbars, focus rings.
+    static let base = """
+    html[data-grid-theme] { scrollbar-color: var(--grid-line-strong) var(--grid-bg1); accent-color: var(--grid-accent); }
+    html[data-grid-theme] ::selection { background: var(--grid-accent-soft); }
+    html[data-grid-theme] :focus-visible { outline-color: var(--grid-accent) !important; }
+    """
 
     init() {
         enabled = (UserDefaults.standard.dictionary(forKey: "browser.themes") as? [String: Bool]) ?? [:]
         allByDefault = UserDefaults.standard.bool(forKey: "browser.themes.all")
+        library.onChange = { [weak self] in self?.onChange?() }
     }
+
+    var entries: [SiteThemeEntry] { library.entries }
+    func entry(for url: URL?) -> SiteThemeEntry? { library.entry(for: url) }
 
     private func save() { UserDefaults.standard.set(enabled, forKey: "browser.themes") }
 
@@ -38,9 +51,10 @@ final class SiteThemes {
     /// The script every tab carries: picks the pack for the page's host, applies it if enabled,
     /// and exposes `__gridTheme.set(on)` (in its own world) for live toggling.
     func userScript(theme: Theme) -> WKUserScript {
-        let packs = SiteThemeCatalog.entries.reduce(into: [String: String]()) { $0[$1.id] = SiteThemePacks.css[$1.id] ?? "" }
-        let match = SiteThemeCatalog.entries.map { [$0.id, $0.hosts, $0.paths as Any? ?? NSNull()] as [Any] }
-        let flags = SiteThemeCatalog.entries.reduce(into: [String: Bool]()) { $0[$1.id] = isEnabled($1.id) }
+        let all = library.packs.map(\.pack)
+        let packs = all.reduce(into: [String: String]()) { $0[$1.id] = Self.base + "\n" + $1.css }
+        let match = all.map { [$0.id, $0.entry.hosts, $0.entry.paths as Any? ?? NSNull()] as [Any] }
+        let flags = all.reduce(into: [String: Bool]()) { $0[$1.id] = isEnabled($1.id) }
         func json(_ o: Any) -> String {
             String(data: (try? JSONSerialization.data(withJSONObject: o, options: [.fragmentsAllowed])) ?? Data("null".utf8), encoding: .utf8) ?? "null"
         }

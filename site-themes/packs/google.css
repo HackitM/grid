@@ -1,0 +1,81 @@
+/* grid-site-theme
+id: google
+name: Google Search
+version: 1
+hosts: google.com, google.co.uk, google.ca, google.com.au, google.de, google.fr, google.es, google.it, google.nl, google.co.in, google.co.jp, google.com.br, google.com.mx, google.ie, google.co.nz, google.ch, google.at, google.be, google.se, google.no, google.dk, google.pl
+paths: /, /search, /webhp
+description: Search home and results only; Maps, Gmail and Docs keep their own look.
+*/
+html[data-grid-theme="google"], html[data-grid-theme="google"] * {
+  --xhUGwc: var(--grid-bg1) !important; --cIehld: var(--grid-bg1) !important; --EpFNW: var(--grid-bg2) !important;
+  --ZXiaGf: var(--grid-bg2) !important; --DEeStf: var(--grid-bg2) !important; --TSWZIb: var(--grid-bg2) !important;
+  --XKMDxc: var(--grid-bg2) !important; --aYn2S: var(--grid-bg3) !important; --MV2sG: var(--grid-bg2) !important;
+  --Ijc2tf: var(--grid-bg2) !important; --BRLwE: var(--grid-bg3) !important; --PBxOKe: var(--grid-bg2) !important;
+  --YLNNHc: var(--grid-text) !important; --COEmY: var(--grid-text) !important; --Xqboce: var(--grid-text) !important;
+  --VuZXBd: var(--grid-text) !important; --jINu6c: var(--grid-text) !important; --xPpiM: var(--grid-text) !important;
+  --y01ou: var(--grid-text) !important; --VeLyLc: var(--grid-text) !important;
+  --IXoxUe: var(--grid-dim) !important; --amnPwe: var(--grid-dim) !important; --bbQxAb: var(--grid-dim) !important; --uLz37c: var(--grid-dim) !important;
+  --JKqx2: var(--grid-accent) !important; --TMYS9: var(--grid-accent) !important; --rrJJUc: var(--grid-accent) !important;
+  --Nsm0ce: var(--grid-accent) !important; --lv6yU: var(--grid-accent) !important; --TyVYld: var(--grid-accent) !important;
+  --fuvksc: var(--grid-accent) !important; --Wmwad: var(--grid-accent) !important; --gJjJk: var(--grid-accent) !important;
+  --MoaHse: var(--grid-accent) !important; --vdwxpe: var(--grid-accent) !important;
+  --vZe0jb: var(--grid-accent-soft) !important; --ZEpPmd: var(--grid-accent-soft) !important; --KIZPne: var(--grid-accent-soft) !important;
+  --jwFC2e: var(--grid-accent-soft) !important;
+  --gS5jXb: var(--grid-line) !important; --mXZkqc: var(--grid-line) !important; --JclFj: var(--grid-line) !important;
+  --Lm570b: var(--grid-line) !important; --ONhrGd: var(--grid-line) !important;
+  --nkmQOe: var(--grid-mono) !important; --LI4Bo: var(--grid-mono) !important; --YfiKf: var(--grid-mono) !important;
+  --IT7y3c: var(--grid-mono) !important; --Aoh9Xe: var(--grid-mono) !important; --rTk0E: var(--grid-mono) !important;
+  --qR8X0: var(--grid-mono) !important; --qBwyqb: var(--grid-mono) !important; --Eou8Yc: var(--grid-mono) !important;
+  --ztTqPe: var(--grid-mono) !important; --lI1Trc: var(--grid-mono) !important;
+  --gm3-sys-color-background: var(--grid-bg1) !important; --gm3-sys-color-surface: var(--grid-bg1) !important;
+  --gm3-sys-color-surface-container: var(--grid-bg2) !important; --gm3-sys-color-surface-container-high: var(--grid-bg2) !important;
+  --gm3-sys-color-surface-container-highest: var(--grid-bg3) !important; --gm3-sys-color-surface-container-low: var(--grid-bg2) !important;
+  --gm3-sys-color-on-surface: var(--grid-text) !important; --gm3-sys-color-on-surface-variant: var(--grid-dim) !important;
+  --gm3-sys-color-on-background: var(--grid-text) !important; --gm3-sys-color-primary: var(--grid-accent) !important;
+  --gm3-sys-color-on-primary: var(--grid-on-accent) !important; --gm3-sys-color-outline: var(--grid-line-strong) !important;
+  --gm3-sys-color-outline-variant: var(--grid-line) !important;
+  --gm3-sys-color-secondary-fixed: var(--grid-bg2) !important; --gm3-sys-color-on-secondary-fixed: var(--grid-accent) !important;
+  --gm3-sys-color-secondary-container: var(--grid-bg2) !important; --gm3-sys-color-on-secondary-container: var(--grid-accent) !important;
+  --gm3-sys-color-primary-container: var(--grid-accent-soft) !important; --gm3-sys-color-on-primary-container: var(--grid-text) !important;
+  --gm3-sys-color-secondary-fixed-rgb: 0,0,0 !important;
+  color-scheme: dark;
+}
+html[data-grid-theme="google"], html[data-grid-theme="google"] body, html[data-grid-theme="google"] #main,
+html[data-grid-theme="google"] #cnt, html[data-grid-theme="google"] #rcnt, html[data-grid-theme="google"] #center_col,
+html[data-grid-theme="google"] #searchform, html[data-grid-theme="google"] #appbar, html[data-grid-theme="google"] #top_nav,
+html[data-grid-theme="google"] #botstuff, html[data-grid-theme="google"] #fbar, html[data-grid-theme="google"] #footcnt,
+html[data-grid-theme="google"] .sfbg { background-color: var(--grid-bg1) !important; }
+html[data-grid-theme="google"] body { color: var(--grid-text) !important; }
+html[data-grid-theme="google"] body, html[data-grid-theme="google"] input, html[data-grid-theme="google"] textarea,
+html[data-grid-theme="google"] button, html[data-grid-theme="google"] h1, html[data-grid-theme="google"] h2,
+html[data-grid-theme="google"] h3, html[data-grid-theme="google"] cite, html[data-grid-theme="google"] a,
+html[data-grid-theme="google"] span:not([class*="material"]):not([class*="icon"]),
+html[data-grid-theme="google"] div[role="heading"] { font-family: var(--grid-mono) !important; }
+html[data-grid-theme="google"] #rso a h3, html[data-grid-theme="google"] #search a h3 { color: var(--grid-accent) !important; }
+html[data-grid-theme="google"] #rso a:visited h3, html[data-grid-theme="google"] #search a:visited h3 { color: var(--grid-dim) !important; }
+html[data-grid-theme="google"] #rso cite, html[data-grid-theme="google"] #search cite { color: var(--grid-dim) !important; }
+html[data-grid-theme="google"] #rso em, html[data-grid-theme="google"] #search em { color: var(--grid-text) !important; font-style: normal; }
+html[data-grid-theme="google"] textarea[name="q"], html[data-grid-theme="google"] input[name="q"] {
+  color: var(--grid-text) !important; caret-color: var(--grid-accent) !important; }
+html[data-grid-theme="google"] form[role="search"] div:has(> div > textarea[name="q"]),
+html[data-grid-theme="google"] form[role="search"] div:has(> div > div > textarea[name="q"]),
+html[data-grid-theme="google"] form[action="/search"] div:has(> div > textarea[name="q"]) {
+  background: var(--grid-bg3) !important; border: 1px solid var(--grid-line-strong) !important; border-radius: 2px !important;
+  box-shadow: 0 0 0 1px transparent !important; }
+html[data-grid-theme="google"] input[type="submit"], html[data-grid-theme="google"] center input[type="button"] {
+  background: var(--grid-bg2) !important; color: var(--grid-text) !important; border: 1px solid var(--grid-line) !important;
+  border-radius: 2px !important; font-family: var(--grid-mono) !important; }
+/* "Show more" fade over long answers: its middle colour is hard-coded (generated class name). */
+html[data-grid-theme="google"] .RDmXvc { background: linear-gradient(transparent 0, var(--grid-bg1) 60px) !important; }
+/* Account bar's Sign in pill. */
+html[data-grid-theme="google"] a[href*="ServiceLogin"], html[data-grid-theme="google"] a[aria-label="Sign in"] {
+  background: var(--grid-bg2) !important; color: var(--grid-accent) !important; border: 1px solid var(--grid-line-strong) !important;
+  border-radius: 2px !important; }
+html[data-grid-theme="google"] input[type="submit"]:hover { border-color: var(--grid-accent) !important; color: var(--grid-accent) !important; }
+/* The wordmark and doodles become monochrome so the page stays in GRID's palette. */
+html[data-grid-theme="google"] img[alt="Google"], html[data-grid-theme="google"] svg[aria-label="Google"],
+html[data-grid-theme="google"] a[aria-label="Go to Google Home"] svg, html[data-grid-theme="google"] #hplogo,
+html[data-grid-theme="google"] #logo svg, html[data-grid-theme="google"] #logo img {
+  filter: grayscale(1) brightness(0) invert(1) drop-shadow(0 0 6px var(--grid-accent)) !important; opacity: 0.92; }
+html[data-grid-theme="google"] hr, html[data-grid-theme="google"] #appbar, html[data-grid-theme="google"] #top_nav {
+  border-color: var(--grid-line) !important; }

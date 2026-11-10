@@ -1,0 +1,36 @@
+/* grid-site-theme
+id: hackernews
+name: Hacker News
+version: 1
+hosts: news.ycombinator.com
+description: GRID colours and type for Hacker News.
+*/
+html[data-grid-theme="hackernews"], html[data-grid-theme="hackernews"] body { background: var(--grid-bg1) !important; }
+html[data-grid-theme="hackernews"] body, html[data-grid-theme="hackernews"] td, html[data-grid-theme="hackernews"] .pagetop,
+html[data-grid-theme="hackernews"] .title, html[data-grid-theme="hackernews"] .comment, html[data-grid-theme="hackernews"] input,
+html[data-grid-theme="hackernews"] textarea { font-family: var(--grid-mono) !important; }
+html[data-grid-theme="hackernews"] #hnmain { background: var(--grid-bg1) !important; width: 100% !important; max-width: 1100px; }
+html[data-grid-theme="hackernews"] #hnmain > tbody > tr:first-child > td,
+html[data-grid-theme="hackernews"] td[bgcolor="#ff6600"] { background: var(--grid-bg2) !important; border-bottom: 1px solid var(--grid-line-strong); }
+html[data-grid-theme="hackernews"] .pagetop, html[data-grid-theme="hackernews"] .pagetop a { color: var(--grid-dim) !important; }
+html[data-grid-theme="hackernews"] .hnname a, html[data-grid-theme="hackernews"] .pagetop b a { color: var(--grid-accent) !important; letter-spacing: 1px; }
+html[data-grid-theme="hackernews"] td[style*="border:1px white"] img, html[data-grid-theme="hackernews"] a[href="https://news.ycombinator.com"] img { filter: grayscale(1) brightness(1.4); }
+html[data-grid-theme="hackernews"] a:link, html[data-grid-theme="hackernews"] .titleline > a { color: var(--grid-text) !important; }
+html[data-grid-theme="hackernews"] a:visited, html[data-grid-theme="hackernews"] .titleline > a:visited { color: var(--grid-mute) !important; }
+html[data-grid-theme="hackernews"] .titleline > a:hover { color: var(--grid-accent) !important; }
+html[data-grid-theme="hackernews"] .rank { color: var(--grid-accent) !important; }
+html[data-grid-theme="hackernews"] .sitebit, html[data-grid-theme="hackernews"] .sitestr, html[data-grid-theme="hackernews"] .subtext,
+html[data-grid-theme="hackernews"] .subtext a, html[data-grid-theme="hackernews"] .comhead, html[data-grid-theme="hackernews"] .comhead a,
+html[data-grid-theme="hackernews"] .age a, html[data-grid-theme="hackernews"] .yclinks a { color: var(--grid-mute) !important; }
+html[data-grid-theme="hackernews"] .score { color: var(--grid-dim) !important; }
+html[data-grid-theme="hackernews"] .hnuser { color: var(--grid-dim) !important; }
+html[data-grid-theme="hackernews"] .commtext, html[data-grid-theme="hackernews"] .commtext a, html[data-grid-theme="hackernews"] .toptext { color: var(--grid-text) !important; }
+html[data-grid-theme="hackernews"] .commtext.cdd, html[data-grid-theme="hackernews"] .commtext.c5a, html[data-grid-theme="hackernews"] .commtext.c73,
+html[data-grid-theme="hackernews"] .commtext.c82, html[data-grid-theme="hackernews"] .commtext.c88, html[data-grid-theme="hackernews"] .commtext.c9c,
+html[data-grid-theme="hackernews"] .commtext.cae, html[data-grid-theme="hackernews"] .commtext.cbe, html[data-grid-theme="hackernews"] .commtext.cce { color: var(--grid-mute) !important; }
+html[data-grid-theme="hackernews"] .commtext a { color: var(--grid-accent) !important; }
+html[data-grid-theme="hackernews"] .votearrow { filter: invert(0.75) sepia(1) hue-rotate(140deg) saturate(3); }
+html[data-grid-theme="hackernews"] input, html[data-grid-theme="hackernews"] textarea {
+  background: var(--grid-bg3) !important; color: var(--grid-text) !important; border: 1px solid var(--grid-line) !important; }
+html[data-grid-theme="hackernews"] td[bgcolor="#ff6600"] table { background: transparent !important; }
+html[data-grid-theme="hackernews"] .morelink { color: var(--grid-accent) !important; }
