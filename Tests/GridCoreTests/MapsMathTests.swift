@@ -112,3 +112,97 @@ final class MapsMathTests: XCTestCase {
         XCTAssertEqual(OSMElementID.node(42).webURL.absoluteString, "https://www.openstreetmap.org/node/42")
     }
 }
+
+final class MapsGlobeTests: XCTestCase {
+    let vp = SIMD2<Double>(1200, 800)
+
+    func testGlobeCentreAndScaleMatchFlat() throws {
+        let cam = MapCamera(center: TileMath.project(LonLat(lon: -40, lat: 30)), zoom: 3.4)
+        XCTAssertTrue(cam.isGlobe)
+        let g = GlobeProjection(camera: cam, viewport: vp)
+        let c = try XCTUnwrap(g.screen(cam.center))
+        XCTAssertEqual(c.x, 600, accuracy: 1e-6); XCTAssertEqual(c.y, 400, accuracy: 1e-6)
+        // Near the centre the globe has the flat map's scale; along a parallel a globe is cos(lat)
+        // narrower than Mercator.
+        let step = 0.0005
+        let e = try XCTUnwrap(g.screen(Mercator(x: cam.center.x + step, y: cam.center.y)))
+        XCTAssertEqual(e.x - 600, step * g.worldScale * cos(30 * Double.pi / 180), accuracy: step * g.worldScale * 0.05)
+        XCTAssertEqual(e.y, 400, accuracy: 0.5)
+        // North is up.
+        let n = try XCTUnwrap(g.screen(Mercator(x: cam.center.x, y: cam.center.y - step)))
+        XCTAssertLessThan(n.y, 400)
+    }
+
+    func testFarSideIsHiddenAndGroundPointInverts() throws {
+        let cam = MapCamera(center: TileMath.project(LonLat(lon: 10, lat: 0)), zoom: 2)
+        let g = GlobeProjection(camera: cam, viewport: vp)
+        XCTAssertNil(g.screen(TileMath.project(LonLat(lon: -170, lat: 0))))      // antipode
+        let s = try XCTUnwrap(g.screen(TileMath.project(LonLat(lon: 40, lat: 25))))
+        let back = try XCTUnwrap(g.groundPoint(screen: s))
+        let ll = TileMath.unproject(back)
+        XCTAssertEqual(ll.lon, 40, accuracy: 1e-6); XCTAssertEqual(ll.lat, 25, accuracy: 1e-6)
+        XCTAssertNil(g.groundPoint(screen: SIMD2(2, 2)))                          // off the globe
+        // Bearing 90: east is up.
+        let rot = GlobeProjection(camera: MapCamera(center: cam.center, zoom: 2, bearing: 90), viewport: vp)
+        let east = try XCTUnwrap(rot.screen(TileMath.project(LonLat(lon: 20, lat: 0))))
+        XCTAssertLessThan(east.y, 400); XCTAssertEqual(east.x, 600, accuracy: 0.5)
+    }
+
+    func testGlobeCoverAndGestures() {
+        let cam = MapCamera(center: TileMath.project(LonLat(lon: -98, lat: 39)), zoom: 2.6)
+        let tiles = TileMath.cover(cam, viewport: vp, maxZoom: 14)
+        XCTAssertFalse(tiles.isEmpty)
+        XCTAssertTrue(tiles.allSatisfy { $0.z == 3 })
+        XCTAssertLessThan(tiles.count, 48)
+        XCTAssertTrue(tiles.prefix(4).contains(TileMath.tile(containing: cam.center, z: 3)))
+        // Dragging right spins the globe westward under the pointer (centre longitude decreases).
+        let panned = MapGestureMath.pan(cam, by: SIMD2(100, 0), viewport: vp)
+        XCTAssertLessThan(TileMath.unproject(panned.center).lon, -98)
+        // Zoom on the globe keeps the centre; crossing into the flat map works.
+        let z = MapGestureMath.zoom(cam, by: 2, around: SIMD2(100, 100), viewport: vp)
+        XCTAssertEqual(z.center, cam.center); XCTAssertFalse(z.isGlobe)
+        // Flat pan through the shared math matches the old model formula.
+        let flat = MapCamera(center: TileMath.project(LonLat(lon: -71.4, lat: 41.8)), zoom: 13, bearing: 20, pitch: 30)
+        let p = MapGestureMath.pan(flat, by: SIMD2(40, -25), viewport: vp)
+        XCTAssertNotEqual(p.center, flat.center)
+        XCTAssertEqual(MapGestureMath.rotate(flat, bearing: -30, pitch: 99).pitch, MapCamera.maxPitch)
+        XCTAssertEqual(MapGestureMath.rotate(flat, bearing: -30, pitch: 0).bearing, 350, accuracy: 1e-9)
+    }
+}
+
+final class MapsBlendTests: XCTestCase {
+    let vp = SIMD2<Double>(1200, 800)
+
+    func testBlendIsContinuousAcrossTheMorph() throws {
+        let center = TileMath.project(LonLat(lon: -75, lat: 40))
+        let probe = TileMath.project(LonLat(lon: -60, lat: 48))
+        XCTAssertEqual(MapCamera(center: center, zoom: 2.9).flatness, 0)
+        XCTAssertEqual(MapCamera(center: center, zoom: 4.0).flatness, 1)
+        // The projection type follows the zoom.
+        XCTAssertTrue(mapProjection(camera: MapCamera(center: center, zoom: 2.5), viewport: vp) is GlobeProjection)
+        XCTAssertTrue(mapProjection(camera: MapCamera(center: center, zoom: 3.4), viewport: vp) is BlendedProjection)
+        XCTAssertTrue(mapProjection(camera: MapCamera(center: center, zoom: 4.2), viewport: vp) is MapProjection)
+        // A point moves smoothly: no step bigger than a few points between nearby zooms.
+        var last: SIMD2<Double>?
+        var z = 2.85
+        while z <= 4.05 {
+            let cam = MapCamera(center: center, zoom: z)
+            let s = try XCTUnwrap(mapProjection(camera: cam, viewport: vp).screen(probe), "zoom \(z)")
+            if let last { XCTAssertLessThan(simd_length(s - last), 12, "jump at zoom \(z)") }
+            last = s
+            // The centre stays put.
+            let c = try XCTUnwrap(mapProjection(camera: cam, viewport: vp).screen(center))
+            XCTAssertEqual(c.x, 600, accuracy: 1e-6); XCTAssertEqual(c.y, 400, accuracy: 1e-6)
+            z += 0.01
+        }
+    }
+
+    func testFarSideAppearsOnlyLateInTheMorph() {
+        let center = TileMath.project(LonLat(lon: 0, lat: 0))
+        let antipode = TileMath.project(LonLat(lon: 179, lat: 0))
+        let early = BlendedProjection(camera: MapCamera(center: center, zoom: 3.1), viewport: vp)
+        XCTAssertNil(early.screen(antipode))
+        let late = BlendedProjection(camera: MapCamera(center: center, zoom: 3.98), viewport: vp)
+        XCTAssertGreaterThan(late.visibility(antipode), 0)
+    }
+}

@@ -20,6 +20,8 @@ private struct MapPipelines {
 
     static let colorFormat = MTLPixelFormat.bgra8Unorm
     static let depthFormat = MTLPixelFormat.depth32Float_stencil8
+    /// 4× multisampling: smooth building, polygon and line edges (cheap on Apple GPUs).
+    static let sampleCount = 4
 
     init?(device: MTLDevice) {
         self.device = device
@@ -40,6 +42,7 @@ private struct MapPipelines {
             d.vertexFunction = vf
             d.fragmentFunction = ff
             d.colorAttachments[0].pixelFormat = Self.colorFormat
+            d.rasterSampleCount = Self.sampleCount
             d.depthAttachmentPixelFormat = Self.depthFormat
             d.stencilAttachmentPixelFormat = Self.depthFormat
             if blend {
@@ -196,7 +199,7 @@ final class MapRenderer: NSObject, MTKViewDelegate {
     /// True while a drag is in progress (the view sets it); the label pass thins itself out.
     var dragging = false
     /// Called after each frame is encoded with the projection it used, for label placement.
-    var onFrameDrawn: ((MapProjection, MapFrame) -> Void)?
+    var onFrameDrawn: ((any MapScreenProjection, MapFrame) -> Void)?
 
     // QA readouts (§3.3 C).
     var gpuTileCount: Int { gpuTiles.count }
@@ -231,7 +234,10 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         super.init()
         view.device = device
         view.colorPixelFormat = MapPipelines.colorFormat
-        view.depthStencilPixelFormat = MapPipelines.depthFormat
+        // The view only supplies the drawable: the multisampled colour and depth/stencil targets
+        // are ours (see `targets`), memoryless on Apple GPUs, so 4× MSAA costs no memory.
+        view.depthStencilPixelFormat = .invalid
+        view.sampleCount = 1
         view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
         view.clearDepth = 1
         view.clearStencil = 0
@@ -298,12 +304,55 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         // The clear colour is read when the pass descriptor is made.
         let bg = frame.palette.bg0
         view.clearColor = MTLClearColor(red: Double(bg.x), green: Double(bg.y), blue: Double(bg.z), alpha: 1)
-        guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable else { return }
+        guard let drawable = view.currentDrawable, let pass = renderPass(resolvingInto: drawable.texture, clear: bg) else { return }
         let scale = Double(view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
         dirty = false
         guard let cmd = encode(frame: frame, camera: camera, pass: pass, drawableSize: view.drawableSize, scale: scale) else { return }
         cmd.present(drawable)
         cmd.commit()
+    }
+
+    // MARK: Multisampled targets
+
+    private var msaaColor: MTLTexture?
+    private var msaaDepth: MTLTexture?
+
+    /// Memoryless (tile-memory only) where the GPU supports it, so the 4× targets take no RAM.
+    private var targetStorage: MTLStorageMode {
+        pipes.device.supportsFamily(.apple1) ? .memoryless : .private
+    }
+
+    /// A pass that draws into multisampled targets and resolves into `texture` (the drawable).
+    private func renderPass(resolvingInto texture: MTLTexture, clear bg: SIMD4<Float>) -> MTLRenderPassDescriptor? {
+        let w = texture.width, h = texture.height
+        if msaaColor?.width != w || msaaColor?.height != h {
+            func make(_ format: MTLPixelFormat) -> MTLTexture? {
+                let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: w, height: h, mipmapped: false)
+                d.textureType = .type2DMultisample
+                d.sampleCount = MapPipelines.sampleCount
+                d.usage = [.renderTarget]
+                d.storageMode = targetStorage
+                return pipes.device.makeTexture(descriptor: d)
+            }
+            msaaColor = make(MapPipelines.colorFormat)
+            msaaDepth = make(MapPipelines.depthFormat)
+        }
+        guard let color = msaaColor, let depth = msaaDepth else { return nil }
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = color
+        pass.colorAttachments[0].resolveTexture = texture
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].storeAction = .multisampleResolve
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: Double(bg.x), green: Double(bg.y), blue: Double(bg.z), alpha: 1)
+        pass.depthAttachment.texture = depth
+        pass.depthAttachment.loadAction = .clear
+        pass.depthAttachment.clearDepth = 1
+        pass.depthAttachment.storeAction = .dontCare
+        pass.stencilAttachment.texture = depth
+        pass.stencilAttachment.loadAction = .clear
+        pass.stencilAttachment.clearStencil = 0
+        pass.stencilAttachment.storeAction = .dontCare
+        return pass
     }
 
     // MARK: Encoding
@@ -315,9 +364,10 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         defer { debugLastEncodeCPUms = (CACurrentMediaTime() - t0) * 1000 }
         #endif
         let viewportPt = SIMD2<Double>(drawableSize.width / scale, drawableSize.height / scale)
-        let proj = MapProjection(camera: camera, viewport: viewportPt)
+        let proj = mapProjection(camera: camera, viewport: viewportPt)
+        let globe = proj as? GlobeProjection          // fully a globe (no fills, no masks)
         let px = SIMD2<Float>(Float(drawableSize.width), Float(drawableSize.height))
-        let pitched = frame.buildings && camera.pitch > 5
+        let pitched = globe == nil && frame.buildings && camera.pitch > 5
         fillUniforms(frame: frame, proj: proj, viewportPx: px, scale: Float(scale), flat: !pitched)
         for level in levels { for t in level { t.uniforms = tileUniforms(t.id, proj: proj) } }
         buildOverlays(frame: frame, proj: proj, scale: scale)
@@ -365,11 +415,29 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         enc.setFragmentBytes(&mode0, length: 4, index: 1)
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
 
+        // Globe: the sphere body (drawn by the floor pass above), then lines on the facing side and
+        // the overlays. No fills (large low-zoom triangles would cut through the sphere), no
+        // ancestor masks, no buildings.
+        if globe != nil {
+            enc.setDepthStencilState(pipes.dsNone)
+            enc.setRenderPipelineState(pipes.line)
+            bindFrame(enc, vertex: 2, fragment: 0)
+            for level in levels.reversed() {
+                for cls in Self.lineOrder {
+                    for t in level { for b in t.lines where b.cls == cls.rawValue { drawTile(enc, t, b) } }
+                }
+            }
+            encodeOverlays(enc, bindFrame)
+            enc.endEncoding()
+            onFrameDrawn?(proj, frame)
+            return cmd
+        }
+
         // 2. Fills, deepest level first; each level masks the ones above it (bit 0). Water marks bit 1.
         enc.setStencilReferenceValue(0)
         for level in levels {
             enc.setRenderPipelineState(pipes.fill)
-            bindFrame(enc, vertex: nil, fragment: 0)
+            bindFrame(enc, vertex: 2, fragment: 0)
             for cls in Self.fillOrder {
                 let water = cls == .water || cls == .waterway
                 var d = UInt32(cls.rawValue)
@@ -421,18 +489,21 @@ final class MapRenderer: NSObject, MTKViewDelegate {
             writeLevelMask(enc, level, pipes.dsLineWrite)
         }
 
-        // 3. Overlays (CPU-projected, instanced SDF quads).
-        if !overlayInstances.isEmpty, let buf = overlayBuffer(for: overlayInstances.count) {
-            overlayInstances.withUnsafeBytes { src in buf.contents().copyMemory(from: src.baseAddress!, byteCount: src.count) }
-            enc.setDepthStencilState(pipes.dsNone)
-            enc.setRenderPipelineState(pipes.overlay)
-            enc.setVertexBuffer(buf, offset: 0, index: 0)
-            bindFrame(enc, vertex: 2, fragment: 0)
-            enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: overlayInstances.count)
-        }
+        // 5. Overlays (CPU-projected, instanced SDF quads).
+        encodeOverlays(enc, bindFrame)
         enc.endEncoding()
         onFrameDrawn?(proj, frame)
         return cmd
+    }
+
+    private func encodeOverlays(_ enc: MTLRenderCommandEncoder, _ bindFrame: (MTLRenderCommandEncoder, Int?, Int?) -> Void) {
+        guard !overlayInstances.isEmpty, let buf = overlayBuffer(for: overlayInstances.count) else { return }
+        overlayInstances.withUnsafeBytes { src in buf.contents().copyMemory(from: src.baseAddress!, byteCount: src.count) }
+        enc.setDepthStencilState(pipes.dsNone)
+        enc.setRenderPipelineState(pipes.overlay)
+        enc.setVertexBuffer(buf, offset: 0, index: 0)
+        bindFrame(enc, 2, 0)
+        enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: overlayInstances.count)
     }
 
     /// Fill order: tints first, water over them, footprints last.
@@ -440,11 +511,14 @@ final class MapRenderer: NSObject, MTKViewDelegate {
     /// Line order: shoreline and rivers under the road hierarchy; boundaries on top.
     private static let lineOrder: [RenderClass] = [.water, .waterway, .path, .rail, .service, .minor, .tertiary, .secondary, .primary, .trunk, .motorway, .aeroway, .boundary]
 
-    private func tileUniforms(_ id: TileID, proj: MapProjection) -> MapTileUniforms {
+    private func tileUniforms(_ id: TileID, proj: any MapScreenProjection) -> MapTileUniforms {
         let (nw, se) = TileMath.bounds(id)
         let wupm = MapProjection.worldUnitsPerMeter(y: (nw.y + se.y) / 2)
         let tilePx = Float(proj.worldScale * (se.x - nw.x))
-        return MapTileUniforms(mvp: proj.tileMatrix(id), worldUnitsPerMeter: Float(wupm), tilePx: tilePx)
+        let flat = (proj as? MapProjection) ?? (proj as? BlendedProjection)?.flat
+        let mvp = flat?.tileMatrix(id) ?? matrix_identity_float4x4
+        return MapTileUniforms(mvp: mvp, worldUnitsPerMeter: Float(wupm), tilePx: tilePx,
+                               merc: SIMD4(Float(nw.x), Float(nw.y), Float(se.x - nw.x), Float(se.y - nw.y)))
     }
 
     private func overlayBuffer(for count: Int) -> MTLBuffer? {
@@ -460,12 +534,24 @@ final class MapRenderer: NSObject, MTKViewDelegate {
 
     // MARK: Uniforms and style
 
-    private func fillUniforms(frame: MapFrame, proj: MapProjection, viewportPx: SIMD2<Float>, scale: Float, flat: Bool) {
+    private func fillUniforms(frame: MapFrame, proj: any MapScreenProjection, viewportPx: SIMD2<Float>, scale: Float, flat: Bool) {
         let p = frame.palette
         let cam = proj.camera
         let style = MapStyle(palette: p, zoom: cam.zoom, glow: frame.glow, scale: scale)
         var s = MapFrameScalars()
-        s.invCenteredVP = Self.centeredInverse(proj)
+        let blended = proj as? BlendedProjection
+        if let flatProj = (proj as? MapProjection) ?? blended?.flat { s.invCenteredVP = Self.centeredInverse(flatProj) }
+        if let g = (proj as? GlobeProjection) ?? blended?.globe {
+            func f(_ m: simd_double4x4) -> simd_float4x4 {
+                simd_float4x4(columns: (SIMD4<Float>(m.columns.0), SIMD4<Float>(m.columns.1), SIMD4<Float>(m.columns.2), SIMD4<Float>(m.columns.3)))
+            }
+            s.globeVP = f(g.shaderMatrix)
+            s.invGlobeVP = f(g.inverse)
+            s.invRot = f(GlobeProjection.embed(g.inverseRotation))
+            s.globe = SIMD4(1, Float(g.lon0), Float(g.horizonZ), Float(blended?.t ?? 0))
+            let r = g.rotation
+            s.rotZRow = SIMD4(Float(r[0][2]), Float(r[1][2]), Float(r[2][2]), 0)
+        }
         s.bg0 = p.bg0; s.bg3 = p.bg3; s.accent = p.accent; s.glow = p.glow; s.text = p.text; s.line = p.line
         s.roof = flat ? mapMix(p.bg1, p.accent, 0.06) : mapMix(p.bg1, p.accent, 0.13)
         s.wall = mapMix(p.bg1, p.accent, 0.05)
@@ -476,7 +562,7 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         s.revealY = frame.reveal >= 1 ? 1e9 : max(0, frame.reveal) * viewportPx.y
         s.flat = flat ? 1 : 0
         s.glowOn = frame.glow ? 1 : 0
-        if frame.gridFloor {
+        if frame.gridFloor && !(proj is GlobeProjection) {
             // A power-of-two Mercator lattice: minor cells 1/8 tile at floor(zoom) (32…64 pt), majors every 4.
             let zi = cam.zoom.rounded(.down)
             let minorPt = 256 * pow(2, cam.zoom - zi) / 8
@@ -524,7 +610,7 @@ final class MapRenderer: NSObject, MTKViewDelegate {
 
     // MARK: Overlays
 
-    private func buildOverlays(frame: MapFrame, proj: MapProjection, scale: Double) {
+    private func buildOverlays(frame: MapFrame, proj: any MapScreenProjection, scale: Double) {
         overlayInstances.removeAll(keepingCapacity: true)
         let p = frame.palette
         let s = Float(scale)
@@ -621,13 +707,19 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         guard w > 0, h > 0 else { return nil }
         let cd = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: MapPipelines.colorFormat, width: w, height: h, mipmapped: false)
         cd.usage = [.renderTarget]; cd.storageMode = .shared
+        // Multisampled targets (the pipelines draw at MapPipelines.sampleCount), resolved into `color`.
+        let md = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: MapPipelines.colorFormat, width: w, height: h, mipmapped: false)
+        md.textureType = .type2DMultisample; md.sampleCount = MapPipelines.sampleCount; md.usage = [.renderTarget]; md.storageMode = .private
         let dd = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: MapPipelines.depthFormat, width: w, height: h, mipmapped: false)
+        dd.textureType = .type2DMultisample; dd.sampleCount = MapPipelines.sampleCount
         dd.usage = [.renderTarget]; dd.storageMode = .private
-        guard let color = pipes.device.makeTexture(descriptor: cd), let depth = pipes.device.makeTexture(descriptor: dd) else { return nil }
+        guard let color = pipes.device.makeTexture(descriptor: cd), let msaa = pipes.device.makeTexture(descriptor: md),
+              let depth = pipes.device.makeTexture(descriptor: dd) else { return nil }
         let pass = MTLRenderPassDescriptor()
-        pass.colorAttachments[0].texture = color
+        pass.colorAttachments[0].texture = msaa
+        pass.colorAttachments[0].resolveTexture = color
         pass.colorAttachments[0].loadAction = .clear
-        pass.colorAttachments[0].storeAction = .store
+        pass.colorAttachments[0].storeAction = .multisampleResolve
         let bg = frame.palette.bg0
         pass.colorAttachments[0].clearColor = MTLClearColor(red: Double(bg.x), green: Double(bg.y), blue: Double(bg.z), alpha: 1)
         pass.depthAttachment.texture = depth; pass.depthAttachment.loadAction = .clear; pass.depthAttachment.clearDepth = 1; pass.depthAttachment.storeAction = .dontCare
@@ -675,7 +767,10 @@ struct MapStyle {
 
         // Thin bright cores with a soft halo for the top three classes only; everything below is
         // pure accent at falling alpha, no glow, so a city at z13 reads as a graded lattice.
-        setLine(.water, hw: 0.45, p.accent, alpha: 0.35, glow: 0)
+        // On the globe the coastline is what shows the land, so it is a brighter, glowing thread.
+        // (blended across the globe → flat morph so nothing pops).
+        let flatness = Float(MapCamera(center: Mercator(x: 0.5, y: 0.5), zoom: zoom).flatness)
+        setLine(.water, hw: 0.5 - 0.05 * flatness, p.accent, alpha: 0.85 - 0.5 * flatness, glow: 0.5 * (1 - flatness))
         setLine(.waterway, hw: 0.6, mapMix(p.accent, p.bg3, 0.45), alpha: 0.6, glow: 0)
         setLine(.path, hw: 0.25, p.textMute, alpha: 0.35, glow: 0, dash: 3)
         setLine(.rail, hw: 0.35, p.textMute, alpha: 0.45, glow: 0, dash: 6)

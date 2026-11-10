@@ -89,6 +89,9 @@ and is skipped when Motion is off or macOS Reduce Motion is on.
 | Widget readouts | update in place (no animation) | – |
 
 Map (page 05): the renderer draws only when the camera, data or theme changes (no idle animation).
+Below zoom 3.5 the map is a globe (dark sphere, 15°/30° graticule, accent limb and halo, glowing
+coastlines and borders; the far side is hidden). Edges are 4× multisampled. ⌥ + two-finger swipe
+tilts (vertical) or turns (horizontal).
 New areas scan in once with an accent band (450 ms, Motion only). Colours come from theme tokens
 (roads in accent, graded by class; water in bg3; buildings in bg1/bg2 with accent edges), and the
 glow follows Effects › Glow.

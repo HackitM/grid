@@ -194,25 +194,12 @@ final class MapContainerView: NSView {
     private func handle(_ g: MapGesture) {
         guard interactive else { return }
         if var cam = camera {
-            let proj = MapProjection(camera: cam, viewport: viewportPoints)
+            // The same maths as MapModel.handle, so the model's echo matches this camera exactly.
             switch g {
-            case .pan(let d):
-                // The content moved by d: the new centre is the ground point that was at centre - d.
-                let c = viewportPoints / 2
-                if let ground = proj.groundPoint(screen: c - d) { cam.center = Self.clampCenter(ground) }
-            case .zoom(let dz, let around):
-                let before = proj.groundPoint(screen: around)
-                cam.zoom = min(MapCamera.maxZoom, max(MapCamera.minZoom, cam.zoom + dz))
-                if let before, let after = MapProjection(camera: cam, viewport: viewportPoints).groundPoint(screen: around) {
-                    cam.center = Self.clampCenter(Mercator(x: cam.center.x + before.x - after.x, y: cam.center.y + before.y - after.y))
-                }
-            case .rotate(let db, let dp):
-                var b = (cam.bearing + db).truncatingRemainder(dividingBy: 360)
-                if b < 0 { b += 360 }
-                cam.bearing = b
-                cam.pitch = min(MapCamera.maxPitch, max(0, cam.pitch + dp))
-            case .click, .rectangle, .key:
-                break
+            case .pan(let d): cam = MapGestureMath.pan(cam, by: d, viewport: viewportPoints)
+            case .zoom(let dz, let around): cam = MapGestureMath.zoom(cam, by: dz, around: around, viewport: viewportPoints)
+            case .rotate(let db, let dp): cam = MapGestureMath.rotate(cam, bearing: db, pitch: dp)
+            case .click, .rectangle, .key: break
             }
             if cam != camera {
                 camera = cam
@@ -229,7 +216,7 @@ final class MapContainerView: NSView {
 
     // MARK: Labels
 
-    private func placeLabels(_ proj: MapProjection, _ frame: MapFrame) {
+    private func placeLabels(_ proj: any MapScreenProjection, _ frame: MapFrame) {
         // While dragging, re-place at most every other frame.
         if renderer.dragging {
             labelFrameSkip += 1
@@ -273,10 +260,19 @@ final class MapInputView: MTKView {
         return SIMD2(Double(p.x), Double(bounds.height - p.y))
     }
 
-    // Trackpad scroll pans; ⌘-scroll and mouse wheels zoom around the pointer.
+    // Trackpad scroll pans; ⌘-scroll and mouse wheels zoom around the pointer; ⌥ + two-finger
+    // swipe tilts (up/down) and turns (left/right) the 3D view.
     override func scrollWheel(with e: NSEvent) {
         guard interactive else { return super.scrollWheel(with: e) }
         let at = point(e)
+        if e.modifierFlags.contains(.option) {
+            let dx = Double(e.scrollingDeltaX), dy = Double(e.scrollingDeltaY)
+            let k = e.hasPreciseScrollingDeltas ? 1.0 : 6.0
+            // Whichever axis dominates, so a vertical swipe doesn't also spin the map.
+            if abs(dy) >= abs(dx) { if dy != 0 { onGesture(.rotate(bearingDelta: 0, pitchDelta: -dy * 0.25 * k)) } }
+            else { onGesture(.rotate(bearingDelta: dx * 0.3 * k, pitchDelta: 0)) }
+            return
+        }
         if e.hasPreciseScrollingDeltas {
             if e.modifierFlags.contains(.command) {
                 onGesture(.zoom(-Double(e.scrollingDeltaY) * 0.012, around: at))
