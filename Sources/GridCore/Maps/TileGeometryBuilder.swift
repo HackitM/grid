@@ -5,6 +5,16 @@ import simd
 public enum TileGeometryBuilder {
     static let maxLabelsPerTile = 2000
     static let maxPOIsPerTile = 1500
+    // What one tile may cost, whatever it contains. A tile is at most 8 MB of untrusted bytes, but
+    // geometry multiplies: every long segment is split up to 256 times and every big triangle
+    // subdivided, so a tile of nothing but long zigzags would otherwise come to gigabytes of
+    // vertices. Real tiles stay far below these (a dense city tile is ~100 000 line vertices);
+    // past a limit the rest of that kind of geometry is left out.
+    static let maxLineVerticesPerTile = 2_000_000
+    static let maxFillVerticesPerTile = 2_000_000
+    static let maxExtrusionVerticesPerTile = 2_000_000
+    /// Triangulation steps for all of a tile's polygons together (see Earcut).
+    static let maxEarcutStepsPerTile = 250_000_000
     /// Light direction in tile space (y down) used to shade building walls: from the upper left.
     private static let light = simd_normalize(SIMD2<Float>(-0.5, -0.8))
 
@@ -73,6 +83,8 @@ public enum TileGeometryBuilder {
         var extIdx: [UInt32] = []
         var labels: [LabelAnchor] = []
         var pois: [POIAnchor] = []
+        var lineVertexCount = 0, fillVertexCount = 0
+        var earcutSteps = maxEarcutStepsPerTile
 
         for layer in tile.layers where OpenMapTilesSchema.layers.contains(layer.name) {
             guard layer.extent > 0 else { continue }
@@ -90,8 +102,9 @@ public enum TileGeometryBuilder {
                         guard poly.count > 0 else { continue }
                         // Earcut is superlinear on huge polygons; 50k vertices is far beyond real z14 data.
                         if poly.reduce(0, { $0 + $1.count }) > min(maxVerts, 50_000) { continue }
+                        if isBuilding ? extVerts.count >= maxExtrusionVerticesPerTile : fillVertexCount >= maxFillVerticesPerTile { continue }
                         let rings = poly.map { $0.map(norm) }
-                        let tris = Earcut.triangulate(rings)
+                        let tris = Earcut.triangulate(rings, steps: &earcutSteps)
                         guard !tris.isEmpty else { continue }
                         if isBuilding {
                             appendBuilding(rings, tris, height: height, minHeight: minH, vertices: &extVerts, indices: &extIdx)
@@ -100,17 +113,24 @@ public enum TileGeometryBuilder {
                             let (pos, idx) = subdivide(rings.flatMap { $0 }, tris, maxEdge: fillEdge)
                             let base = UInt32(fillPos[c].count)
                             fillPos[c].append(contentsOf: pos)
+                            fillVertexCount += pos.count
                             fillIdx[c].reserveCapacity(fillIdx[c].count + idx.count)
                             for t in idx { fillIdx[c].append(base + t) }
-                            if cls == .water { appendShoreline(rings, maxSegment: globeSegment, vertices: &lineVerts[c], indices: &lineIdx[c]) }
+                            if cls == .water, lineVertexCount < maxLineVerticesPerTile {
+                                let before = lineVerts[c].count
+                                appendShoreline(rings, maxSegment: globeSegment, vertices: &lineVerts[c], indices: &lineIdx[c])
+                                lineVertexCount += lineVerts[c].count - before
+                            }
                         }
                     }
                 case .lines(let lines):
                     if let (cls, flags) = OpenMapTilesSchema.lineClass(layer: layer.name, tags: f.tags) {
                         let c = Int(cls.rawValue)
-                        for l in lines where l.count >= 2 && l.count <= maxVerts {
+                        for l in lines where l.count >= 2 && l.count <= maxVerts && lineVertexCount < maxLineVerticesPerTile {
+                            let before = lineVerts[c].count
                             LineTessellator.append(densify(l.map(norm), maxSegment: globeSegment), closed: false, cls: cls, flags: flags,
                                                    vertices: &lineVerts[c], indices: &lineIdx[c])
+                            lineVertexCount += lineVerts[c].count - before
                         }
                     }
                     if layer.name == "transportation_name", labels.count < maxLabelsPerTile,

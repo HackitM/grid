@@ -16,21 +16,44 @@ import simd
 //   OR PERFORMANCE OF THIS SOFTWARE.
 //
 // The linked lists are index-based (no class allocations). Differences from the original: input
-// with non-finite coordinates yields no triangles, and every loop that could in principle spin on
-// degenerate input is bounded by a step budget, so the function always returns.
+// with non-finite coordinates yields no triangles, and the work is bounded. Ear clipping is fast on
+// real map polygons but quadratic or worse on ones built to defeat it (combs, self-intersecting
+// scribbles), and tiles are untrusted, so every loop draws on one budget of steps, counted where
+// the time actually goes (the scans inside the ear, diagonal and hole tests). When it runs out the
+// triangles found so far are returned. The budget is far above what real polygons use.
 
 public enum Earcut {
+    /// Node indices are Int32 and each split adds two nodes: far more points than any tile holds.
+    static let maxPoints = 1 << 24
+    /// Steps one polygon may take: generous for real data (a 50 000 point coastline with
+    /// hundreds of islands uses a few million; a hostile one is cut off after roughly 0.1 s).
+    static func stepBudget(points: Int) -> Int { 10_000_000 + 1_000 * points }
+    /// Nested polygon splits allowed. Each level is a few stack frames, and tiles are decoded on
+    /// threads with small stacks.
+    static let maxSplitDepth = 64
+
     /// rings[0] exterior, rest holes; returns triangle indices into the rings flattened in order.
     public static func triangulate(_ rings: [[SIMD2<Float>]]) -> [UInt32] {
-        guard let outer = rings.first, outer.count >= 3 else { return [] }
+        var steps = Int.max
+        return triangulate(rings, steps: &steps)
+    }
+
+    /// The same, drawing on a caller's step budget as well (a tile's, shared by all its
+    /// polygons); what was used is taken off `steps`.
+    static func triangulate(_ rings: [[SIMD2<Float>]], steps: inout Int) -> [UInt32] {
+        guard let outer = rings.first, outer.count >= 3, steps > 0 else { return [] }
         var total = 0
         for r in rings {
             total += r.count
             for p in r where !(p.x.isFinite && p.y.isFinite) { return [] }
         }
-        guard total <= Int(UInt32.max) else { return [] }
+        guard total <= maxPoints else { return [] }
         var e = Triangulator(capacity: total + rings.count * 2)
-        return e.run(rings, total: total)
+        let allowed = min(steps, stepBudget(points: total))
+        e.budget = allowed
+        let triangles = e.run(rings, total: total)
+        steps -= allowed - max(0, e.budget)
+        return triangles
     }
 
     private struct Node {
@@ -56,7 +79,6 @@ public enum Earcut {
 
         mutating func run(_ rings: [[SIMD2<Float>]], total: Int) -> [UInt32] {
             tris.reserveCapacity(total * 3)
-            budget = 64 * total + 100_000
             var start = 0
             guard var outer = linkedList(rings[0], start: start, clockwise: true), n[Int(outer)].next != n[Int(outer)].prev else { return [] }
             start += rings[0].count
@@ -154,7 +176,8 @@ public enum Earcut {
             repeat {
                 again = false
                 guardSteps -= 1
-                if guardSteps < 0 { break }
+                budget -= 1
+                if guardSteps < 0 || budget < 0 { break }
                 let node = n[Int(p)]
                 if !node.steiner && (equals(p, node.next) || area(node.prev, p, node.next) == 0) {
                     removeNode(p)
@@ -204,13 +227,15 @@ public enum Earcut {
             }
         }
 
-        func isEar(_ ear: Int32) -> Bool {
+        mutating func isEar(_ ear: Int32) -> Bool {
             let a = pv(ear), c = nx(ear)
             if area(a, ear, c) >= 0 { return false }
             let A = n[Int(a)], B = n[Int(ear)], C = n[Int(c)]
             let x0 = min(A.x, B.x, C.x), y0 = min(A.y, B.y, C.y), x1 = max(A.x, B.x, C.x), y1 = max(A.y, B.y, C.y)
             var p = nx(c)
             while p != a {
+                budget -= 1
+                if budget < 0 { return false }
                 let P = n[Int(p)]
                 if P.x >= x0 && P.x <= x1 && P.y >= y0 && P.y <= y1
                     && pointInTriangleExceptFirst(A.x, A.y, B.x, B.y, C.x, C.y, P.x, P.y)
@@ -220,7 +245,7 @@ public enum Earcut {
             return true
         }
 
-        func isEarHashed(_ ear: Int32) -> Bool {
+        mutating func isEarHashed(_ ear: Int32) -> Bool {
             let a = pv(ear), c = nx(ear)
             if area(a, ear, c) >= 0 { return false }
             let A = n[Int(a)], B = n[Int(ear)], C = n[Int(c)]
@@ -234,16 +259,22 @@ public enum Earcut {
                     && area(P.prev, id, P.next) >= 0
             }
             while p >= 0 && n[Int(p)].z >= minZ && q >= 0 && n[Int(q)].z <= maxZ {
+                budget -= 2
+                if budget < 0 { return false }
                 if hit(p) { return false }
                 p = n[Int(p)].prevZ
                 if hit(q) { return false }
                 q = n[Int(q)].nextZ
             }
             while p >= 0 && n[Int(p)].z >= minZ {
+                budget -= 1
+                if budget < 0 { return false }
                 if hit(p) { return false }
                 p = n[Int(p)].prevZ
             }
             while q >= 0 && n[Int(q)].z <= maxZ {
+                budget -= 1
+                if budget < 0 { return false }
                 if hit(q) { return false }
                 q = n[Int(q)].nextZ
             }
@@ -284,7 +315,7 @@ public enum Earcut {
                         a = filterPoints(a, nx(a))
                         c = filterPoints(c, nx(c))
                         depth += 1
-                        if depth < 256 {
+                        if depth < Earcut.maxSplitDepth {
                             earcutLinked(a, pass: 0)
                             earcutLinked(c, pass: 0)
                         }
@@ -306,7 +337,7 @@ public enum Earcut {
             return filterPoints(bridge, nx(bridge))
         }
 
-        func findHoleBridge(_ hole: Int32, _ outer: Int32) -> Int32? {
+        mutating func findHoleBridge(_ hole: Int32, _ outer: Int32) -> Int32? {
             var p = outer
             let hx = n[Int(hole)].x, hy = n[Int(hole)].y
             var qx = -Double.infinity
@@ -314,7 +345,8 @@ public enum Earcut {
             var steps = n.count + 4
             repeat {
                 steps -= 1
-                if steps < 0 { break }
+                budget -= 1
+                if steps < 0 || budget < 0 { return nil }
                 let P = n[Int(p)], N = n[Int(P.next)]
                 if equals(hole, p) { return p }
                 if hy <= P.y && hy >= N.y && N.y != P.y {
@@ -336,7 +368,8 @@ public enum Earcut {
             steps = n.count + 4
             repeat {
                 steps -= 1
-                if steps < 0 { break }
+                budget -= 1
+                if steps < 0 || budget < 0 { break }
                 let P = n[Int(p)]
                 if hx >= P.x && P.x >= mx && hx != P.x
                     && pointInTriangle(hy < my ? hx : qx, hy, mx, my, hy < my ? qx : hx, hy, P.x, P.y) {
@@ -453,16 +486,12 @@ public enum Earcut {
             !(ax == px && ay == py) && pointInTriangle(ax, ay, bx, by, cx, cy, px, py)
         }
 
-        func isValidDiagonal(_ a: Int32, _ b: Int32) -> Bool {
+        mutating func isValidDiagonal(_ a: Int32, _ b: Int32) -> Bool {
             let A = n[Int(a)], B = n[Int(b)]
-            let an = n[Int(A.next)], ap = n[Int(A.prev)]
-            let bn = n[Int(B.next)], bp = n[Int(B.prev)]
-            _ = an; _ = bn
-            if an.i == B.i || ap.i == B.i { return false }
+            if n[Int(A.next)].i == B.i || n[Int(A.prev)].i == B.i { return false }
             if intersectsPolygon(a, b) { return false }
             if locallyInside(a, b) && locallyInside(b, a) && middleInside(a, b)
                 && (area(A.prev, a, B.prev) != 0 || area(a, B.prev, b) != 0) { return true }
-            _ = bp
             return equals(a, b) && area(A.prev, a, A.next) > 0 && area(B.prev, b, B.next) > 0
         }
 
@@ -484,13 +513,14 @@ public enum Earcut {
             return false
         }
 
-        func intersectsPolygon(_ a: Int32, _ b: Int32) -> Bool {
+        mutating func intersectsPolygon(_ a: Int32, _ b: Int32) -> Bool {
             var p = a
             let ai = n[Int(a)].i, bi = n[Int(b)].i
             var steps = n.count + 4
             repeat {
                 steps -= 1
-                if steps < 0 { return true }
+                budget -= 1
+                if steps < 0 || budget < 0 { return true }
                 let P = n[Int(p)]
                 let pn = n[Int(P.next)].i
                 if P.i != ai && pn != ai && P.i != bi && pn != bi && intersects(p, P.next, a, b) { return true }
@@ -506,14 +536,15 @@ public enum Earcut {
                 : area(a, b, A.prev) < 0 || area(a, A.next, b) < 0
         }
 
-        func middleInside(_ a: Int32, _ b: Int32) -> Bool {
+        mutating func middleInside(_ a: Int32, _ b: Int32) -> Bool {
             var p = a
             var inside = false
             let px = (n[Int(a)].x + n[Int(b)].x) / 2, py = (n[Int(a)].y + n[Int(b)].y) / 2
             var steps = n.count + 4
             repeat {
                 steps -= 1
-                if steps < 0 { break }
+                budget -= 1
+                if steps < 0 || budget < 0 { return false }
                 let P = n[Int(p)], N = n[Int(P.next)]
                 if (P.y > py) != (N.y > py) && N.y != P.y && px < (N.x - P.x) * (py - P.y) / (N.y - P.y) + P.x { inside.toggle() }
                 p = P.next
