@@ -77,7 +77,7 @@ final class MapNetwork: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
     /// The size a GET would return (HEAD's Content-Length), or nil when the server doesn't say.
     func size(of url: URL, hosts: Set<String>) async throws -> (status: Int, bytes: Int64?) {
-        guard Self.isAllowed(url, hosts: hosts) else { throw NetError.blockedURL(url.absoluteString) }
+        guard Self.isAllowed(url, hosts: hosts) else { throw NetError.blockedURL(Self.describe(url)) }
         var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
         req.httpMethod = "HEAD"
         let r = try await run(req, maxBytes: 1 << 16, host: url.host?.lowercased() ?? "")
@@ -88,13 +88,15 @@ final class MapNetwork: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     /// progress (bytes so far, expected or -1). The returned response has no data.
     func download(_ url: URL, to file: URL, hosts: Set<String>, maxBytes: Int64,
                   progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> Response {
-        guard Self.isAllowed(url, hosts: hosts) else { throw NetError.blockedURL(url.absoluteString) }
+        guard Self.isAllowed(url, hosts: hosts) else { throw NetError.blockedURL(Self.describe(url)) }
         let handle = try FileHandle(forWritingTo: file)
         defer { try? handle.close() }
         let req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 60)
         return try await run(req, maxBytes: Int(clamping: maxBytes), host: url.host?.lowercased() ?? "", sink: handle, progress: progress)
     }
 
+    /// Runs one request to its end. `host` is the request's own host: redirects may only stay on
+    /// it. Cancelling the calling task cancels the request.
     private func run(_ req: URLRequest, maxBytes: Int, host: String, sink: FileHandle? = nil,
                      progress: (@Sendable (Int64, Int64) -> Void)? = nil) async throws -> Response {
         let task = session.dataTask(with: req)
@@ -114,18 +116,22 @@ final class MapNetwork: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
     /// GET with a byte cap. `etag` makes it conditional (a 304 comes back with empty data).
     func get(_ url: URL, hosts: Set<String>, maxBytes: Int, etag: String? = nil, timeout: TimeInterval = 30) async throws -> Response {
-        guard Self.isAllowed(url, hosts: hosts) else { throw NetError.blockedURL(url.absoluteString) }
+        guard Self.isAllowed(url, hosts: hosts) else { throw NetError.blockedURL(Self.describe(url)) }
         var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         if let etag { req.setValue(etag, forHTTPHeaderField: "If-None-Match") }
-        let task = session.dataTask(with: req)
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (c: CheckedContinuation<Response, Error>) in
-                lock.withLock { pending[task.taskIdentifier] = Pending(maxBytes: maxBytes, host: url.host?.lowercased() ?? "", continuation: c) }
-                task.resume()
-            }
-        } onCancel: {
-            task.cancel()
-        }
+        return try await run(req, maxBytes: maxBytes, host: url.host?.lowercased() ?? "")
+    }
+
+    /// A URL as named in an error message: scheme, host and path only. The query can hold what
+    /// the user searched for or the area they were looking at, which has no place in a message
+    /// that may be shown, copied or reported.
+    static func describe(_ url: URL) -> String {
+        guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url.host ?? "an invalid address" }
+        parts.query = nil
+        parts.fragment = nil
+        parts.user = nil
+        parts.password = nil
+        return parts.string ?? (url.host ?? "an invalid address")
     }
 
     private func finish(_ id: Int, _ result: Result<Response, Error>) {

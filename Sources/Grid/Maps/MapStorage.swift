@@ -68,6 +68,17 @@ enum MapStorage {
         return try? Data(contentsOf: file, options: [.mappedIfSafe])
     }
 
+    /// Notes that a cached file was used, so that trimming a cache by oldest date removes what
+    /// hasn't been used for longest rather than what was downloaded first. The date moves at
+    /// most once a day per file, which keeps this to one cheap check on almost every read.
+    static func markUsed(_ file: URL, now: Date = Date()) {
+        guard (try? checkInside(file)) != nil,
+              let attrs = try? FileManager.default.attributesOfItem(atPath: file.path),
+              attrs[.type] as? FileAttributeType == .typeRegular,
+              let modified = attrs[.modificationDate] as? Date, now.timeIntervalSince(modified) > 86_400 else { return }
+        try? FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: file.path)
+    }
+
     /// Removes `dir` (inside `root`) without following symlinks out of it.
     static func remove(_ dir: URL) throws {
         try checkInside(dir)

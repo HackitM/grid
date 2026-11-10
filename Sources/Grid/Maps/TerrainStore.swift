@@ -42,6 +42,8 @@ final class TerrainStore {
     static let maxDEM = 96, maxTiles = 320
     /// Disk cap for cached elevation tiles (oldest removed first).
     nonisolated static let maxDiskBytes: Int64 = 150 << 20
+    /// Largest elevation tile accepted (a 256 × 256 PNG is a few hundred kilobytes at most).
+    nonisolated static let maxTileBytes = 2 << 20
     @ObservationIgnored private var bytesSinceTrim = 0
 
     func terrain(for t: TileID) -> TileTerrain? { tiles[t] }
@@ -130,35 +132,36 @@ final class TerrainStore {
         // Disk read and decode together, off the main thread.
         let url = file(d)
         if let cached = await Task.detached(priority: .userInitiated, operation: { () -> [Float]? in
-            MapStorage.read(url, maxBytes: 2 << 20).flatMap(Self.decodePNG)
+            guard let heights = MapStorage.read(url, maxBytes: Self.maxTileBytes).flatMap(Self.decodePNG) else { return nil }
+            MapStorage.markUsed(url)
+            return heights
         }).value {
             store(d, cached)
             return
         }
-        var data: Data?
-        var fromNetwork = false
-        if data == nil {
-            guard enabled, d.isValid,
-                  let url = URL(string: "https://\(Self.host)/terrarium/\(d.z)/\(d.x)/\(d.y).png") else { return }
-            do {
-                let r = try await MapNetwork.shared.get(url, hosts: [Self.host], maxBytes: 2 << 20)
-                guard r.status == 200 else { throw MapNetwork.NetError.http(r.status) }
-                data = r.data
-                fromNetwork = true
-            } catch {
-                failed[d] = Date(); errorCount += 1
-                return
-            }
+        guard enabled, d.isValid,
+              let remote = URL(string: "https://\(Self.host)/terrarium/\(d.z)/\(d.x)/\(d.y).png") else { return }
+        let bytes: Data
+        do {
+            let r = try await MapNetwork.shared.get(remote, hosts: [Self.host], maxBytes: Self.maxTileBytes)
+            guard r.status == 200 else { throw MapNetwork.NetError.http(r.status) }
+            bytes = r.data
+        } catch {
+            failed[d] = Date(); errorCount += 1
+            return
         }
-        guard let bytes = data else { return }
-        let heights = await Task.detached(priority: .userInitiated) { Self.decodePNG(bytes) }.value
-        guard let heights else { failed[d] = Date(); errorCount += 1; return }
-        // Cache only what decoded (a captive portal page never lands on disk).
-        if fromNetwork, (try? MapStorage.write(bytes, to: file(d))) != nil {
+        // Decoded and written to the cache in one trip off the main thread. Only what decoded is
+        // cached (a captive portal page never lands on disk).
+        let decoded = await Task.detached(priority: .userInitiated) { () -> (heights: [Float], cached: Bool)? in
+            guard let heights = Self.decodePNG(bytes) else { return nil }
+            return (heights, (try? MapStorage.write(bytes, to: url)) != nil)
+        }.value
+        guard let decoded else { failed[d] = Date(); errorCount += 1; return }
+        if decoded.cached {
             bytesSinceTrim += bytes.count
             if bytesSinceTrim > 8 << 20 { bytesSinceTrim = 0; Task.detached(priority: .utility) { Self.trimDisk() } }
         }
-        store(d, heights)
+        store(d, decoded.heights)
     }
 
     private func store(_ d: TileID, _ heights: [Float]) {
@@ -192,7 +195,7 @@ final class TerrainStore {
         }
     }
 
-    /// Removes the oldest cached elevation tiles until under 90% of the cap.
+    /// Removes the cached elevation tiles unused for longest until under 90% of the cap.
     nonisolated static func trimDisk() {
         let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey]
         guard let e = FileManager.default.enumerator(at: MapStorage.terrain, includingPropertiesForKeys: keys) else { return }
