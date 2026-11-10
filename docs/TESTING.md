@@ -122,6 +122,9 @@ display is awake.
 - [ ] Map: Add Region › United States › Rhode Island → confirmation names the host and the request count → cameras appear; zoom out → clusters; click a camera → inspector
 - [ ] Map: ⇧-drag an area in Draw Area mode → confirmation → cameras; remove the region; Clear Map Data empties the folder
 - [ ] Map: Locate → GRID's explanation → the macOS prompt → the map centres; deny → LOC-DENIED with Open Privacy Settings
+- [ ] Map: at z16 in a city, place glyphs show beside their names; the category chips hide and show them; clicking a glyph opens the PLACE inspector
+- [ ] Map: ⌘F focuses Search places; typing lists matches from the loaded map with no network traffic; ↑/↓ and Return pick one (pin, inspector, map moves)
+- [ ] Map: Return with no local match (or ⌘Return) asks SEARCH-NET the first time, then shows online results; Settings › Map turns it off; the same search again from the same view within a day sends nothing
 - [ ] Map: theme switch recolours instantly; Effects › Glow off removes the glow; with the window unfocused the map stops drawing (0% CPU)
 - [ ] Updates: a fresh install asks in the status bar; "Not now" makes no request (check with Little Snitch or `nettop`)
 - [ ] Updates: GRID › Check for Updates… on the latest version says "up to date"; on an older build shows the notice, Settings › Updates shows the notes

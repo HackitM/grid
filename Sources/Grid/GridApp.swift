@@ -193,6 +193,7 @@ struct GridCommands: Commands {
         CommandGroup(after: .textEditing) {
             Button("Find") {
                 if web { if app.browser.active != nil { app.browser.findVisible = true }; return }
+                if app.panel == .map { NotificationCenter.default.post(name: .gridFocusMapSearch, object: nil); return }
                 if app.panel == .terminal, let s = app.terminals.active, terminalFocused || s.find.visible {
                     s.find.open()
                 } else {

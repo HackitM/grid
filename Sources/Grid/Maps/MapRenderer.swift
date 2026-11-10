@@ -756,17 +756,30 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         func slots() -> [MapLabelAtlas.Slot?] {
             placed.map { atlas.slot($0.id, text: planner.text(of: $0.id), bold: $0.style == .count, width: planner.width(of: $0.id)) }
         }
+        func iconSlots() -> [MapLabelAtlas.Slot?] {
+            placed.map { $0.icon == 0 ? nil : POICategory(rawValue: $0.icon).flatMap { atlas.iconSlot($0) } }
+        }
         var found = slots()
-        if found.contains(where: { $0 == nil }) {
+        var icons = iconSlots()
+        if found.contains(where: { $0 == nil }) || zip(placed, icons).contains(where: { $0.icon != 0 && $1 == nil }) {
             // Full: start the atlas over and rasterise what this frame shows.
             atlas.reset(scale: CGFloat(scale))
             found = slots()
+            icons = iconSlots()
         }
         let p = frame.palette
         let place = Self.labelColor(p.text), road = Self.labelColor(p.textDim), water = Self.labelColor(p.accent, 0.8)
+        let poi = Self.labelColor(p.textDim, 0.95), glyph = Self.labelColor(p.accent)
         let aw = Float(MapLabelAtlas.width), ah = Float(MapLabelAtlas.height)
-        for (l, slot) in zip(placed, found) {
+        for (k, (l, slot)) in zip(placed, found).enumerated() {
             guard let slot else { continue }
+            if l.icon != 0, let ic = icons[k] {
+                let ih = SIMD2(Float(ic.w), Float(ic.h)) / 2
+                let c = (SIMD2(Float(l.iconCenter.x * scale), Float(l.iconCenter.y * scale)) - ih).rounded(.toNearestOrAwayFromZero) + ih
+                labelInstances.append(MapLabelInstance(center: c, half: ih,
+                                                       uv: SIMD4(Float(ic.x) / aw, Float(ic.y) / ah, Float(ic.x + ic.w) / aw, Float(ic.y + ic.h) / ah),
+                                                       color: glyph, rot: SIMD2(1, 0)))
+            }
             let half = SIMD2(Float(slot.w), Float(slot.h)) / 2
             var c = SIMD2(Float(l.center.x * scale), Float(l.center.y * scale))
             var rot = SIMD2<Float>(1, 0)
@@ -777,7 +790,7 @@ final class MapRenderer: NSObject, MTKViewDelegate {
                 rot = SIMD2(Float(cos(l.angle)), Float(sin(l.angle)))
             }
             let color: SIMD4<Float>
-            switch l.style { case .place, .count: color = place; case .road: color = road; case .water: color = water }
+            switch l.style { case .place, .count: color = place; case .road: color = road; case .water: color = water; case .poi: color = poi }
             labelInstances.append(MapLabelInstance(center: c, half: half,
                                                    uv: SIMD4(Float(slot.x) / aw, Float(slot.y) / ah, Float(slot.x + slot.w) / aw, Float(slot.y + slot.h) / ah),
                                                    color: color, rot: rot))
@@ -1031,6 +1044,12 @@ final class MapRenderer: NSObject, MTKViewDelegate {
             var ring = p.accent; ring.w = 0.5
             add(.ring, at: px(q), size: SIMD2(repeating: r * 2 + 4 * s), color: ring, p: SIMD4(1 * s, 0, 0, 0))
             add(.locationDot, at: px(q), size: SIMD2(repeating: 22 * s), color: p.accent)
+        }
+
+        // The chosen place: a diamond pin, its name beside it (placed before every other label).
+        if let pin = frame.pin, let q = screen(pin.world), onScreen(q) {
+            add(.pin, at: px(q), size: SIMD2(repeating: 24 * s), color: p.accent)
+            clusterCounts.append((MapLabelPlanner.display(pin.title, kind: .place), SIMD2(q.x + 14, q.y)))
         }
     }
 

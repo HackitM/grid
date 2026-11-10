@@ -79,8 +79,13 @@ A real terminal, a file browser, an app launcher, a widget deck and a web browse
   - **terrain:** shaded relief and contour lines with elevation labels, and real 3D mountains and
     valleys when you tilt (roads, buildings and cameras follow the ground)
   - labels in GRID's type, with street names running along their roads
+  - **places:** shops, food, stops, sights, lodging and more as small glyphs, filtered by category
 
   It follows your theme and only draws when something changes.
+- **Search places** (⌘F on the Map page): typing searches the place, street and shop names in the
+  map already on your Mac, with no network. Press Return when nothing matches (or ⌘Return) to
+  search OpenStreetMap online. Results show a pin and an inspector with the address, coordinates
+  and links to Apple Maps and OpenStreetMap; clicking a place glyph does the same.
 - **ALPR cameras mapped by OpenStreetMap volunteers** (via [DeFlock](https://deflock.org)):
   - **Choosing what to download:** a US state, a Canadian province, another country's region, or
     an area you draw. GRID keeps them on your Mac and shows them offline.
@@ -164,6 +169,7 @@ The window opens with a short build-on (its frame traces itself in, then the pan
 | ▸ click, → / ←, ⌥→ | Files: expand / collapse folders in place (⌥ expands three levels) |
 | ⌘T ⌘W ⌘F ⌘L ⌘R ⌘[ ⌘] | Browser: new tab · close tab · find · address bar · reload · back / forward |
 | ⇧⌘[ ⇧⌘] | Browser: previous / next tab |
+| ⌘F, ↑ ↓ ⏎, ⌘⏎, Esc | Map: search places · pick a result · search online · close |
 
 </details>
 
@@ -205,6 +211,11 @@ Use the `.app` bundle for real use rather than `swift run`, since macOS privacy 
   - **Cameras** come from DeFlock's camera host for the regions you choose (US and Canada), or from
     an Overpass server elsewhere. That host learns which region you downloaded, and each download
     asks first.
+  - **Online place search** happens only when you press Return or choose Search Online, never
+    while you type. It asks first, then sends your search and the visible area to Nominatim
+    (nominatim.openstreetmap.org, the OpenStreetMap Foundation), at most once a second. Answers
+    stay in memory for up to a day; searches are never saved. Turn it off or pick another server
+    in Settings › Map.
   - **Your location** is read only when you click Locate, stays in memory, and is never stored or
     sent by GRID.
 - **Web content is isolated.** Pages get no bridge into GRID, can't run commands, and can't open other apps without a click and a confirmation. Downloads are confirmed and quarantined like Safari's.

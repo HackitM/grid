@@ -59,6 +59,12 @@ struct LocationMarker: Equatable {
     var accuracyMeters: Double
 }
 
+/// The chosen place (a search result or a clicked point of interest): a pin with its name.
+struct PlaceMarker: Equatable {
+    var world: Mercator
+    var title: String
+}
+
 /// A region outline to draw (the downloaded regions, and the rectangle being drawn).
 struct RegionOutline: Equatable {
     var rings: [[Mercator]]
@@ -78,6 +84,9 @@ struct MapFrame: Equatable {
     var cameras: [CameraMarker] = []
     var clusters: [ClusterMarker] = []
     var location: LocationMarker?
+    var pin: PlaceMarker?
+    /// Point-of-interest categories to draw, one bit per `POICategory.rawValue` (0: none).
+    var poiMask: UInt16 = 0
     var regions: [RegionOutline] = []
     var palette: MapPalette
     /// Effects › Glow.

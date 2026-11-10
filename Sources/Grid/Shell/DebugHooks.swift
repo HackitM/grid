@@ -671,7 +671,9 @@ enum DebugHooks {
                             "regions": m.alpr.regions.map { ["id": $0.id, "name": $0.meta.descriptor.name, "count": $0.meta.cameraCount,
                                                              "status": "\($0.status)", "sources": $0.meta.sources.map(\.rawValue), "requests": $0.meta.requests] },
                             "location": Self.locationCase(m.location.state), "inView": m.camerasInViewCount(),
-                            "loader": m.tiles.debugStats]
+                            "loader": m.tiles.debugStats, "search": m.search.debugState,
+                            "place": m.place.map { "\($0.name)|\($0.kind.rawValue)|\($0.detail)|\($0.source.rawValue)" } ?? "",
+                            "showPlaces": m.showPlaces, "hiddenCategories": m.hiddenCategories.map(\.short).sorted()]
                 } ?? [:],
                 "updates": ["current": app.updates.current.description, "latest": app.updates.latest?.tagName ?? "",
                             "available": app.updates.available?.tagName ?? "", "notice": app.updates.showsNotice,
@@ -780,12 +782,21 @@ enum DebugHooks {
                 v.debugProbe = probe
                 probe.begin()
             case "exaggeration": if let x = c["value"] as? Double { m.terrainExaggeration = x }
+            case "search":
+                // {"op":"search","query":"zermatt"} types into the search box; "online":true also searches
+                // online (as ⌘⏎); "choose":n picks result n; "clear":true empties it.
+                if c["clear"] as? Bool == true { m.search.clear() }
+                if let q = c["query"] as? String { m.search.query = q }
+                if c["online"] as? Bool == true { m.search.submit(forceOnline: true) }
+                if let n = c["choose"] as? Int, m.search.results.indices.contains(n) { m.search.choose(m.search.results[n]) }
+            case "click":
+                if let x = c["x"] as? Double, let y = c["y"] as? Double { m.handle(.click(SIMD2(x, y))) }
             case "context":
                 // Right-click menu at a view point (QA of the menu and terrain picking).
                 if let x = c["x"] as? Double, let y = c["y"] as? Double { m.handle(.contextMenu(SIMD2(x, y), screen: SIMD2(400, 400))) }
             case "layer":
                 if let k = c["key"] as? String, let on = c["value"] as? Bool {
-                    switch k { case "cameras": m.showCameras = on; case "regions": m.showRegions = on; case "buildings": m.showBuildings = on; case "grid": m.showGrid = on; case "terrain": m.showTerrain = on; default: break }
+                    switch k { case "cameras": m.showCameras = on; case "regions": m.showRegions = on; case "buildings": m.showBuildings = on; case "grid": m.showGrid = on; case "terrain": m.showTerrain = on; case "places": m.showPlaces = on; default: break }
                 }
             default: break
             }

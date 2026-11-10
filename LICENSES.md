@@ -24,6 +24,9 @@ Application Support:
   contributors, ODbL 1.0).
 - **ALPR cameras:** OpenStreetMap data (ODbL 1.0), as published by DeFlock / FlockHopper, or
   queried from an Overpass server.
+- **Points of interest** come from the same OpenFreeMap tiles (OpenStreetMap data, ODbL 1.0).
+  **Online search results** come from a Nominatim server (by default the OpenStreetMap
+  Foundation's), and are OpenStreetMap data (ODbL 1.0).
 - **Terrain:** AWS Terrain Tiles (Terrarium encoding), a Mapzen / Linux Foundation dataset hosted
   on the AWS Open Data registry, built from SRTM, GMTED2010, ETOPO1, USGS 3DEP, Canadian CDEM and
   other public sources. See the

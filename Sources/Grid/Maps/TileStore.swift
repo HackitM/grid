@@ -118,6 +118,9 @@ final class TileStore {
         return out
     }
 
+    /// Every decoded tile in memory (place search reads their names).
+    func allGeometry() -> [TileGeometry] { Array(decoded.values) }
+
     func clearMemory() { resetMemory(); generation += 1 }
 
     private func resetMemory() {

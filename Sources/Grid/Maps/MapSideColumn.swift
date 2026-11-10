@@ -22,7 +22,10 @@ struct MapSideColumn: View {
                         layerToggle("3D buildings (when tilted)", model.showBuildings) { model.showBuildings = $0 }
                         layerToggle("Grid floor", model.showGrid) { model.showGrid = $0 }
                         layerToggle("Terrain (relief, contours, 3D)", model.showTerrain) { model.showTerrain = $0 }
+                        layerToggle("Places (shops, stops, sights)", model.showPlaces) { model.showPlaces = $0 }
+                        if model.showPlaces { CategoryChips(model: model) }
                     }
+                    if let place = model.place { PlaceInspector(model: model, place: place) }
                     if let cam = model.selectedCamera { CameraInspector(model: model, camera: cam) }
                     RegionsSection(model: model, showPicker: $showPicker)
                     LegendSection()
@@ -48,6 +51,100 @@ struct MapSideColumn: View {
                 .toggleStyle(GridToggleStyle())
             Spacer(minLength: 4)
             if let count { Text(count.formatted()).font(GridFont.small).foregroundStyle(theme.textDim).monospacedDigit() }
+        }
+    }
+}
+
+/// One chip per place category; a chip off hides that category's glyphs (search still finds them).
+private struct CategoryChips: View {
+    @Environment(\.theme) private var theme
+    let model: MapModel
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 64), spacing: 4)], alignment: .leading, spacing: 4) {
+            ForEach(POICategory.allCases, id: \.self) { c in
+                let on = !model.hiddenCategories.contains(c)
+                Button {
+                    if on { model.hiddenCategories.insert(c) } else { model.hiddenCategories.remove(c) }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: c.symbol).font(.system(size: 8.5, weight: .semibold))
+                        Text(c.short).font(GridFont.small).lineLimit(1)
+                    }
+                    .foregroundStyle(on ? theme.accent : theme.textMute)
+                    .padding(.horizontal, 5).frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
+                    .background(on ? theme.accent.opacity(0.1) : Color.clear)
+                    .overlay(Rectangle().stroke(on ? theme.accent.opacity(0.45) : theme.line, lineWidth: Metrics.hairline))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(c.title)
+                .accessibilityLabel(c.title)
+                .accessibilityValue(on ? "shown" : "hidden")
+            }
+        }
+        .padding(.leading, 2)
+    }
+}
+
+/// The chosen place (a search result or a clicked point of interest).
+private struct PlaceInspector: View {
+    @Environment(AppState.self) private var app
+    @Environment(\.theme) private var theme
+    let model: MapModel
+    let place: PlaceResult
+
+    var body: some View {
+        let ll = place.coordinate
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) { SectionLabel("place", color: theme.accent); TerminatedRule() }
+            HStack(spacing: 6) {
+                Image(systemName: place.category?.symbol ?? "mappin").font(.system(size: 10)).foregroundStyle(theme.accent)
+                Text((place.category?.short ?? place.kind.rawValue).uppercased()).font(GridFont.label).tracking(1.2).foregroundStyle(theme.textDim)
+                Spacer()
+                Button { model.selectPlace(nil) } label: { Image(systemName: "xmark").font(.system(size: 9)) }
+                    .buttonStyle(.plain).foregroundStyle(theme.textMute).accessibilityLabel("Close place")
+            }
+            Text(place.name).font(GridFont.bodyStrong).foregroundStyle(theme.text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            row("what", place.detail)
+            row("address", place.address)
+            row("where", String(format: "%.5f, %.5f", ll.lat, ll.lon))
+            row("from", place.source == .online ? "OpenStreetMap, via \(MapSearch.host)" : "The loaded map (OpenStreetMap)")
+            HStack(spacing: 6) {
+                Button("Apple Maps ↗") {
+                    var c = URLComponents(string: "https://maps.apple.com/")!
+                    c.queryItems = [URLQueryItem(name: "ll", value: String(format: "%.6f,%.6f", ll.lat, ll.lon)),
+                                    URLQueryItem(name: "q", value: place.name)]
+                    if let u = c.url { NSWorkspace.shared.open(u) }
+                }
+                .help("Opens this place in Apple Maps")
+                Button("OSM ↗") {
+                    app.openURL(place.osmURL?.absoluteString
+                                ?? String(format: "https://www.openstreetmap.org/?mlat=%.6f&mlon=%.6f#map=18/%.6f/%.6f", ll.lat, ll.lon, ll.lat, ll.lon))
+                }
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(String(format: "%.6f, %.6f", ll.lat, ll.lon), forType: .string)
+                    app.flash(.info, "Copied coordinates")
+                }
+                .help("Copy coordinates")
+            }
+            .buttonStyle(GridButtonStyle(compact: true))
+            Button("Centre Map Here") { model.flyTo(ll) }
+                .buttonStyle(GridButtonStyle(compact: true))
+        }
+        .padding(8)
+        .background(theme.bg2.opacity(0.5))
+        .overlay(Rectangle().stroke(theme.accent.opacity(0.4), lineWidth: Metrics.hairline))
+        .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder private func row(_ label: String, _ value: String?) -> some View {
+        if let value, !value.isEmpty {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(label.uppercased()).font(GridFont.label).tracking(1).foregroundStyle(theme.textMute).frame(width: 64, alignment: .leading)
+                Text(value).font(GridFont.small).foregroundStyle(theme.text).lineLimit(3).textSelection(.enabled)
+            }
         }
     }
 }

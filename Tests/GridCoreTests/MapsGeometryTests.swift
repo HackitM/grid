@@ -228,8 +228,8 @@ final class MapsGeometryTests: XCTestCase {
     // MARK: Misc
 
     func testUnknownLayersAreIgnoredAndEmptyTile() throws {
-        let g = try build([.init(name: "poi", features: [MVTTestEncoder.point([P(1, 1)], tags: ["class": .string("cafe"), "name": .string("Cafe")])])])
-        XCTAssertTrue(g.fills.isEmpty && g.lines.isEmpty && g.labels.isEmpty)
+        let g = try build([.init(name: "housenumber", features: [MVTTestEncoder.point([P(1, 1)], tags: ["housenumber": .string("12"), "name": .string("Cafe")])])])
+        XCTAssertTrue(g.fills.isEmpty && g.lines.isEmpty && g.labels.isEmpty && g.pois.isEmpty)
         XCTAssertNil(g.extrusion)
         XCTAssertEqual(g.byteCount, 0)
         let empty = TileGeometryBuilder.build(MVTTile(layers: []), id: tid)
@@ -258,7 +258,8 @@ final class MapsGeometryTests: XCTestCase {
         for l in ["water", "waterway", "landuse", "landcover", "park", "building", "transportation", "transportation_name", "place", "water_name", "boundary", "aeroway"] {
             XCTAssertTrue(OpenMapTilesSchema.layers.contains(l), l)
         }
-        XCTAssertFalse(OpenMapTilesSchema.layers.contains("poi"))
+        XCTAssertTrue(OpenMapTilesSchema.layers.contains("poi"))
+        XCTAssertFalse(OpenMapTilesSchema.layers.contains("housenumber"))
         XCTAssertEqual(OpenMapTilesSchema.fillClass(layer: "landcover", tags: ["class": .string("wood")]), .park)
         XCTAssertNil(OpenMapTilesSchema.fillClass(layer: "landcover", tags: ["class": .string("farmland")]))
         XCTAssertEqual(OpenMapTilesSchema.fillClass(layer: "landuse", tags: ["class": .string("residential")]), .landuse)

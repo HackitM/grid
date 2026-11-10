@@ -108,9 +108,15 @@ private struct MapCanvas: View {
                 .padding(.top, 10).frame(maxWidth: .infinity)
                 .allowsHitTesting(false)
             }
+            VStack(alignment: .leading) {
+                MapSearchBar(model: model)
+                Spacer()
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             LocationOverlay(location: model.location)
         }
-        .onExitCommand { if model.drawingRegion { model.drawingRegion = false } else { model.select(nil) } }
+        .onExitCommand { if model.drawingRegion { model.drawingRegion = false } else { model.select(nil); model.selectPlace(nil) } }
     }
 }
 
@@ -223,7 +229,7 @@ private struct ConsentBlock: View {
             VStack {
                 Spacer()
                 StateBlock(code: "MAP-NET", title: "Enable map data?",
-                           message: "The map downloads data only after you enable it:\n· Map tiles for the area you view, from tiles.openfreemap.org (it learns roughly where you're looking).\n· Elevation for the area you view, from elevation-tiles-prod.s3.amazonaws.com (Amazon learns roughly where you're looking), while the Terrain layer is on.\n· The region list, from download.geofabrik.de, when you open Regions.\n· ALPR camera locations for regions you choose, from deflock.dontgetflocked.com in the US and Canada, or your Overpass server elsewhere (they learn which region). Each download asks first.\nYour location is only read when you click Locate, and is never stored or sent by GRID.") {
+                           message: "The map downloads data only after you enable it:\n· Map tiles for the area you view, from tiles.openfreemap.org (it learns roughly where you're looking).\n· Elevation for the area you view, from elevation-tiles-prod.s3.amazonaws.com (Amazon learns roughly where you're looking), while the Terrain layer is on.\n· The region list, from download.geofabrik.de, when you open Regions.\n· ALPR camera locations for regions you choose, from deflock.dontgetflocked.com in the US and Canada, or your Overpass server elsewhere (they learn which region). Each download asks first.\nOnline place search is separate: it asks the first time you use it.\nYour location is only read when you click Locate, and is never stored or sent by GRID.") {
                     Button("Enable Map Data") { model.enabled = true; model.appeared() }
                     Button("Settings…") { app.settingsSection = "map"; app.show(.settings) }
                 }
