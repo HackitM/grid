@@ -234,8 +234,10 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         super.init()
         view.device = device
         view.colorPixelFormat = MapPipelines.colorFormat
-        view.depthStencilPixelFormat = MapPipelines.depthFormat
-        view.sampleCount = MapPipelines.sampleCount
+        // The view only supplies the drawable: the multisampled colour and depth/stencil targets
+        // are ours (see `targets`), memoryless on Apple GPUs, so 4× MSAA costs no memory.
+        view.depthStencilPixelFormat = .invalid
+        view.sampleCount = 1
         view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
         view.clearDepth = 1
         view.clearStencil = 0
@@ -302,12 +304,55 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         // The clear colour is read when the pass descriptor is made.
         let bg = frame.palette.bg0
         view.clearColor = MTLClearColor(red: Double(bg.x), green: Double(bg.y), blue: Double(bg.z), alpha: 1)
-        guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable else { return }
+        guard let drawable = view.currentDrawable, let pass = renderPass(resolvingInto: drawable.texture, clear: bg) else { return }
         let scale = Double(view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
         dirty = false
         guard let cmd = encode(frame: frame, camera: camera, pass: pass, drawableSize: view.drawableSize, scale: scale) else { return }
         cmd.present(drawable)
         cmd.commit()
+    }
+
+    // MARK: Multisampled targets
+
+    private var msaaColor: MTLTexture?
+    private var msaaDepth: MTLTexture?
+
+    /// Memoryless (tile-memory only) where the GPU supports it, so the 4× targets take no RAM.
+    private var targetStorage: MTLStorageMode {
+        pipes.device.supportsFamily(.apple1) ? .memoryless : .private
+    }
+
+    /// A pass that draws into multisampled targets and resolves into `texture` (the drawable).
+    private func renderPass(resolvingInto texture: MTLTexture, clear bg: SIMD4<Float>) -> MTLRenderPassDescriptor? {
+        let w = texture.width, h = texture.height
+        if msaaColor?.width != w || msaaColor?.height != h {
+            func make(_ format: MTLPixelFormat) -> MTLTexture? {
+                let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: w, height: h, mipmapped: false)
+                d.textureType = .type2DMultisample
+                d.sampleCount = MapPipelines.sampleCount
+                d.usage = [.renderTarget]
+                d.storageMode = targetStorage
+                return pipes.device.makeTexture(descriptor: d)
+            }
+            msaaColor = make(MapPipelines.colorFormat)
+            msaaDepth = make(MapPipelines.depthFormat)
+        }
+        guard let color = msaaColor, let depth = msaaDepth else { return nil }
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = color
+        pass.colorAttachments[0].resolveTexture = texture
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].storeAction = .multisampleResolve
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: Double(bg.x), green: Double(bg.y), blue: Double(bg.z), alpha: 1)
+        pass.depthAttachment.texture = depth
+        pass.depthAttachment.loadAction = .clear
+        pass.depthAttachment.clearDepth = 1
+        pass.depthAttachment.storeAction = .dontCare
+        pass.stencilAttachment.texture = depth
+        pass.stencilAttachment.loadAction = .clear
+        pass.stencilAttachment.clearStencil = 0
+        pass.stencilAttachment.storeAction = .dontCare
+        return pass
     }
 
     // MARK: Encoding
