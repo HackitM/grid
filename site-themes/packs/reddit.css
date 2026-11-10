@@ -1,0 +1,132 @@
+/* grid-site-theme
+id: reddit
+name: Reddit
+version: 1
+hosts: reddit.com, *.reddit.com
+description: Reddit on the GRID: its colour tokens remapped to GRID's palette, monospace titles and squared, outlined posts.
+*/
+/* Reddit's design tokens. Its components (including the shadow-DOM ones) read these, so remapping
+   them themes the whole site. Set on body too: custom properties defined there win over html. */
+html[data-grid-theme="reddit"], html[data-grid-theme="reddit"] body {
+  --color-neutral-background: var(--grid-bg1) !important;
+  --color-neutral-background-weak: var(--grid-bg0) !important;
+  --color-neutral-background-weak-hover: var(--grid-bg1) !important;
+  --color-neutral-background-medium: var(--grid-bg1) !important;
+  --color-neutral-background-canvas: var(--grid-bg2) !important;
+  --color-neutral-background-container: var(--grid-bg2) !important;
+  --color-neutral-background-container-hover: var(--grid-bg3) !important;
+  --color-neutral-background-container-strong: var(--grid-bg3) !important;
+  --color-neutral-background-container-strong-hover: var(--grid-bg3) !important;
+  --color-neutral-background-strong: var(--grid-bg2) !important;
+  --color-neutral-background-strong-hover: var(--grid-bg3) !important;
+  --color-neutral-background-hover: var(--grid-bg2) !important;
+  --color-neutral-background-selected: var(--grid-bg3) !important;
+  --color-neutral-background-highlighted: var(--grid-bg2) !important;
+  --color-neutral-background-highlighted-strong: var(--grid-bg3) !important;
+  --color-neutral-background-pinned: var(--grid-bg1) !important;
+  --color-neutral-background-gilded: var(--grid-bg2) !important;
+  --color-neutral-border: var(--grid-line) !important;
+  --color-neutral-border-weak: var(--grid-line) !important;
+  --color-neutral-border-divider: var(--grid-line) !important;
+  --color-neutral-border-medium: var(--grid-line-strong) !important;
+  --color-neutral-content: var(--grid-dim) !important;
+  --color-neutral-content-strong: var(--grid-text) !important;
+  --color-neutral-content-weak: var(--grid-mute) !important;
+  --color-primary: var(--grid-accent) !important;
+  --color-primary-hover: var(--grid-accent) !important;
+  --color-primary-plain: var(--grid-accent) !important;
+  --color-primary-plain-hover: var(--grid-text) !important;
+  --color-primary-background-highlighted: var(--grid-accent-soft) !important;
+  --color-primary-background-selected: var(--grid-accent) !important;
+  --color-interactive-focused: var(--grid-accent) !important;
+  --color-brand-background: var(--grid-accent) !important;
+  --color-brand-background-hover: var(--grid-accent) !important;
+  --color-brand-onBackground: var(--grid-on-accent) !important;
+  --color-global-brand-orangered: var(--grid-accent) !important;
+  --color-upvote-background: var(--grid-accent) !important;
+  --color-upvote-background-hover: var(--grid-accent) !important;
+  --color-secondary-background: var(--grid-bg3) !important;
+  --color-secondary-background-hover: var(--grid-bg3) !important;
+  --color-secondary-background-selected: var(--grid-accent-soft) !important;
+  --color-secondary-plain: var(--grid-dim) !important;
+  --color-secondary-plain-hover: var(--grid-text) !important;
+  --color-secondary-weak: var(--grid-mute) !important;
+  --color-input-background: var(--grid-bg2) !important;
+  --color-input-secondary: var(--grid-bg2) !important;
+  --color-input-secondary-hover: var(--grid-bg3) !important;
+  --button-color-background-default: var(--grid-bg3) !important;
+  --button-color-background-hover: var(--grid-accent-soft) !important;
+  --color-button-secondary-background: var(--grid-bg3) !important;
+  --color-button-secondary-background-hover: var(--grid-accent-soft) !important;
+  --color-button-plain-background-hover: var(--grid-accent-soft) !important;
+  --color-button-plain-text: var(--grid-dim) !important;
+  --color-button-tertiary-background-hover: var(--grid-accent-soft) !important;
+  background: var(--grid-bg1) !important;
+}
+
+/* Grid floor behind the feed. */
+html[data-grid-theme="reddit"] body {
+  background:
+    linear-gradient(var(--grid-line) 1px, transparent 1px) 0 0 / 56px 56px,
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0 / 56px 56px,
+    radial-gradient(ellipse at 50% -10%, var(--grid-accent-soft), transparent 60%),
+    var(--grid-bg0) !important;
+  background-attachment: fixed !important;
+}
+html[data-grid-theme="reddit"] shreddit-app, html[data-grid-theme="reddit"] .grid-container,
+html[data-grid-theme="reddit"] #main-content, html[data-grid-theme="reddit"] .main-container { background: transparent !important; }
+
+/* Header bar. */
+html[data-grid-theme="reddit"] reddit-header-large, html[data-grid-theme="reddit"] header.v2,
+html[data-grid-theme="reddit"] #reddit-header, html[data-grid-theme="reddit"] header[class*="sticky"] {
+  background: color-mix(in srgb, var(--grid-bg0) 88%, transparent) !important;
+  border-bottom: 1px solid var(--grid-line-strong) !important;
+  backdrop-filter: blur(10px);
+}
+html[data-grid-theme="reddit"] #reddit-logo, html[data-grid-theme="reddit"] a[aria-label="Home"] svg {
+  filter: grayscale(1) brightness(1.6) drop-shadow(0 0 6px var(--grid-accent));
+}
+
+/* Posts as HUD panels. */
+html[data-grid-theme="reddit"] shreddit-post, html[data-grid-theme="reddit"] shreddit-ad-post {
+  background: color-mix(in srgb, var(--grid-bg1) 92%, transparent) !important;
+  border: 1px solid var(--grid-line) !important;
+  border-radius: 2px !important;
+  margin-block: 6px !important;
+  transition: border-color .15s, box-shadow .15s;
+}
+html[data-grid-theme="reddit"] shreddit-post:hover {
+  border-color: var(--grid-line-strong) !important;
+  box-shadow: 0 0 0 1px var(--grid-accent-soft), 0 0 18px var(--grid-accent-soft) !important;
+}
+html[data-grid-theme="reddit"] shreddit-feed hr, html[data-grid-theme="reddit"] hr { border-color: transparent !important; }
+html[data-grid-theme="reddit"] a[slot="title"], html[data-grid-theme="reddit"] [slot="title"],
+html[data-grid-theme="reddit"] h1[id^="post-title"], html[data-grid-theme="reddit"] .masthead h1 {
+  font-family: var(--grid-mono) !important;
+  letter-spacing: -0.01em;
+  color: var(--grid-text) !important;
+}
+html[data-grid-theme="reddit"] shreddit-post:hover a[slot="title"] { color: var(--grid-accent) !important; }
+html[data-grid-theme="reddit"] faceplate-timeago, html[data-grid-theme="reddit"] shreddit-post [slot="credit-bar"],
+html[data-grid-theme="reddit"] .text-12 { font-family: var(--grid-mono) !important; }
+
+/* Media, buttons, community banner. */
+html[data-grid-theme="reddit"] shreddit-post img, html[data-grid-theme="reddit"] shreddit-player,
+html[data-grid-theme="reddit"] shreddit-aspect-ratio { border-radius: 2px !important; }
+html[data-grid-theme="reddit"] .button, html[data-grid-theme="reddit"] button.button,
+html[data-grid-theme="reddit"] faceplate-search-input, html[data-grid-theme="reddit"] shreddit-sort-dropdown button {
+  border-radius: 2px !important;
+}
+html[data-grid-theme="reddit"] .button-primary, html[data-grid-theme="reddit"] .button-brand {
+  background: var(--grid-accent) !important; color: var(--grid-on-accent) !important;
+  box-shadow: 0 0 12px var(--grid-accent-soft) !important;
+}
+html[data-grid-theme="reddit"] #subreddit-banner-img, html[data-grid-theme="reddit"] .community-banner {
+  border-radius: 2px !important; border: 1px solid var(--grid-line-strong) !important;
+  filter: saturate(0.6) contrast(1.05);
+}
+html[data-grid-theme="reddit"] .masthead h1::before { content: "// "; color: var(--grid-accent); }
+html[data-grid-theme="reddit"] #right-sidebar-container aside, html[data-grid-theme="reddit"] #right-sidebar-contents {
+  background: var(--grid-bg1) !important; border: 1px solid var(--grid-line) !important; border-radius: 2px !important;
+}
+@media (prefers-reduced-motion: reduce) { html[data-grid-theme="reddit"] shreddit-post { transition: none; } }

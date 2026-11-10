@@ -1,0 +1,128 @@
+/* grid-site-theme
+id: twitch
+name: Twitch
+version: 1
+hosts: twitch.tv, www.twitch.tv
+description: Twitch on the GRID: purple swapped for GRID's accent, framed streams with HUD corners, monospace chat.
+*/
+html[data-grid-theme="twitch"], html[data-grid-theme="twitch"] body {
+  --color-background-body: var(--grid-bg0) !important;
+  --color-background-base: var(--grid-bg1) !important;
+  --color-background-alt: var(--grid-bg2) !important;
+  --color-background-alt-2: var(--grid-bg3) !important;
+  --color-background-float: var(--grid-bg2) !important;
+  --color-background-input: var(--grid-bg1) !important;
+  --color-background-input-focus: var(--grid-bg1) !important;
+  --color-background-chat: var(--grid-bg0) !important;
+  --color-background-chat-alt: var(--grid-bg1) !important;
+  --color-background-chat-header: var(--grid-bg1) !important;
+  --color-background-modal: var(--grid-bg1) !important;
+  --color-background-accent: var(--grid-accent) !important;
+  --color-background-accent-alt: var(--grid-accent) !important;
+  --color-background-brand: var(--grid-accent) !important;
+  --color-background-button: var(--grid-accent) !important;
+  --color-background-button-hover: var(--grid-accent) !important;
+  --color-background-button-active: var(--grid-accent) !important;
+  --color-background-button-focus: var(--grid-accent) !important;
+  --color-background-button-primary-default: var(--grid-accent) !important;
+  --color-background-button-primary-hover: var(--grid-accent) !important;
+  --color-background-button-primary-active: var(--grid-accent) !important;
+  --color-background-button-brand: var(--grid-accent) !important;
+  --color-background-button-brand-hover: var(--grid-accent) !important;
+  --color-background-interactable-selected: var(--grid-accent) !important;
+  --color-background-input-checked: var(--grid-accent) !important;
+  --color-background-graph-fill: var(--grid-accent) !important;
+  --color-accent: var(--grid-accent) !important;
+  --color-text-button: var(--grid-on-accent) !important;
+  --color-text-button-primary: var(--grid-on-accent) !important;
+  --color-text-base: var(--grid-text) !important;
+  --color-text-alt: var(--grid-dim) !important;
+  --color-text-alt-2: var(--grid-mute) !important;
+  --color-text-link: var(--grid-accent) !important;
+  --color-text-link-hover: var(--grid-text) !important;
+  --color-text-link-active: var(--grid-accent) !important;
+  --color-text-link-visited: var(--grid-accent) !important;
+  --color-text-link-focus: var(--grid-accent) !important;
+  --color-text-accent: var(--grid-accent) !important;
+  --color-text-brand: var(--grid-accent) !important;
+  --color-text-tab-active: var(--grid-accent) !important;
+  --color-text-button-text: var(--grid-accent) !important;
+  --color-text-toggle-checked-icon: var(--grid-accent) !important;
+  --color-fill-brand: var(--grid-accent) !important;
+  --color-fill-brand-overlay: var(--grid-accent) !important;
+  --color-background-overlay-brand: var(--grid-accent) !important;
+  --color-border-brand-decorative: var(--grid-accent) !important;
+  --color-border-base: var(--grid-line) !important;
+  --color-border-input: var(--grid-line-strong) !important;
+  --color-border-input-focus: var(--grid-accent) !important;
+  --color-border-brand: var(--grid-accent) !important;
+  --color-twitch-purple: var(--grid-accent) !important;
+  --border-radius-small: 2px !important;
+  --border-radius-medium: 2px !important;
+  --border-radius-large: 2px !important;
+  --button-border-radius-default: 2px !important;
+  --button-border-radius-large: 2px !important;
+  --button-border-radius-small: 2px !important;
+}
+html[data-grid-theme="twitch"] body, html[data-grid-theme="twitch"] .root-scrollable__wrapper {
+  background:
+    linear-gradient(var(--grid-line) 1px, transparent 1px) 0 0 / 56px 56px,
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0 / 56px 56px,
+    var(--grid-bg0) !important;
+}
+
+/* Text sitting on the accent (category tiles, the sign-up callout) needs the dark ink. */
+html[data-grid-theme="twitch"] .vertical-selector, html[data-grid-theme="twitch"] .vertical-selector p,
+html[data-grid-theme="twitch"] .tw-callout-message, html[data-grid-theme="twitch"] .tw-callout-message strong,
+html[data-grid-theme="twitch"] .tw-callout-message p { color: var(--grid-on-accent) !important; }
+html[data-grid-theme="twitch"] .vertical-selector p { font-family: var(--grid-mono) !important; text-transform: uppercase; letter-spacing: .04em; }
+html[data-grid-theme="twitch"] .vertical-selector { box-shadow: 0 0 16px var(--grid-accent-soft); }
+
+/* Top bar and side rail. */
+html[data-grid-theme="twitch"] .top-nav__menu, html[data-grid-theme="twitch"] nav[data-a-target="top-nav-container"] {
+  background: var(--grid-bg0) !important;
+  border-bottom: 1px solid var(--grid-line-strong) !important;
+  box-shadow: 0 0 18px var(--grid-accent-soft) !important;
+}
+html[data-grid-theme="twitch"] a[data-a-target="home-link"] svg,
+html[data-grid-theme="twitch"] .top-nav__home-link svg { filter: grayscale(1) brightness(1.8) drop-shadow(0 0 6px var(--grid-accent)); }
+html[data-grid-theme="twitch"] .side-nav, html[data-grid-theme="twitch"] .side-bar-contents {
+  background: var(--grid-bg1) !important; border-right: 1px solid var(--grid-line) !important;
+}
+html[data-grid-theme="twitch"] .side-nav h2, html[data-grid-theme="twitch"] .side-nav-header-text,
+html[data-grid-theme="twitch"] h2, html[data-grid-theme="twitch"] h3 {
+  font-family: var(--grid-mono) !important; letter-spacing: 0.02em;
+}
+
+/* Stream cards with HUD corners. */
+html[data-grid-theme="twitch"] .tw-image, html[data-grid-theme="twitch"] .preview-card-image-link,
+html[data-grid-theme="twitch"] [data-a-target="preview-card-image-link"] { border-radius: 2px !important; }
+html[data-grid-theme="twitch"] [data-a-target="preview-card-image-link"] { position: relative; outline: 1px solid var(--grid-line); }
+html[data-grid-theme="twitch"] [data-a-target="preview-card-image-link"]::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 2;
+  background:
+    linear-gradient(var(--grid-accent), var(--grid-accent)) top left / 14px 2px no-repeat,
+    linear-gradient(var(--grid-accent), var(--grid-accent)) top left / 2px 14px no-repeat,
+    linear-gradient(var(--grid-accent), var(--grid-accent)) bottom right / 14px 2px no-repeat,
+    linear-gradient(var(--grid-accent), var(--grid-accent)) bottom right / 2px 14px no-repeat;
+  opacity: .8;
+}
+html[data-grid-theme="twitch"] [data-a-target="preview-card-image-link"]:hover { outline-color: var(--grid-line-strong); box-shadow: 0 0 18px var(--grid-accent-soft); }
+html[data-grid-theme="twitch"] .tw-channel-status-text-indicator, html[data-grid-theme="twitch"] .tw-media-card-stat {
+  font-family: var(--grid-mono) !important; border-radius: 2px !important;
+}
+
+/* The player and chat. */
+html[data-grid-theme="twitch"] .video-player__container, html[data-grid-theme="twitch"] .persistent-player {
+  outline: 1px solid var(--grid-line-strong); box-shadow: 0 0 24px var(--grid-accent-soft);
+}
+html[data-grid-theme="twitch"] .chat-shell, html[data-grid-theme="twitch"] .stream-chat,
+html[data-grid-theme="twitch"] .chat-room { background: var(--grid-bg0) !important; border-left: 1px solid var(--grid-line) !important; }
+html[data-grid-theme="twitch"] .chat-line__message, html[data-grid-theme="twitch"] .text-fragment,
+html[data-grid-theme="twitch"] .chat-input textarea { font-family: var(--grid-mono) !important; font-size: 12.5px !important; }
+html[data-grid-theme="twitch"] .stream-chat-header {
+  font-family: var(--grid-mono) !important; text-transform: uppercase; letter-spacing: 0.12em;
+  border-bottom: 1px solid var(--grid-line-strong) !important;
+}
+html[data-grid-theme="twitch"] .navigation-link.active, html[data-grid-theme="twitch"] .navigation-link.active p,
+html[data-grid-theme="twitch"] a[data-a-target="browse-link"]:hover p { color: var(--grid-accent) !important; }
