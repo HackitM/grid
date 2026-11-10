@@ -3,7 +3,8 @@ import GridCore
 
 /// Raw vector tiles on disk: `Maps/tiles/<sourceKey>/<z>/<x>/<y>.pbf`. Not a trust boundary:
 /// every tile read back is decoded by the same validating decoder as a fresh download. Trimmed to
-/// `maxBytes` by oldest modification date; Clear Map Data removes the folder.
+/// `maxBytes`, least recently used first (a read refreshes the file's date, at most daily); Clear
+/// Map Data removes the folder.
 actor TileCache {
     let sourceKey: String
     let maxBytes: Int64
@@ -32,7 +33,10 @@ actor TileCache {
     /// whole tile or none.
     nonisolated func read(_ t: TileID) -> Data? {
         guard t.isValid else { return nil }
-        return MapStorage.read(file(t), maxBytes: Self.maxTileBytes)
+        let url = file(t)
+        guard let data = MapStorage.read(url, maxBytes: Self.maxTileBytes) else { return nil }
+        MapStorage.markUsed(url)
+        return data
     }
 
     func write(_ t: TileID, _ data: Data) {

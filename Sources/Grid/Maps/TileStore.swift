@@ -45,6 +45,8 @@ final class TileStore {
     /// are cached) without holding up the queue, up to `maxInFlightTotal`.
     static let maxInFlight = 10
     static let maxInFlightTotal = 20
+    /// A tile that failed to load is not asked for again for this long.
+    static let retryDelay: TimeInterval = 30
 
     /// Reads the TileJSON (each time the Map opens, so a new planet build is noticed).
     func loadSource(url: URL = defaultTileJSON, hosts: Set<String> = defaultHosts) async {
@@ -90,11 +92,13 @@ final class TileStore {
         if loadedCount != loaded { loadedCount = loaded }
         guard enabled, source != nil else { return }
         let now = Date()
+        // Failures are only remembered for the retry delay; drop the old ones now and then.
+        if failed.count > 256 { failed = failed.filter { now.timeIntervalSince($0.value) < Self.retryDelay } }
         var seen = Set<TileID>()
         queue.removeAll(keepingCapacity: true)
         for list in [backdrop, visible, ring, prefetch] {
             for t in list where decoded[t] == nil && !inFlight.contains(t) && seen.insert(t).inserted {
-                if let f = failed[t], now.timeIntervalSince(f) < 30 { continue }
+                if let f = failed[t], now.timeIntervalSince(f) < Self.retryDelay { continue }
                 queue.append(t)
             }
         }
@@ -154,23 +158,23 @@ final class TileStore {
         }.value
         guard gen == generation else { return }
         if case .some(let g?) = cached { insertLoaded(g); return }
-        var data: Data?
+        // Not on disk (or unreadable there): the network, unless the view has moved on or map
+        // data was switched off meanwhile.
+        guard enabled, keep.contains(t), let url = source.url(for: t) else { return }
+        let bytes: Data
         var fromNetwork = false
-        if data == nil {
-            guard keep.contains(t), let url = source.url(for: t) else { return }
-            do {
-                let r = try await MapNetwork.shared.get(url, hosts: [source.host], maxBytes: TileCache.maxTileBytes)
-                switch r.status {
-                case 200: data = r.data; fromNetwork = true
-                case 204, 404: data = Data()    // outside coverage: draw nothing
-                default: throw MapNetwork.NetError.http(r.status)
-                }
-            } catch {
-                failed[t] = Date(); errorCount += 1
-                return
+        do {
+            let r = try await MapNetwork.shared.get(url, hosts: [source.host], maxBytes: TileCache.maxTileBytes)
+            switch r.status {
+            case 200: bytes = r.data; fromNetwork = true
+            case 204, 404: bytes = Data()    // outside coverage: draw nothing
+            default: throw MapNetwork.NetError.http(r.status)
             }
+        } catch {
+            failed[t] = Date(); errorCount += 1
+            return
         }
-        guard let bytes = data, gen == generation else { return }
+        guard gen == generation else { return }
         #if DEBUG
         let t0 = CFAbsoluteTimeGetCurrent()
         defer {

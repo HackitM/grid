@@ -83,9 +83,7 @@ struct MapSettingsSection: View {
                     .font(GridFont.small).foregroundStyle(theme.text)
                 Text("· \(m.alpr.regions.count) camera region\(m.alpr.regions.count == 1 ? "" : "s")").font(GridFont.small).foregroundStyle(theme.textDim)
                 Button("Clear Map Data…") {
-                    _ = app.present(Confirmation(code: "MAP-CLEAR", title: "Clear all map data?",
-                                                 message: "Deletes cached map tiles, the region list and every downloaded camera region from this Mac.",
-                                                 confirmLabel: "Clear", destructive: true, onConfirm: { m.clearAllData(); refreshSize() }))
+                    m.confirmClearAllData { refreshSize() }
                 }
                 .buttonStyle(GridButtonStyle(compact: true))
             }

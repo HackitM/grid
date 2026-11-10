@@ -33,7 +33,7 @@ struct MapPanel: View {
                     GridMenuItem.action("Check Camera Data for Updates", enabled: m.enabled && !m.alpr.regions.isEmpty) { Task { await m.alpr.checkFreshness(manual: true) } }
                     GridMenuItem.divider
                     GridMenuItem.action("Map Settings…") { app.settingsSection = "map"; app.show(.settings) }
-                    GridMenuItem.action("Clear Map Data…", destructive: true) { confirmClear(m) }
+                    GridMenuItem.action("Clear Map Data…", destructive: true) { m.confirmClearAllData() }
                 } content: {
                     ZStack {
                         if !MapMetalView.isSupported {
@@ -60,11 +60,6 @@ struct MapPanel: View {
         .onDisappear { m.disappeared() }
     }
 
-    private func confirmClear(_ m: MapModel) {
-        _ = app.present(Confirmation(code: "MAP-CLEAR", title: "Clear all map data?",
-                                     message: "Deletes cached map tiles, elevation, road data for directions, the region list and every downloaded camera region from this Mac. You can download them again later.",
-                                     confirmLabel: "Clear", destructive: true, onConfirm: { m.clearAllData() }))
-    }
 }
 
 /// Its own view, so a camera change re-renders this button rather than the whole page.
@@ -78,18 +73,29 @@ private struct PitchButton: View {
     }
 }
 
-/// The map and its overlays (readouts, attribution, notices, location explanation).
-private struct MapCanvas: View {
+/// The Metal map view, fed the model's frame. A new frame is made whenever a tile arrives, many
+/// times a second while the map moves, so this is a view of its own: only this small body runs
+/// again then, not the overlays around it.
+private struct MapSurface: View {
     @Environment(AppState.self) private var app
     @Environment(\.theme) private var theme
     let model: MapModel
 
     var body: some View {
-        let fx = app.settings.effects
-        let frame = model.frame(palette: MapPalette.cached(theme), glow: fx.glow)
+        MapMetalView(frame: model.frame(palette: MapPalette.cached(theme), glow: app.settings.effects.glow),
+                     onGesture: { model.handle($0) }, onViewport: { model.setViewport($0) },
+                     interactive: app.confirmation == nil)
+    }
+}
+
+/// The map and its overlays (readouts, attribution, notices, location explanation).
+private struct MapCanvas: View {
+    @Environment(\.theme) private var theme
+    let model: MapModel
+
+    var body: some View {
         ZStack(alignment: .bottomLeading) {
-            MapMetalView(frame: frame, onGesture: { model.handle($0) }, onViewport: { model.setViewport($0) },
-                         interactive: app.confirmation == nil)
+            MapSurface(model: model)
             VStack(alignment: .leading, spacing: 4) {
                 Spacer()
                 if let n = model.notice ?? model.alpr.lastError ?? model.tiles.sourceError {
@@ -134,13 +140,16 @@ private struct MapCanvas: View {
     }
 }
 
+/// Position, zoom and counts. It reads the camera, so it redraws about ten times a second during
+/// a gesture: everything in `body` must stay trivial (the camera count comes ready-made from
+/// `model.inView`, worked out off the main thread).
 private struct MapReadout: View {
     @Environment(\.theme) private var theme
     let model: MapModel
 
     var body: some View {
         let c = TileMath.unproject(model.camera.center)
-        let inView = model.showCameras && !model.alpr.regions.isEmpty ? model.camerasInViewCount() : nil
+        let inView = model.showCameras && !model.alpr.regions.isEmpty ? model.inView.count : nil
         HStack(spacing: 10) {
             Text(String(format: "%.4f %@ · %.4f %@", abs(c.lat), c.lat >= 0 ? "N" : "S", abs(c.lon), c.lon >= 0 ? "E" : "W"))
             Text(String(format: "Z%.1f", model.camera.zoom))

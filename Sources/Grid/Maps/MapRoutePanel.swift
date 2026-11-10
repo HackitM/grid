@@ -234,37 +234,70 @@ private struct StepList: View {
 
     var body: some View {
         let steps = leg.path.steps
-        let cams = model.alpr.index.cameras
+        let cameras = Self.camerasByStep(leg)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) { SectionLabel("steps", color: theme.accent); TerminatedRule() }.padding(.bottom, 3)
-            ForEach(Array(steps.enumerated()), id: \.offset) { i, s in
-                let next = i + 1 < steps.count ? steps[i + 1].along : .infinity
-                let here = leg.hits.filter { $0.along >= s.along && $0.along < next }
-                Button { model.flyTo(s.location, zoom: max(model.camera.zoom, 16)) } label: {
-                    VStack(alignment: .leading, spacing: 1) {
-                        HStack(alignment: .top, spacing: 6) {
-                            Text(String(format: "%02d", i + 1)).font(GridFont.small).foregroundStyle(theme.textMute).monospacedDigit()
-                            Image(systemName: RouteFormat.symbol(s.kind)).font(.system(size: 10)).foregroundStyle(theme.accent).frame(width: 14)
-                            Text(s.text).font(GridFont.small).foregroundStyle(theme.text).fixedSize(horizontal: false, vertical: true)
-                            Spacer(minLength: 4)
-                            if s.distance > 0 { Text(RouteFormat.distance(s.distance)).font(GridFont.small).foregroundStyle(theme.textDim).monospacedDigit() }
-                        }
-                        ForEach(here, id: \.camera) { h in
-                            let c = cams.indices.contains(h.camera) ? cams[h.camera] : nil
-                            Text("   ⌗ camera \(RouteFormat.distance(h.distance)) from the road" + (c.map { $0.directions.isEmpty ? ", facing unknown" : ", facing " + $0.directions.map { "\($0)°" }.joined(separator: " ") } ?? ""))
-                                .font(GridFont.small).foregroundStyle(theme.warn)
-                        }
-                    }
-                    .padding(.vertical, 3)
-                    .background(model.routing.hoveredStep == i ? theme.accent.opacity(0.12) : Color.clear)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .onHover { inside in
-                    if inside { model.routing.hoveredStep = i } else if model.routing.hoveredStep == i { model.routing.hoveredStep = nil }
-                    model.routeChanged()
-                }
+            ForEach(Array(steps.enumerated()), id: \.offset) { i, step in
+                StepRow(model: model, index: i, step: step, cameras: cameras[i])
             }
         }
+    }
+
+    /// The cameras passed during each step: those between its start and the next step's.
+    private static func camerasByStep(_ leg: RouteService.Leg) -> [[CameraExposure.Hit]] {
+        let steps = leg.path.steps
+        var byStep = [[CameraExposure.Hit]](repeating: [], count: steps.count)
+        for hit in leg.hits {
+            // The last step that starts at or before the camera.
+            guard let i = steps.lastIndex(where: { $0.along <= hit.along }) else { continue }
+            byStep[i].append(hit)
+        }
+        return byStep
+    }
+}
+
+/// One step. The highlight under the pointer is this row's own state, so moving the pointer down
+/// the list redraws two rows, not all of them; the model only hears which step to mark on the map.
+private struct StepRow: View {
+    @Environment(\.theme) private var theme
+    let model: MapModel
+    let index: Int
+    let step: RouteStep
+    let cameras: [CameraExposure.Hit]
+    @State private var hovered = false
+
+    var body: some View {
+        Button { model.flyTo(step.location, zoom: max(model.camera.zoom, 16)) } label: {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(alignment: .top, spacing: 6) {
+                    Text(String(format: "%02d", index + 1)).font(GridFont.small).foregroundStyle(theme.textMute).monospacedDigit()
+                    Image(systemName: RouteFormat.symbol(step.kind)).font(.system(size: 10)).foregroundStyle(theme.accent).frame(width: 14)
+                    Text(step.text).font(GridFont.small).foregroundStyle(theme.text).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    if step.distance > 0 {
+                        Text(RouteFormat.distance(step.distance)).font(GridFont.small).foregroundStyle(theme.textDim).monospacedDigit()
+                    }
+                }
+                ForEach(cameras, id: \.camera) { hit in
+                    Text("   ⌗ camera \(RouteFormat.distance(hit.distance)) from the road" + facing(hit))
+                        .font(GridFont.small).foregroundStyle(theme.warn)
+                }
+            }
+            .padding(.vertical, 3)
+            .background(hovered ? theme.accent.opacity(0.12) : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { inside in
+            hovered = inside
+            if inside { model.routing.hoveredStep = index } else if model.routing.hoveredStep == index { model.routing.hoveredStep = nil }
+        }
+    }
+
+    private func facing(_ hit: CameraExposure.Hit) -> String {
+        let all = model.alpr.index.cameras
+        guard all.indices.contains(hit.camera) else { return "" }
+        let directions = all[hit.camera].directions
+        return directions.isEmpty ? ", facing unknown" : ", facing " + directions.map { "\($0)°" }.joined(separator: " ")
     }
 }

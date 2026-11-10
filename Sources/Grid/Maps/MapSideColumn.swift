@@ -391,15 +391,19 @@ private struct LegendSection: View {
     }
 }
 
-/// LAYERS ▸ LIST: the cameras in view as an accessible, keyboard-navigable list.
+/// LAYERS ▸ LIST: the cameras in view as an accessible, keyboard-navigable list. The rows come
+/// from `model.inView`, which follows the map off the main thread while the list is open.
 private struct CameraList: View {
     @Environment(\.theme) private var theme
     let model: MapModel
-    @State private var open = false
 
     var body: some View {
+        let open = model.inView.listOpen
         VStack(alignment: .leading, spacing: 4) {
-            Button { open.toggle() } label: {
+            Button {
+                model.inView.listOpen.toggle()
+                model.updateCamerasInView()
+            } label: {
                 HStack(spacing: 6) {
                     Text(open ? "▾" : "▸").foregroundStyle(theme.accent)
                     SectionLabel("list", color: theme.accent)
@@ -409,11 +413,12 @@ private struct CameraList: View {
             .buttonStyle(.plain)
             .accessibilityLabel(open ? "Hide camera list" : "Show camera list")
             if open {
-                let rows = model.camerasInView(limit: 60)
+                let rows = model.inView.nearest
                 if rows.isEmpty { Text("No cameras in view.").font(GridFont.small).foregroundStyle(theme.textMute) }
-                ForEach(rows, id: \.0) { i, cam, dist in
+                ForEach(rows) { row in
+                    let cam = row.camera, dist = row.distance
                     Button {
-                        model.select(i)
+                        model.select(row.index)
                         model.flyTo(cam.coordinate)
                     } label: {
                         HStack(spacing: 6) {
