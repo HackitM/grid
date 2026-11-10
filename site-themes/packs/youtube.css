@@ -1,7 +1,7 @@
 /* grid-site-theme
 id: youtube
 name: YouTube
-version: 1
+version: 2
 hosts: youtube.com
 description: A full GRID HUD for YouTube: framed video panels, numbered feeds, a framed player and the grid floor.
 */
@@ -296,4 +296,20 @@ html[data-grid-theme="youtube"] tp-yt-iron-dropdown #contentWrapper > *, html[da
 html[data-grid-theme="youtube"] yt-sheet-view-model, html[data-grid-theme="youtube"] tp-yt-paper-dialog {
   border-radius: 0 !important; border: 1px solid var(--grid-line-strong) !important;
   box-shadow: 0 0 24px color-mix(in srgb, var(--grid-accent) 18%, transparent) !important;
+}
+
+/* YouTube's newer button classes (camelCase), same treatment. */
+html[data-grid-theme="youtube"] .ytSpecButtonShapeNextHost { border-radius: 0 !important; font-family: var(--grid-mono) !important; letter-spacing: 0.04em; }
+html[data-grid-theme="youtube"] .ytSpecButtonShapeNextTonal {
+  background: transparent !important; border: 1px solid var(--grid-line-strong) !important; color: var(--grid-text) !important;
+}
+html[data-grid-theme="youtube"] .ytSpecButtonShapeNextTonal:hover { background: var(--grid-accent-soft) !important; border-color: var(--grid-accent) !important; }
+html[data-grid-theme="youtube"] .ytSpecButtonShapeNextFilled.ytSpecButtonShapeNextMono {
+  background: var(--grid-accent) !important; color: var(--grid-on-accent) !important;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--grid-accent) 40%, transparent) !important;
+}
+html[data-grid-theme="youtube"] .ytSpecButtonShapeNextOutline { border-color: var(--grid-line-strong) !important; color: var(--grid-accent) !important; }
+html[data-grid-theme="youtube"] .ytSpecButtonShapeNextSegmentedStart { border-right: 0 !important; }
+html[data-grid-theme="youtube"] ytd-masthead ytd-button-renderer a, html[data-grid-theme="youtube"] ytd-masthead .yt-spec-button-shape-next--outline {
+  border-radius: 0 !important; border-color: var(--grid-accent) !important; color: var(--grid-accent) !important;
 }

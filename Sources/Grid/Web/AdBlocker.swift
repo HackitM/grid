@@ -10,16 +10,18 @@ import WebKit
 ///   every 4 days with conditional requests, and kept in Application Support.
 /// - Compiled rule lists are cached by a digest of the list contents, so launches don't recompile.
 /// - "Off for this site" removes the rule lists from that tab's next load (and reloads).
+/// - The lists' scriptlet rules (`##+js(…)`, needed for YouTube's ads among others) run as GRID's
+///   own scripts, with the lists supplying only arguments (see `ScriptletIndex`).
 @Observable
 @MainActor
 final class AdBlocker {
-    struct Source: Identifiable, Hashable {
+    struct Source: Identifiable, Hashable, Sendable {
         let id: String
         let name: String
         let url: URL
     }
 
-    static let sources: [Source] = [
+    nonisolated static let sources: [Source] = [
         Source(id: "ublock-filters", name: "uBlock filters", url: URL(string: "https://ublockorigin.github.io/uAssets/filters/filters.min.txt")!),
         Source(id: "ublock-badware", name: "uBlock filters – Badware risks", url: URL(string: "https://ublockorigin.github.io/uAssets/filters/badware.min.txt")!),
         Source(id: "ublock-privacy", name: "uBlock filters – Privacy", url: URL(string: "https://ublockorigin.github.io/uAssets/filters/privacy.min.txt")!),
@@ -43,6 +45,13 @@ final class AdBlocker {
     private(set) var status: Status = .idle
     private(set) var lastUpdated: Date? { didSet { UserDefaults.standard.set(lastUpdated, forKey: "browser.adblock.updated") } }
     private(set) var stats = ""
+    /// Run the lists' scriptlet rules on the sites they name.
+    var scriptletsEnabled: Bool {
+        didSet { UserDefaults.standard.set(scriptletsEnabled, forKey: "browser.adblock.scriptlets"); scriptletSources = [:]; onChange?() }
+    }
+    private(set) var scriptlets = ScriptletIndex()
+    /// Built site scripts by host (nil: nothing to run there).
+    @ObservationIgnored private var scriptletSources: [String: String?] = [:]
     @ObservationIgnored var onChange: (() -> Void)?
     @ObservationIgnored private var started = false
     @ObservationIgnored private var updating = false
@@ -55,8 +64,9 @@ final class AdBlocker {
     nonisolated static var storeDir: URL { dir.appendingPathComponent("RuleLists", isDirectory: true) }
 
     init() {
-        UserDefaults.standard.register(defaults: ["browser.adblock": true])
+        UserDefaults.standard.register(defaults: ["browser.adblock": true, "browser.adblock.scriptlets": true])
         enabled = UserDefaults.standard.bool(forKey: "browser.adblock")
+        scriptletsEnabled = UserDefaults.standard.bool(forKey: "browser.adblock.scriptlets")
         disabledSites = Set(UserDefaults.standard.stringArray(forKey: "browser.adblock.off") ?? [])
         lastUpdated = UserDefaults.standard.object(forKey: "browser.adblock.updated") as? Date
         for d in [Self.listsDir, Self.storeDir] { try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
@@ -75,6 +85,24 @@ final class AdBlocker {
     }
 
     func removeException(_ site: String) { setBlocking(true, for: site) }
+
+    /// The scriptlet user script for a page on `url`, or nil when there's nothing to run there
+    /// (or blocking is off for the site).
+    func scriptletSource(for url: URL?) -> String? {
+        guard scriptletsEnabled, let host = url?.host?.lowercased(), shouldBlock(on: SiteKey.of(url)) else { return nil }
+        if let cached = scriptletSources[host] { return cached }
+        let calls = scriptlets.calls(for: host)
+        let source = calls.isEmpty ? nil : ScriptletLibrary.script(host: host, calls: calls)
+        scriptletSources[host] = source
+        return source
+    }
+
+    private func setScriptlets(from texts: [FilterList]) async {
+        let index = await Task.detached(priority: .utility) { ScriptletIndex.build(texts) }.value
+        scriptlets = index
+        scriptletSources = [:]
+        onChange?()
+    }
 
     /// Loads cached compiled lists, then refreshes in the background if they're stale.
     func start() {
@@ -99,6 +127,12 @@ final class AdBlocker {
         status = .ready(rules: UserDefaults.standard.integer(forKey: "browser.adblock.count"))
         stats = UserDefaults.standard.string(forKey: "browser.adblock.stats") ?? ""
         onChange?()
+        let cachedTexts = await Task.detached(priority: .utility) {
+            Self.sources.compactMap { s in
+                (try? String(contentsOf: Self.listsDir.appendingPathComponent(s.id + ".txt"), encoding: .utf8)).map { FilterList(name: s.id, text: $0) }
+            }
+        }.value
+        await setScriptlets(from: cachedTexts)
     }
 
     /// Downloads changed lists and recompiles when their contents changed.
@@ -122,6 +156,7 @@ final class AdBlocker {
         if !force, newDigest.prefix(16) == (UserDefaults.standard.string(forKey: "browser.adblock.digest") ?? "").prefix(16), !ruleLists.isEmpty {
             lastUpdated = Date()
             status = .ready(rules: UserDefaults.standard.integer(forKey: "browser.adblock.count"))
+            if scriptlets.isEmpty { await setScriptlets(from: texts) }
             return
         }
         status = .compiling
@@ -156,6 +191,7 @@ final class AdBlocker {
         lastUpdated = Date()
         status = .ready(rules: count)
         onChange?()
+        await setScriptlets(from: texts)
     }
 
     /// Fetches a list (conditional GET); falls back to the cached copy when offline or unchanged.

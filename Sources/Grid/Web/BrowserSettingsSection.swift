@@ -99,6 +99,11 @@ struct BrowserSettingsSection: View {
                     Button("Update Lists Now") { Task { await blocker.update(force: true) } }
                         .buttonStyle(GridButtonStyle(compact: true)).disabled(!blocker.enabled)
                 }
+                toggle("Run uBlock’s site fixes (scriptlets) — needed for YouTube’s video ads", $blocker.scriptletsEnabled)
+                    .disabled(!blocker.enabled)
+                Text("GRID runs its own built-in scriptlets with arguments from the lists; nothing from a list is run as code, and only on the sites a rule names."
+                     + (blocker.scriptlets.isEmpty ? "" : " \(blocker.scriptlets.ruleCount.formatted()) site rules."))
+                    .font(GridFont.small).foregroundStyle(theme.textMute).fixedSize(horizontal: false, vertical: true)
                 if !blocker.stats.isEmpty { Text(blocker.stats).font(GridFont.small).foregroundStyle(theme.textMute).fixedSize(horizontal: false, vertical: true) }
                 Text("Lists: " + AdBlocker.sources.map(\.name).joined(separator: " · ") + ". Downloaded from their publishers, refreshed every 4 days. Turn blocking off for one site with the 🛡 button.")
                     .font(GridFont.small).foregroundStyle(theme.textMute).fixedSize(horizontal: false, vertical: true)

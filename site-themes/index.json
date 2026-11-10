@@ -7,6 +7,6 @@
     {"id": "mdn", "version": 1, "file": "mdn.css", "sha256": "db8b33aceab0e3d96ade057c39cce8876b47831c318f2ac9ec3f313d441aaf3b"},
     {"id": "stackoverflow", "version": 1, "file": "stackoverflow.css", "sha256": "38a4361daad882b36c033cd6c8aa4406e3236c619c19128319d1c20fa352dcd8"},
     {"id": "wikipedia", "version": 1, "file": "wikipedia.css", "sha256": "524436f42e44e420717386640b475973f4f3073d157a82aff2261467f7138dd9"},
-    {"id": "youtube", "version": 1, "file": "youtube.css", "sha256": "f559dbbf8cb5b62ffff10e68510c441097313857ec46e3c819809654ae0ddda7"}
+    {"id": "youtube", "version": 2, "file": "youtube.css", "sha256": "01534092388ae948878bf535909c06b7aaa82b467c5c821dea5f4d078738af90"}
   ]
 }

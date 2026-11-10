@@ -249,6 +249,9 @@ final class BrowserTab: Identifiable {
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     /// The rule lists currently installed in this tab's content controller.
     @ObservationIgnored private var appliedRuleLists: [WKContentRuleList] = []
+    /// Scriptlet scripts added to this tab's content controller, by host. Each only runs on its own
+    /// host, so they accumulate instead of being swapped per navigation (see `refreshThemeScripts`).
+    @ObservationIgnored private var installedScriptlets: [String: String] = [:]
     @ObservationIgnored var alertTimes: [Date] = []
 
     init(model: BrowserModel, pendingURL: URL?, configuration: WKWebViewConfiguration? = nil) {
@@ -328,6 +331,7 @@ final class BrowserTab: Identifiable {
         _webView?.removeFromSuperview()
         _webView = nil
         appliedRuleLists = []
+        installedScriptlets = [:]
     }
 
     private func observe(_ w: WKWebView) {
@@ -375,6 +379,8 @@ final class BrowserTab: Identifiable {
         ucc.removeAllUserScripts()
         let script = themeScript(model)
         ucc.addUserScript(script)
+        installedScriptlets = [:]
+        installScriptlets(for: url)
         refreshThemeState()
         // Apply to the page that's already loaded too (the user script only runs on the next load).
         if w.url != nil { w.evaluateJavaScript(script.source, in: nil, in: SiteThemes.world) { _ in } }
@@ -395,8 +401,10 @@ final class BrowserTab: Identifiable {
     /// Adds or removes the ad-blocking rule lists for the page about to load. Called for every
     /// main-frame navigation, so it does nothing when the right lists are already installed:
     /// re-adding them made WebKit hand every list to the page's processes again on each click.
+    /// Also adds the site's scriptlets, if it has any.
     func prepareBlocking(for url: URL?) {
         guard let w = _webView, let model else { return }
+        installScriptlets(for: url)
         let wanted = model.adBlocker.shouldBlock(on: SiteKey.of(url)) ? model.adBlocker.ruleLists : []
         guard !wanted.elementsEqual(appliedRuleLists, by: ===) else { return }
         let ucc = w.configuration.userContentController
@@ -405,8 +413,25 @@ final class BrowserTab: Identifiable {
         appliedRuleLists = wanted
     }
 
+    /// Adds the scriptlet script for the page about to load, before WebKit starts loading it.
+    private func installScriptlets(for url: URL?) {
+        guard let w = _webView, let model, let host = url?.host?.lowercased(), installedScriptlets[host] == nil,
+              let source = model.adBlocker.scriptletSource(for: url) else { return }
+        installedScriptlets[host] = source
+        w.configuration.userContentController.addUserScript(
+            WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
+    }
+
     /// Re-applies blocking after settings or lists change (takes effect on the next load).
-    func applyContentBlocking() { prepareBlocking(for: url) }
+    func applyContentBlocking() {
+        prepareBlocking(for: url)
+        // A script already added can't be taken back on its own: rebuild if any would now differ.
+        guard let model else { return }
+        let stale = installedScriptlets.contains { host, source in
+            model.adBlocker.scriptletSource(for: URL(string: "https://" + host)) != source
+        }
+        if stale { refreshThemeScripts() }
+    }
 
     var blockingActive: Bool { model?.adBlocker.shouldBlock(on: SiteKey.of(url)) ?? false }
 
