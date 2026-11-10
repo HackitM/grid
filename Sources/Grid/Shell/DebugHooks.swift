@@ -673,7 +673,9 @@ enum DebugHooks {
                             "location": Self.locationCase(m.location.state), "inView": m.camerasInViewCount(),
                             "loader": m.tiles.debugStats, "search": m.search.debugState,
                             "place": m.place.map { "\($0.name)|\($0.kind.rawValue)|\($0.detail)|\($0.source.rawValue)" } ?? "",
-                            "showPlaces": m.showPlaces, "hiddenCategories": m.hiddenCategories.map(\.short).sorted()]
+                            "showPlaces": m.showPlaces, "drawCount": MapContainerView.debugCurrent?.renderer.debugDrawCount ?? -1,
+                            "drawnZoom": MapContainerView.debugCurrent?.renderer.debugDrawnZoom ?? -1,
+                            "windowVisible": MapContainerView.debugCurrent?.window?.occlusionState.contains(.visible) ?? false, "hiddenCategories": m.hiddenCategories.map(\.short).sorted()]
                 } ?? [:],
                 "updates": ["current": app.updates.current.description, "latest": app.updates.latest?.tagName ?? "",
                             "available": app.updates.available?.tagName ?? "", "notice": app.updates.showsNotice,

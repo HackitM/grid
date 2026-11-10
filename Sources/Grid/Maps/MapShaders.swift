@@ -526,7 +526,7 @@ vertex OverlayOut overlay_vertex(uint vid [[vertex_id]], uint iid [[instance_id]
     float2 screen = i.center + px;
     float2 ndc = screen / u.viewportPx * 2.0 - 1.0;
     OverlayOut o;
-    o.pos = float4(ndc.x, -ndc.y, 0.0, 1.0);
+    o.pos = float4(ndc.x, -ndc.y, i.q2, 1.0);         // q2: the marker's depth (0 = always shown)
     o.local = local;
     o.color = i.color; o.p = i.p; o.size = i.size; o.kind = i.kind;
     o.ground = float4(0.0);

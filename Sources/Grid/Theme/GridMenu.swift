@@ -90,7 +90,9 @@ final class GridMenu {
     private var monitor: Any?
     private var observers: [NSObjectProtocol] = []
     private var onClose: (() -> Void)?
-    private var openedAt = Date.distantPast
+    /// When and where the menu was opened, from the opening event (event timestamps, so a busy
+    /// main thread can't make the opening click's release look late).
+    private var openedAt: TimeInterval = 0
     private var openedAtMouse = NSPoint.zero
     private var downInMenu = false
     private var typed = ""
@@ -134,8 +136,13 @@ final class GridMenu {
         }
 
         self.onClose = onClose
-        openedAt = Date()
-        openedAtMouse = NSEvent.mouseLocation
+        if let e = NSApp.currentEvent, Self.isMouseEvent(e) {
+            openedAt = e.timestamp
+            openedAtMouse = Self.screenLocation(of: e)
+        } else {
+            openedAt = ProcessInfo.processInfo.systemUptime
+            openedAtMouse = NSEvent.mouseLocation
+        }
         downInMenu = false
         typed = ""
         let level = GridMenuLevel(items: items, title: title, depth: 0)
@@ -261,7 +268,8 @@ final class GridMenu {
             if let (lvl, idx) = hit(mouse) { hover(lvl, idx) }
             return e.type == .mouseMoved ? e : nil
         case .leftMouseUp, .rightMouseUp:
-            let deliberate = downInMenu || Date().timeIntervalSince(openedAt) > 0.3
+            let held = e.timestamp - openedAt
+            let deliberate = downInMenu || held > 0.3
                 || hypot(mouse.x - openedAtMouse.x, mouse.y - openedAtMouse.y) > 5
             defer { downInMenu = false }
             if let (lvl, idx) = hit(mouse) {
@@ -270,10 +278,16 @@ final class GridMenu {
             }
             // Releasing the opening click outside the menu keeps it open (click-to-open);
             // releasing after a press-drag elsewhere closes it, like a native menu.
-            if deliberate && !downInMenu && Date().timeIntervalSince(openedAt) > 0.3 { dismiss() }
+            if deliberate && !downInMenu && held > 0.3 { dismiss() }
             return e.type == .rightMouseUp ? nil : e
         case .scrollWheel:
             if hit(mouse) != nil { return e }
+            // A trackpad sends zero-length scrolls when two fingers rest or lift (the two-finger
+            // click that opened this menu does it too): only a real scroll closes the menu.
+            let real = abs(e.scrollingDeltaX) + abs(e.scrollingDeltaY) > 0.5
+                && !e.phase.contains(.mayBegin) && !e.phase.contains(.cancelled)
+                && e.timestamp - openedAt > 0.15
+            guard real else { return nil }
             dismiss()
             return e
         default:
@@ -416,6 +430,13 @@ final class GridMenu {
     // MARK: Helpers
 
     /// Where a mouse event happened, in screen coordinates (falls back to the pointer).
+    static func isMouseEvent(_ e: NSEvent) -> Bool {
+        switch e.type {
+        case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp: true
+        default: false
+        }
+    }
+
     static func screenLocation(of e: NSEvent) -> NSPoint {
         switch e.type {
         case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp,

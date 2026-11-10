@@ -91,13 +91,23 @@ private struct MapCanvas: View {
                 if let n = model.notice ?? model.alpr.lastError ?? model.tiles.sourceError {
                     Text("△ \(n)").font(GridFont.small).foregroundStyle(theme.warn)
                         .padding(.horizontal, 8).padding(.vertical, 3).background(theme.bg0.opacity(0.85))
+                        .allowsHitTesting(false)
                 }
-                MapReadout(model: model)
+                // Readout and attribution share the bottom edge when they fit side by side;
+                // otherwise the readout moves up a line (they never overlap).
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .bottom, spacing: 8) {
+                        MapReadout(model: model).allowsHitTesting(false)
+                        Spacer(minLength: 0)
+                        MapAttribution()
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        MapReadout(model: model).allowsHitTesting(false)
+                        HStack { Spacer(minLength: 0); MapAttribution() }
+                    }
+                }
             }
             .padding(8)
-            .allowsHitTesting(false)
-            VStack { Spacer(); HStack { Spacer(); MapAttribution() } }
-                .padding(6)
             if model.drawingRegion {
                 VStack {
                     Text("⇧-DRAG TO MARK AN AREA · ESC TO CANCEL").font(GridFont.label).tracking(1.2).foregroundStyle(theme.accent)
