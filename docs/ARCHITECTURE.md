@@ -212,16 +212,38 @@ minimum is macOS 15; extensions use WebKit's `WKWebExtension` API and need 15.4.
   runs in the `grid.reader` content world on a clone of the document; the article renders in a
   second web view with JavaScript off, a deny-all CSP (images allowed), a sanitizer, an ephemeral
   data store and GRID typography (numbered links via CSS counters).
-- `Web/SiteThemes.swift` + `SiteThemePacks.swift`: per-site CSS packs that remap each site's own
-  design tokens (read from its live stylesheets) to GRID's palette, injected by a user script in the
-  `grid.themes` content world as a constructed stylesheet (`adoptedStyleSheets`, not blocked by
-  strict `style-src`), toggled live per site and re-coloured when GRID's theme changes.
+- `Web/SiteThemes.swift` + `Web/SiteThemeLibrary.swift` + `GridCore/SiteThemePack.swift` (tested):
+  per-site CSS packs (`site-themes/packs/*.css`, a header comment naming id, version, hosts and
+  paths) that remap each site's own design tokens to GRID's `--grid-*` palette, injected by a user
+  script in the `grid.themes` content world as a constructed stylesheet (`adoptedStyleSheets`, not
+  blocked by strict `style-src`), toggled live per site and re-coloured when GRID's theme changes.
+  Packs come from three places, the user's own winning, then the newer of downloaded and built-in:
+  built-in (bundled into `Contents/Resources/SiteThemes` by `scripts/bundle.sh`), downloaded
+  (opt-in daily check of `site-themes/index.json` on the repository's master branch; https from
+  raw.githubusercontent.com only, no redirects, size caps, SHA-256 from the index, then parsed
+  again) and the user's folder (`Application Support/GRID/Browser/SiteThemes/Yours`, regular files
+  only). Every pack passes `SiteThemeCSS.violations`: no `@import`, no `url()`/`image()`-style loads
+  except inline `data:`, no `expression()`/`-moz-binding`/`behavior`, checked after CSS escapes and
+  comments are decoded, so a theme can't load anything or exfiltrate what a page shows. Edit a pack,
+  bump its version and run `scripts/site-themes-index.sh`.
 - `Web/AdBlocker.swift` + `GridCore/ContentBlocker.swift` (tested, verified against WebKit's
   compiler with the real lists): uBlock Origin's default lists are downloaded at runtime (nothing
   bundled), converted to `WKContentRuleList` JSON (network rules with exceptions/important ordering
   per chunk, cosmetic `css-display-none` groups), compiled once and cached by a digest of the list
-  contents. Per-site off removes every list from that tab's next load. Scriptlets, redirects and
-  procedural cosmetics have no WebKit equivalent and are skipped (counted in Settings).
+  contents. Per-site off removes every list from that tab's next load. Redirects and procedural
+  cosmetics have no WebKit equivalent and are skipped (counted in Settings).
+- Scriptlets (`GridCore/Scriptlets.swift` + `GridCore/ScriptletLibrary.swift`, tested, including in
+  JavaScriptCore): the lists' site-specific `##+js(…)` rules are indexed by domain and entity
+  (`!#if` blocks evaluated, exceptions honoured, `trusted-*` only from uBlock's own lists). GRID
+  implements ~25 common scriptlets itself (`set-constant`, `json-prune` and its fetch/XHR forms,
+  `trusted-replace-fetch/xhr-response`, `no-fetch-if`, `no-xhr-if`, timer boosters and defusers,
+  `abort-*`, `remove-node-text`, `remove-attr/class`, …); a list supplies only names and string
+  arguments, embedded as JSON. Generic rules and scriptlets whose arguments are code (`rpnt`,
+  `trusted-rpnt`, `trusted-edit-inbound-object`) are never run. The script for a host is added as
+  a page-world, main-frame, document-start user script just before that host's first navigation in
+  the tab, and checks `location.hostname` first; patched functions are Proxies whose `toString`
+  still reads as native. Scripts accumulate per tab (WebKit can only remove all user scripts) and
+  are rebuilt only when a setting or the lists change.
 - `Web/BrowserExtensions.swift` (macOS 15.4+): install from a folder/.zip/.crx after a review of
   the requested permissions and hosts; the approved set is stored and re-granted at each launch
   (later requests are prompted by GRID). Toolbar buttons render as monochrome template glyphs in

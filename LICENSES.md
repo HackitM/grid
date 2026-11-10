@@ -14,7 +14,8 @@ Apple system frameworks otherwise (SwiftUI, AppKit, WebKit, QuickLookThumbnailin
 **Ad-blocking filter lists are not bundled.** When ad blocking is on, GRID downloads them from their
 publishers at runtime and keeps them in Application Support: uBlock filters (+ badware, privacy,
 unbreak, quick fixes) — GPLv3, uBlock Origin project; EasyList and EasyPrivacy — GPLv3 / CC BY-SA 3.0,
-The EasyList authors; Peter Lowe's list — see pgl.yoyo.org. GRID's converter is original code.
+The EasyList authors; Peter Lowe's list — see pgl.yoyo.org. GRID's converter and its scriptlet
+implementations are original code; the lists supply only scriptlet names and arguments.
 
 **Map data is not bundled either.** It is fetched at runtime after you enable it, and cached in
 Application Support:

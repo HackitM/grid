@@ -64,9 +64,9 @@ A real terminal, a file browser, an app launcher, a widget deck and a web browse
 
 - A full WebKit browser (Safari's engine) drawn in GRID's style: tabs, address bar with search, find, zoom and history.
 - **New tab page** with a slowly turning dot-matrix globe (drawn on the GPU, paused whenever it isn't in view), your recent pages and a status readout.
-- **Site themes** give GitHub, Hacker News, MDN, Wikipedia, Stack Overflow and Google Search GRID's colours and type. You can toggle them per site, and they follow your GRID theme.
+- **Site themes** give YouTube, GitHub, Reddit, Twitch, DuckDuckGo, Hacker News, MDN, Wikipedia, Stack Overflow and Google Search GRID's colours and type. YouTube gets the full HUD treatment: a grid floor, framed thumbnails with corner brackets and a scan sweep, and a framed player. You can toggle themes per site, and they follow your GRID theme. Themes are plain CSS packs, so they can **update without a new version of GRID** (Settings › Browser › Site themes, off by default), and you can write your own: **New Theme…** starts one in a folder GRID watches.
 - **Reader view** re-sets articles in GRID's monospaced layout.
-- **Ad blocking** uses uBlock Origin's default filter lists through Safari's built-in content blocker, with a one-click "off for this site".
+- **Ad blocking** uses uBlock Origin's default filter lists through Safari's built-in content blocker, with a one-click "off for this site". The lists' site-specific **scriptlet** rules, which are what remove YouTube's video ads, run as GRID's own built-in scripts. The lists only supply arguments, never code.
 - **Extensions** in Chrome / Safari WebExtension format (macOS 15.4+) install after a permission review. Their buttons only appear once one is installed.
 - Web pages can't reach your terminal, files or apps. Downloads always ask first.
 
@@ -206,7 +206,7 @@ Use the `.app` bundle for real use rather than `swift run`, since macOS privacy 
 ## Privacy & security
 
 - **No accounts, telemetry, cloud services or AI features.** Settings, browsing data and history stay on your Mac. Terminal contents are never logged or stored.
-- **Network requests GRID makes on its own:** downloading the ad-blocking filter lists from their publishers (only while ad blocking is on), Safari's standard fraudulent-site check in the browser, Spotify cover art from Spotify's image server (only with a Now Playing widget following Spotify), and **checking GitHub for a new GRID version once a day (only if you turned it on; no identifiers are sent)**. Everything else happens because you asked for it.
+- **Network requests GRID makes on its own:** downloading the ad-blocking filter lists from their publishers (only while ad blocking is on), **checking GRID's GitHub repository (raw.githubusercontent.com) for updated site themes once a day (only if you turned it on; no identifiers are sent, and each theme is checked against the index's SHA-256 and GRID's CSS rules before use)**, Safari's standard fraudulent-site check in the browser, Spotify cover art from Spotify's image server (only with a Now Playing widget following Spotify), and **checking GitHub for a new GRID version once a day (only if you turned it on; no identifiers are sent)**. Everything else happens because you asked for it.
 - **Maps are opt-in.** The Map page downloads nothing until you click **Enable Map Data**. After that:
   - **Map tiles** for the area you view come from OpenFreeMap, which learns roughly where you're
     looking.
@@ -240,7 +240,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full security model.
 - Directory tracking follows the shell process, not `ssh` sessions or subshells.
 - Dragging several items into Finder carries only the first one (an AppKit / SwiftUI limitation). Drags into GRID's terminal carry them all.
 - The Git widget runs `git status`. Like any prompt that shows git status, a malicious repository's config could run commands, so point it only at repositories you trust.
-- Some ads that uBlock Origin removes with page scripts (for example on YouTube) can't be blocked by Safari's content blocker.
+- GRID runs uBlock's site-specific scriptlets, but not the generic ones, scriptlets whose arguments are code, or HTML filtering, so a few ads uBlock Origin removes still get through. YouTube changes its ad delivery often; blocking there is only as current as the filter lists.
 - App discovery scans the standard Applications folders, up to three levels deep.
 - Map camera data is only as complete and current as OpenStreetMap's volunteers have made it. The map has no search, traffic or routing yet.
 - Now Playing follows Apple Music and Spotify only. Audio in a browser or other apps can't be read: macOS 15.4 and later reserve the system-wide now-playing information for Apple's own apps.
