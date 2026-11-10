@@ -80,8 +80,9 @@ final class CamerasInView {
     }
 
     private nonisolated static func query(_ request: Request) -> (count: Int, nearest: [Row]) {
+        // The count alone needs no list (the readout asks ~10×/s during gestures).
+        guard request.wantsList else { return (request.index.count(in: request.box), []) }
         let hits = request.index.query(request.box)
-        guard request.wantsList else { return (hits.count, []) }
         let rows = hits.map { i -> Row in
             let camera = request.index.cameras[i]
             return Row(index: i, camera: camera, distance: MapModel.distance(request.centre, camera.coordinate))

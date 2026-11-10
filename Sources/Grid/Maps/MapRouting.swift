@@ -310,14 +310,19 @@ actor RouteService {
         guard let engine else { throw Failure.noGraph }
         guard let sa = engine.snap(a) else { throw Failure.farFromRoad(true) }
         guard let sb = engine.snap(b) else { throw Failure.farFromRoad(false) }
-        guard let fast = engine.route(from: sa, to: sb) else { throw Failure.noRoute }
+        // A newer request cancels this task: stop searching instead of finishing a stale route.
+        guard let fast = engine.route(from: sa, to: sb, cancelled: { Task.isCancelled }) else {
+            throw Task.isCancelled ? CancellationError() : Failure.noRoute
+        }
         func leg(_ p: RoutePath) -> Leg { Leg(path: p, hits: CameraExposure.hits(route: p.points, candidates: cameras, options: options)) }
         let fastest = leg(fast)
         var avoiding: Leg?
         if avoid, !fastest.hits.isEmpty {
             let penalties = engine.cameraPenalties(cameras.map(\.1), options: options)
-            if let p = engine.route(from: sa, to: sb, penalty: penalties) { avoiding = leg(p) }
+            if let p = engine.route(from: sa, to: sb, penalty: penalties, cancelled: { Task.isCancelled }) { avoiding = leg(p) }
         }
+        // A search stopped part way returns nil: never report that as "no avoiding route".
+        try Task.checkCancellation()
         return Outcome(fastest: fastest, avoiding: avoiding, snapFrom: sa.distance, snapTo: sb.distance)
     }
 }
