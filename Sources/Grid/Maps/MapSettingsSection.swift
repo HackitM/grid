@@ -19,7 +19,7 @@ struct MapSettingsSection: View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 6) {
                 toggle("Map data (tiles, region list, camera downloads)", m.enabled) { m.enabled = $0 }
-                Text("Off means the Map page makes no network requests at all. Hosts: tiles.openfreemap.org, elevation-tiles-prod.s3.amazonaws.com (terrain, while the Terrain layer is on), download.geofabrik.de, deflock.dontgetflocked.com, and your Overpass server (only for regions outside the US and Canada). Online place search is separate (below).")
+                Text("Off means the Map page makes no network requests at all. Hosts: tiles.openfreemap.org, elevation-tiles-prod.s3.amazonaws.com (terrain, while the Terrain layer is on), download.geofabrik.de, deflock.dontgetflocked.com, and your Overpass server (only for regions outside the US and Canada). Online place search and road data for directions are separate (below).")
                     .font(GridFont.small).foregroundStyle(theme.textMute).fixedSize(horizontal: false, vertical: true)
                 toggle("Remember the last map view", m.rememberView) { m.rememberView = $0 }
                 toggle("3D buildings when the map is tilted", m.showBuildings) { m.showBuildings = $0 }
@@ -58,6 +58,23 @@ struct MapSettingsSection: View {
                 }
                 if let e = searchEndpointError { Text("✕ \(e)").font(GridFont.small).foregroundStyle(theme.danger) }
                 Text("Typing in the map's search box only searches names in the map already on this Mac. Online search sends your search and the visible area to \(MapSearch.host) (Nominatim, run by the OpenStreetMap Foundation): at most once a second, never while you type. Answers are kept in memory for up to a day; searches are never saved. \(onlineSearch == nil ? "GRID asks the first time you search online." : "")")
+                    .font(GridFont.small).foregroundStyle(theme.textMute).fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Road data for directions").font(GridFont.body).foregroundStyle(theme.textDim)
+                if m.routing.store.installed.isEmpty {
+                    Text("None yet. The first route in an area offers to download its road data.")
+                        .font(GridFont.small).foregroundStyle(theme.textMute)
+                }
+                ForEach(m.routing.store.installed) { g in
+                    HStack(spacing: 10) {
+                        Text(g.name).font(GridFont.small).foregroundStyle(theme.text).frame(width: 150, alignment: .leading)
+                        Text("\(ByteCountFormatter.string(fromByteCount: g.graphBytes, countStyle: .file)) · \(g.edges.formatted()) roads · built \(g.builtAt.formatted(date: .abbreviated, time: .omitted))")
+                            .font(GridFont.small).foregroundStyle(theme.textDim)
+                        Button("Remove") { m.routing.store.remove(g.id) }.buttonStyle(GridButtonStyle(compact: true))
+                    }
+                }
+                Text("Routes are worked out on this Mac from OpenStreetMap road data downloaded per region from download.geofabrik.de; your start, destination and routes are never sent anywhere.")
                     .font(GridFont.small).foregroundStyle(theme.textMute).fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 10) {

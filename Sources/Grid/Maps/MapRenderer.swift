@@ -14,6 +14,8 @@ import simd
 private struct MapPipelines {
     let device: MTLDevice
     let floor, lattice, fill, stencil, line, extrusion, overlay, label: MTLRenderPipelineState
+    /// Lines over a light (paper) palette: source-over, since max blending can't darken white.
+    let lineOver: MTLRenderPipelineState
     let terrainGround, terrainShade, terrainMask: MTLRenderPipelineState
     // Stencil bit planes: 0x01 fill-phase level mask, 0x02 water, 0x04 line-phase level mask.
     let dsNone, dsFill, dsFillWrite, dsWater, dsLattice, dsLine, dsLineWrite, dsExtrusion: MTLDepthStencilState
@@ -21,6 +23,9 @@ private struct MapPipelines {
     let dsContour, dsShade: MTLDepthStencilState
     /// 3D terrain: the ground writes depth; everything draped on it is tested against it.
     let dsGround3D, dsFill3D, dsWater3D, dsShade3D, dsLine3D, dsContour3D: MTLDepthStencilState
+    /// Overlays: tested against the depth of the drawn ground and buildings (instances carry their
+    /// depth; 0 = always shown), never written.
+    let dsOverlay: MTLDepthStencilState
     let unitQuad: MTLBuffer
     /// The terrain mesh: 65×65 grid plus edge skirts (float4: u, v, skirt, 0), UInt16 indices;
     /// the first `terrainGridIndexCount` indices are the grid alone.
@@ -76,6 +81,7 @@ private struct MapPipelines {
               let fill = pso("fill_vertex", "fill_fragment", blend: true),
               let stencil = pso("fill_vertex", "stencil_fragment", blend: false, colorWrite: false),
               let line = pso("line_vertex", "line_fragment", blend: true, maxBlend: true),
+              let lineOver = pso("line_vertex", "line_fragment", blend: true),
               let extrusion = pso("ext_vertex", "ext_fragment", blend: false),
               let overlay = pso("overlay_vertex", "overlay_fragment", blend: true),
               let label = pso("label_vertex", "label_fragment", blend: true),
@@ -83,6 +89,7 @@ private struct MapPipelines {
               let terrainShade = pso("terrain_vertex", "terrain_shade_fragment", blend: true),
               let terrainMask = pso("terrain_vertex", "terrain_mask_fragment", blend: false, colorWrite: false) else { return nil }
         self.floor = floor; self.lattice = lattice; self.fill = fill; self.stencil = stencil; self.line = line; self.extrusion = extrusion; self.overlay = overlay; self.label = label
+        self.lineOver = lineOver
         self.terrainGround = terrainGround; self.terrainShade = terrainShade; self.terrainMask = terrainMask
 
         func ds(depth: Bool, test: Bool = false, stencil: MTLStencilDescriptor?) -> MTLDepthStencilState? {
@@ -116,7 +123,9 @@ private struct MapPipelines {
               let dsWater3D = ds(depth: false, test: true, stencil: st(read: 0x01, write: 0x02)),
               let dsShade3D = ds(depth: false, test: true, stencil: st(read: 0x03, write: 0)),
               let dsLine3D = ds(depth: false, test: true, stencil: st(read: 0x04, write: 0)),
-              let dsContour3D = ds(depth: false, test: true, stencil: st(read: 0x06, write: 0)) else { return nil }
+              let dsContour3D = ds(depth: false, test: true, stencil: st(read: 0x06, write: 0)),
+              let dsOverlay = ds(depth: false, test: true, stencil: nil) else { return nil }
+        self.dsOverlay = dsOverlay
         self.dsNone = dsNone; self.dsFill = dsFill; self.dsFillWrite = dsFillWrite; self.dsWater = dsWater
         self.dsLattice = dsLattice; self.dsLine = dsLine; self.dsLineWrite = dsLineWrite; self.dsExtrusion = dsExtrusion
         self.dsContour = dsContour; self.dsShade = dsShade
@@ -300,6 +309,8 @@ final class MapRenderer: NSObject, MTKViewDelegate {
 
     #if DEBUG
     /// Tiles in the frame being drawn, and GPU uploads so far (count, main-thread milliseconds).
+    private(set) var debugDrawCount = 0
+    private(set) var debugDrawnZoom = 0.0
     var debugFrameTiles: Set<TileID> { Set(frame?.tiles.map(\.id) ?? []) }
     private(set) var debugUploads = 0
     private(set) var debugUploadMs = 0.0
@@ -346,6 +357,10 @@ final class MapRenderer: NSObject, MTKViewDelegate {
     // MARK: Frame input
 
     /// Marks the view for display; uploads new tiles lazily (here, once per new TileID).
+    /// Seconds of tile uploads per frame on the main thread (the rest wait a turn). A renderer
+    /// that draws one image (printing) uploads everything at once.
+    var uploadBudget: Double = 0.006
+
     func setFrame(_ f: MapFrame) {
         if f.tileGeneration != tileGeneration {
             gpuTiles.removeAll()
@@ -363,7 +378,7 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         for t in f.tiles {
             let gpu: GPUTile
             if let g = gpuTiles[t.id], g.revision == t.revision { gpu = g } else {
-                if CACurrentMediaTime() - started > 0.006 {
+                if CACurrentMediaTime() - started > uploadBudget {
                     deferred = true
                     // The copy already on the GPU (older contours) still draws meanwhile.
                     guard let stale = gpuTiles[t.id] else { continue }
@@ -466,6 +481,9 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         let scale = Double(view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
         dirty = false
         guard let cmd = encode(frame: frame, camera: camera, pass: pass, drawableSize: view.drawableSize, scale: scale) else { return }
+        #if DEBUG
+        debugDrawCount += 1; debugDrawnZoom = camera.zoom
+        #endif
         cmd.present(drawable)
         cmd.commit()
     }
@@ -619,7 +637,7 @@ final class MapRenderer: NSObject, MTKViewDelegate {
                     for t in level { for b in t.fills where b.cls == cls.rawValue { drawTile(enc, t, b) } }
                 }
             }
-            enc.setRenderPipelineState(pipes.line)
+            enc.setRenderPipelineState(frame.palette.bg0.x > 0.5 ? pipes.lineOver : pipes.line)
             bindFrame(enc, vertex: 2, fragment: 0)
             for level in levels.reversed() {
                 for cls in Self.lineOrder {
@@ -681,7 +699,7 @@ final class MapRenderer: NSObject, MTKViewDelegate {
 
         // 4. Lines and buildings, deepest level first (bit 2 masks ancestors).
         for level in levels {
-            enc.setRenderPipelineState(pipes.line)
+            enc.setRenderPipelineState(frame.palette.bg0.x > 0.5 ? pipes.lineOver : pipes.line)
             bindFrame(enc, vertex: 2, fragment: 0)
             for cls in Self.lineOrder {
                 let contour = cls == .contour || cls == .contourIndex
@@ -817,7 +835,7 @@ final class MapRenderer: NSObject, MTKViewDelegate {
     private func encodeOverlays(_ enc: MTLRenderCommandEncoder, _ bindFrame: (MTLRenderCommandEncoder, Int?, Int?) -> Void) {
         guard !overlayInstances.isEmpty, let buf = overlayBuffer(for: overlayInstances.count) else { return }
         overlayInstances.withUnsafeBytes { src in buf.contents().copyMemory(from: src.baseAddress!, byteCount: src.count) }
-        enc.setDepthStencilState(pipes.dsNone)
+        enc.setDepthStencilState(pipes.dsOverlay)
         enc.setRenderPipelineState(pipes.overlay)
         enc.setVertexBuffer(buf, offset: 0, index: 0)
         bindFrame(enc, 2, 0)
@@ -959,14 +977,40 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         func onScreen(_ q: SIMD2<Double>) -> Bool { q.x > -margin && q.y > -margin && q.x < vp.x + margin && q.y < vp.y + margin }
         func px(_ q: SIMD2<Double>) -> SIMD2<Float> { SIMD2(Float(q.x * scale), Float(q.y * scale)) }
         func add(_ kind: MapOverlayKind, at c: SIMD2<Float>, size: SIMD2<Float>, color: SIMD4<Float>, p: SIMD4<Float> = .zero,
-                 q: SIMD2<Float> = .zero) {
+                 q: SIMD2<Float> = .zero, depth: Float = 0) {
             guard overlayInstances.count < 60_000 else { return }
-            overlayInstances.append(MapOverlayInstance(center: c, size: size, color: color, p: p, kind: kind.rawValue, q0: q.x, q1: q.y))
+            overlayInstances.append(MapOverlayInstance(center: c, size: size, color: color, p: p, kind: kind.rawValue, q0: q.x, q1: q.y, q2: depth))
+        }
+        // Tilted: a ground marker's depth (so hills and buildings in front hide it) and how far it
+        // is relative to the centre of the view (1 there, smaller further away).
+        let flatProj = proj as? MapProjection
+        let tilted = flatProj != nil && proj.camera.pitch > 2
+        let centreW: Double = {
+            guard tilted, let m = flatProj?.viewProjection else { return 1 }
+            return (m * SIMD4(proj.camera.center.x, proj.camera.center.y, 0, 1)).w
+        }()
+        let lat = TileMath.unproject(proj.camera.center).lat
+        let metersPerPoint = TileMath.metersPerPoint(lat: lat, zoom: proj.camera.zoom)
+        let bearing = proj.camera.bearing * .pi / 180
+        let toViewer = SIMD2(-sin(bearing), cos(bearing))          // on the ground, in world units (y south)
+        let tiltCos = max(0.3, cos(proj.camera.pitch * .pi / 180))
+        /// `reachPts`: the marker's half size on screen. Its depth is taken that far towards the
+        /// viewer (and a little above the ground): the quad's lower half covers ground nearer than
+        /// the marker, which must not cut it; a ridge or building in front still hides it.
+        func depthAndNearness(_ w: Mercator, _ h: Double, reachPts: Double = 12) -> (Float, Double) {
+            guard tilted, let m = flatProj?.viewProjection else { return (0, 1) }
+            let wpm = MapProjection.worldUnitsPerMeter(y: w.y)
+            let c0 = m * SIMD4(w.x, w.y, h * wpm, 1)
+            guard c0.w > 1e-9 else { return (0, 1) }
+            let near = centreW / c0.w
+            let meters = (reachPts + 4) * metersPerPoint / max(0.05, near) / tiltCos
+            let d = toViewer * meters * wpm
+            let c = m * SIMD4(w.x + d.x, w.y + d.y, (h + 30) * wpm, 1)
+            guard c.w > 1e-9 else { return (0, near) }
+            return (Float(min(1, max(0, c.z / c.w))), near)
         }
         // Markers sit on the terrain when it's raised (the same lift the GPU applies).
         func screen(_ w: Mercator) -> SIMD2<Double>? { proj.screen(w, heightMeters: frame.elevation(at: w)) }
-        let lat = TileMath.unproject(proj.camera.center).lat
-        let metersPerPoint = TileMath.metersPerPoint(lat: lat, zoom: proj.camera.zoom)
 
         // Region outlines: dashed accent segments between projected ring points.
         for r in frame.regions {
@@ -993,19 +1037,48 @@ final class MapRenderer: NSObject, MTKViewDelegate {
             }
         }
 
+        // Routes: the alternative dim and dashed, the chosen one bright with a glow (on the terrain).
+        for r in frame.routes where r.points.count >= 2 {
+            var color = r.primary ? (p.route ?? p.accent) : p.textMute
+            color.w = r.primary ? 1 : 0.75
+            let half: Float = (r.primary ? 2.0 : 1.3) * s
+            let glow: Float = r.primary && frame.glow ? 4 * s : 0
+            let dash: Float = r.primary ? 0 : 5 * s
+            var prev: SIMD2<Double>?
+            var along: Float = 0
+            let reach = Double(half + glow) / scale + 2
+            for w in r.points {
+                guard let q = screen(w) else { prev = nil; continue }
+                guard let a = prev else { prev = q; continue }
+                let d = q - a
+                let len = (d * d).sum().squareRoot()
+                if len < 1.5 { continue }          // sub-pixel steps: merge into the next segment
+                prev = q
+                let lo = SIMD2(min(a.x, q.x), min(a.y, q.y)) - reach, hi = SIMD2(max(a.x, q.x), max(a.y, q.y)) + reach
+                defer { along += Float(len * scale) }
+                guard hi.x > 0, hi.y > 0, lo.x < vp.x, lo.y < vp.y, len < 50_000 else { continue }
+                let L = Float(len * scale) / 2
+                add(.route, at: px((a + q) / 2), size: SIMD2(2 * L + 2 * (half + glow) + 2 * s, 2 * (half + glow) + 2 * s), color: color,
+                    p: SIMD4(Float(atan2(d.y, d.x)), L, half, dash), q: SIMD2(along, glow))
+            }
+        }
+
         // ALPR cameras: FOV wedges lying on the ground (foreshortened when tilted) under the reticles.
         if !frame.cameras.isEmpty {
             // Radius: 14…48 pt at the centre of the view, as a ground distance.
             let radiusM = min(48, max(14, 40 / max(0.01, metersPerPoint))) * metersPerPoint
             let wedge = p.accent   // fill 28% and arc 85% are applied in the shader
-            var projected: [(SIMD2<Float>, CameraMarker, SIMD2<Double>, Double)] = []
+            var projected: [(SIMD2<Float>, CameraMarker, SIMD2<Double>, Double, Float, Double)] = []
             projected.reserveCapacity(frame.cameras.count)
             for c in frame.cameras {
                 let h = frame.elevation(at: c.world)
                 guard let q = proj.screen(c.world, heightMeters: h), onScreen(q) else { continue }
-                projected.append((px(q), c, q, h))
+                let (z, near) = depthAndNearness(c.world, h)
+                projected.append((px(q), c, q, h, z, near))
             }
-            for (q, c, qd, h) in projected where !c.directions.isEmpty {
+            for (q, c, qd, h, z, near) in projected where !c.directions.isEmpty {
+                // Far wedges (towards the horizon when tilted) are a few pixels of noise: skip them.
+                if near < 0.35 { continue }
                 // Screen images of the radius pointing east and north (a local linear map).
                 let wupm = MapProjection.worldUnitsPerMeter(y: c.world.y) * radiusM
                 guard let e = proj.screen(Mercator(x: c.world.x + wupm, y: c.world.y), heightMeters: h),
@@ -1014,25 +1087,33 @@ final class MapRenderer: NSObject, MTKViewDelegate {
                 guard ev.x.isFinite, nv.x.isFinite else { continue }
                 let half = SIMD2(abs(ev.x) + abs(nv.x), abs(ev.y) + abs(nv.y))
                 let size = SIMD2(Float(min(400, half.x)) * 2 + 4 * s, Float(min(400, half.y)) * 2 + 4 * s)
+                // The wedge lies on the ground and reaches its radius towards the viewer.
+                let (wz, _) = z == 0 ? (Float(0), 1.0) : depthAndNearness(c.world, h, reachPts: min(400, half.y) / scale)
                 for d in c.directions {
                     add(.wedge, at: q, size: size, color: wedge, p: SIMD4(Float(ev.x), Float(ev.y), Float(nv.x), Float(nv.y)),
-                        q: SIMD2(Float(d) * .pi / 180, .pi / 6))
+                        q: SIMD2(Float(d) * .pi / 180, .pi / 6), depth: wz)
                 }
             }
-            for (q, c, _, _) in projected {
-                var color = p.accent
-                color.w = c.isFlock ? 1.0 : 0.7
-                let side: Float = 13 * s
-                add(.reticle, at: q, size: SIMD2(repeating: side + 4 * s + (c.selected ? 8 * s : 0)), color: color, p: SIMD4(0, c.selected ? 1 : 0, 0, 0))
+            // Nearest drawn last (on top). Further away they shrink (to 45%) and fade, so the horizon
+            // of a tilted view doesn't fill with full-size reticles.
+            for (q, c, _, _, z, near) in projected.sorted(by: { $0.5 < $1.5 }) {
+                let k = Float(min(1, max(0.45, near)))
+                var color = c.onRoute ? p.warn : p.accent
+                color.w = (c.isFlock ? 1.0 : 0.7) * (c.selected ? 1 : Float(min(1, max(0.25, (near - 0.15) / 0.6))))
+                let side: Float = 13 * s * (c.selected ? 1 : k)
+                add(.reticle, at: q, size: SIMD2(repeating: side + 4 * s + (c.selected ? 8 * s : 0)), color: color,
+                    p: SIMD4(0, c.selected ? 1 : 0, 0, 0), depth: c.selected ? 0 : z)
             }
         }
 
         // Clusters: ▣ blocks, each with its count as a label beside it.
         clusterCounts.removeAll(keepingCapacity: true)
         for c in frame.clusters {
-            guard let q = screen(c.world), onScreen(q) else { continue }
+            let h = frame.elevation(at: c.world)
+            guard let q = proj.screen(c.world, heightMeters: h), onScreen(q) else { continue }
             let side = Self.clusterSide(c.count)
-            add(.cluster, at: px(q), size: SIMD2(repeating: Float(side) * s + 2 * s), color: p.accent)
+            let (z, _) = depthAndNearness(c.world, h, reachPts: side / 2 + 2)
+            add(.cluster, at: px(q), size: SIMD2(repeating: Float(side) * s + 2 * s), color: p.accent, depth: z)
             if c.count > 0, q.x > -40, q.y > -20, q.x < vp.x + 40, q.y < vp.y + 20 {
                 clusterCounts.append((Self.countText(c.count), SIMD2(q.x + side / 2 + 3, q.y)))
             }
@@ -1044,6 +1125,17 @@ final class MapRenderer: NSObject, MTKViewDelegate {
             var ring = p.accent; ring.w = 0.5
             add(.ring, at: px(q), size: SIMD2(repeating: r * 2 + 4 * s), color: ring, p: SIMD4(1 * s, 0, 0, 0))
             add(.locationDot, at: px(q), size: SIMD2(repeating: 22 * s), color: p.accent)
+        }
+
+        // Route ends (A, B) and the step under the pointer.
+        for m in frame.routeMarks {
+            guard let q = screen(m.world), onScreen(q) else { continue }
+            add(.pin, at: px(q), size: SIMD2(repeating: 20 * s), color: p.accent)
+            clusterCounts.append((m.label, SIMD2(q.x + 12, q.y)))
+        }
+        if let w = frame.stepMark, let q = screen(w), onScreen(q) {
+            var ring = p.text; ring.w = 0.9
+            add(.ring, at: px(q), size: SIMD2(repeating: 26 * s), color: ring, p: SIMD4(1.6 * s, 0, 0, 0))
         }
 
         // The chosen place: a diamond pin, its name beside it (placed before every other label).
@@ -1062,12 +1154,11 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         10 + min(8, log2(Double(max(1, count)))) * 1.5
     }
 
-    // MARK: DEBUG harness
+    // MARK: Offscreen
 
-    #if DEBUG
-    /// Renders the current frame into an offscreen texture and returns it as an image (QA, tests
-    /// in the scratch harness). Blocks until the GPU finishes.
-    func debugRenderOffscreen(size: CGSize, scale: Double = 2) -> CGImage? {
+    /// Renders the current frame into an offscreen texture and returns it as an image (printing,
+    /// and QA). Blocks until the GPU finishes.
+    func renderImage(size: CGSize, scale: Double = 2) -> CGImage? {
         guard let frame, let camera else { return nil }
         let w = Int(size.width * scale), h = Int(size.height * scale)
         guard w > 0, h > 0 else { return nil }
@@ -1101,7 +1192,6 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         return CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4, space: cs, bitmapInfo: info,
                        provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
     }
-    #endif
 }
 
 /// Per-class colour and width tables for one frame (theme + zoom + glow), in pixels.

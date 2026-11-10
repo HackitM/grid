@@ -13,6 +13,7 @@ final class MapNetwork: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         let etag: String?
         let lastModified: String?
         let finalURL: URL?
+        var contentLength: Int64? = nil
     }
 
     enum NetError: LocalizedError, Equatable {
@@ -48,6 +49,10 @@ final class MapNetwork: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
     private final class Pending {
         var data = Data()
+        /// Large downloads stream into this file instead of `data`.
+        var sink: FileHandle?
+        var written: Int64 = 0
+        var progress: (@Sendable (Int64, Int64) -> Void)?
         var response: HTTPURLResponse?
         let maxBytes: Int
         let host: String
@@ -67,6 +72,43 @@ final class MapNetwork: NSObject, URLSessionDataDelegate, @unchecked Sendable {
               let h = url.host?.lowercased(), !h.isEmpty else { return false }
         return hosts.contains { allowed in
             allowed.hasPrefix("*.") ? (h.hasSuffix(String(allowed.dropFirst(1))) || h == String(allowed.dropFirst(2))) : h == allowed
+        }
+    }
+
+    /// The size a GET would return (HEAD's Content-Length), or nil when the server doesn't say.
+    func size(of url: URL, hosts: Set<String>) async throws -> (status: Int, bytes: Int64?) {
+        guard Self.isAllowed(url, hosts: hosts) else { throw NetError.blockedURL(url.absoluteString) }
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
+        req.httpMethod = "HEAD"
+        let r = try await run(req, maxBytes: 1 << 16, host: url.host?.lowercased() ?? "")
+        return (r.status, r.contentLength)
+    }
+
+    /// GET streamed into `file` (which must already exist, empty), capped at `maxBytes`, with
+    /// progress (bytes so far, expected or -1). The returned response has no data.
+    func download(_ url: URL, to file: URL, hosts: Set<String>, maxBytes: Int64,
+                  progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> Response {
+        guard Self.isAllowed(url, hosts: hosts) else { throw NetError.blockedURL(url.absoluteString) }
+        let handle = try FileHandle(forWritingTo: file)
+        defer { try? handle.close() }
+        let req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 60)
+        return try await run(req, maxBytes: Int(clamping: maxBytes), host: url.host?.lowercased() ?? "", sink: handle, progress: progress)
+    }
+
+    private func run(_ req: URLRequest, maxBytes: Int, host: String, sink: FileHandle? = nil,
+                     progress: (@Sendable (Int64, Int64) -> Void)? = nil) async throws -> Response {
+        let task = session.dataTask(with: req)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (c: CheckedContinuation<Response, Error>) in
+                lock.withLock {
+                    let p = Pending(maxBytes: maxBytes, host: host, continuation: c)
+                    p.sink = sink; p.progress = progress
+                    pending[task.taskIdentifier] = p
+                }
+                task.resume()
+            }
+        } onCancel: {
+            task.cancel()
         }
     }
 
@@ -114,9 +156,23 @@ final class MapNetwork: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         var over = 0
+        var report: (@Sendable (Int64, Int64) -> Void)?
+        var sofar: Int64 = 0, expected: Int64 = -1
+        var writeFailed = false
         lock.withLock {
             guard let p = pending[dataTask.taskIdentifier] else { return }
-            if p.data.count + data.count > p.maxBytes { over = p.maxBytes } else { p.data.append(data) }
+            if let sink = p.sink {
+                if p.written + Int64(data.count) > Int64(p.maxBytes) { over = p.maxBytes; return }
+                do { try sink.write(contentsOf: data) } catch { writeFailed = true; return }
+                p.written += Int64(data.count)
+                report = p.progress; sofar = p.written; expected = p.response?.expectedContentLength ?? -1
+            } else if p.data.count + data.count > p.maxBytes { over = p.maxBytes } else { p.data.append(data) }
+        }
+        report?(sofar, expected)
+        if writeFailed {
+            dataTask.cancel()
+            finish(dataTask.taskIdentifier, .failure(NetError.transport("Couldn't write the download to disk.")))
+            return
         }
         if over > 0 {
             dataTask.cancel()
@@ -144,7 +200,8 @@ final class MapNetwork: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         }
         let status = p.response?.statusCode ?? 0
         let r = Response(data: p.data, status: status, etag: p.response?.value(forHTTPHeaderField: "ETag"),
-                         lastModified: p.response?.value(forHTTPHeaderField: "Last-Modified"), finalURL: p.response?.url)
+                         lastModified: p.response?.value(forHTTPHeaderField: "Last-Modified"), finalURL: p.response?.url,
+                         contentLength: (p.response?.expectedContentLength).flatMap { $0 >= 0 ? $0 : nil })
         finish(task.taskIdentifier, .success(r))
     }
 }

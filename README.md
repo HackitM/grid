@@ -91,6 +91,12 @@ A real terminal, a file browser, an app launcher, a widget deck and a web browse
     an area you draw. GRID keeps them on your Mac and shows them offline.
   - **Display:** each camera shows its facing direction as a wedge on the ground. Zoomed out, they
     gather into counted clusters. Click one for its vendor, operator and OpenStreetMap entry.
+- **Directions that avoid mapped cameras**, worked out on your Mac: GRID downloads a region's
+  OpenStreetMap road data once (asking first, with the size), builds its own road network from it,
+  and routes offline. It shows the fastest route and one that avoids the mapped ALPR cameras it
+  can, with distance, time, the cameras each passes and turn-by-turn steps. Right-click the map
+  for Directions from / to Here, or use Directions in a place's card. **Print** a route (map and
+  large-type turn list), save it as **GPX** for a GPS unit or offline navigator, or copy it as text.
 - **Right-click the map** to inspect a camera, centre the map, copy coordinates, open the spot in
   Apple Maps or OpenStreetMap, or download the cameras in view.
   - **Each download asks first,** with the host, the number of requests and the size. Settings ›
@@ -216,6 +222,9 @@ Use the `.app` bundle for real use rather than `swift run`, since macOS privacy 
     (nominatim.openstreetmap.org, the OpenStreetMap Foundation), at most once a second. Answers
     stay in memory for up to a day; searches are never saved. Turn it off or pick another server
     in Settings › Map.
+  - **Road data for directions** comes from Geofabrik (download.geofabrik.de) per region, only when
+    you confirm it; Geofabrik learns which region you chose. Routes are worked out on your Mac:
+    start points, destinations and routes are never sent anywhere.
   - **Your location** is read only when you click Locate, stays in memory, and is never stored or
     sent by GRID.
 - **Web content is isolated.** Pages get no bridge into GRID, can't run commands, and can't open other apps without a click and a confirmation. Downloads are confirmed and quarantined like Safari's.

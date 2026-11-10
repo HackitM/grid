@@ -654,3 +654,47 @@ cache) and draws them in the render pass from a string atlas (see the addendum a
 - **Chosen place**: `MapModel.place` draws a diamond pin (`MapOverlayKind.pin`) with its name
   placed before every other label, and the side column shows a PLACE inspector (address,
   coordinates, Apple Maps and OpenStreetMap links).
+
+## Addendum: on-device routing (native Swift router)
+
+Chosen over a remote engine (FlockHopper / Valhalla) and the Java routing pack: nothing about a
+trip leaves the Mac, and there is no helper runtime.
+
+- **Road data.** A region's OSM extract (`urls.pbf` from Geofabrik's index, https on
+  download.geofabrik.de only) is streamed to a file under `Maps/routing/` with a 700 MB cap and
+  progress, after a ROUTE-DATA confirmation showing its size (HEAD). It is deleted once built.
+- **PBF reader** (`GridCore/Routing/PBFReader.swift`): blob header ≤ 64 KiB, blob ≤ 32 MiB, raw
+  or zlib (Compression's raw DEFLATE after the 2-byte header; size must match), `OsmSchema-V0.6`
+  and `DenseNodes` only. Decodes node positions, ways with a given key, and relations of given
+  types. Bounds-checked through `PBReader`; fuzzed in tests.
+- **Graph** (`RoadGraph`, `RoadGraphBuilder`): pass 1 reads drivable ways (`RoadProfile`: car
+  access hierarchy motorcar › motor_vehicle › vehicle › access, oneway incl. implied motorway and
+  roundabout, `maxspeed` with mph, class default speeds) and node-via turn restrictions; node ids
+  are sorted once and a node used twice or at a way end is a junction; pass 2 reads only those
+  nodes' positions. Edges run junction to junction with their shape; a node missing from the
+  extract cuts the way. Stored as `GRDG` v1 (struct-of-arrays, little-endian); every index is
+  range-checked on load. Alabama: 152 MB extract → 77 MB graph (946k junctions, 1.18M edges) in
+  about 6 s, about 0.5 GB above the app's baseline while building.
+- **Search** (`RouteEngine`): edge-based A* over directed edges (so turn restrictions and the
+  U-turn ban are exact), travel time from speeds, junction and turn costs (lefts cost more), a
+  straight-line / 130 km/h heuristic. Points snap to the nearest drivable road (≤ 1.5 km) through
+  a 0.01° edge grid. About 0.4 s for a city trip including loading checks.
+- **Cameras** (`CameraExposure`): a camera sees a road passing within the buffer (75 m default,
+  25–150) inside one of its 70° cones (no direction = all round; 0° is north, a real direction);
+  the whole in-buffer part of each segment is checked, not just the nearest point. The avoiding
+  search adds 600–1500 s per edge a camera sees; every route shown is re-scored by GRID itself.
+- **Steps**: depart, turns by angle (slight / normal / sharp, U-turn), keep left/right on
+  highways, ramps and merges, roundabouts with the exit number, arrive; cameras listed under the
+  step where they are passed.
+- **Checked against Valhalla** (FOSSGIS public server, four Birmingham trips): the downtown →
+  Galleria route matched step for step; distances within 0–10 %, times within 0–10 %.
+- **Export** (`CueSheet`, `GPXWriter` in GridCore; `MapRouteExport`): Print renders the route's
+  area offscreen with a renderer of its own in `MapPalette.paper` (all tiles uploaded at once, a
+  level finer than the page's zoom, 3× resolution; lines use source-over blending on the light
+  palette) and lays out title, summary, map, the turn list in 13 pt with camera notes, the
+  disclaimer and attribution as text, so the print system paginates for any paper size. GPX 1.1
+  has the ends and passed cameras as `wpt`, the steps as `rte`, the line as `trk`; text is XML
+  escaped (characters XML forbids dropped) and coordinates always use a decimal point. Copy puts
+  the same turn list on the clipboard.
+- **Not yet**: routes that cross from one region's data into another's, way-via turn
+  restrictions, traffic, time-dependent access.

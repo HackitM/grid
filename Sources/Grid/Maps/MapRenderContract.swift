@@ -14,6 +14,16 @@ struct MapPalette: Equatable {
     var text, textDim, textMute: SIMD4<Float>
     var accent, glow, line, lineStrong: SIMD4<Float>
     var warn, danger, ok: SIMD4<Float>
+    /// The chosen route's colour when it must differ from the roads (paper).
+    var route: SIMD4<Float>? = nil
+
+    /// Black on white for printing: roads in greys, water pale blue, the route in strong blue.
+    static let paper = MapPalette(
+        bg0: SIMD4(1, 1, 1, 1), bg1: SIMD4(0.97, 0.97, 0.96, 1), bg2: SIMD4(0.86, 0.86, 0.85, 1), bg3: SIMD4(0.78, 0.86, 0.93, 1),
+        text: SIMD4(0.05, 0.05, 0.05, 1), textDim: SIMD4(0.25, 0.25, 0.25, 1), textMute: SIMD4(0.5, 0.5, 0.5, 1),
+        accent: SIMD4(0.35, 0.35, 0.38, 1), glow: SIMD4(0, 0, 0, 0), line: SIMD4(0.8, 0.8, 0.8, 1), lineStrong: SIMD4(0.6, 0.6, 0.6, 1),
+        warn: SIMD4(0.85, 0.35, 0.0, 1), danger: SIMD4(0.8, 0.1, 0.1, 1), ok: SIMD4(0.1, 0.55, 0.2, 1),
+        route: SIMD4(0.05, 0.35, 0.85, 1))
 
     @MainActor private static var cache: (ThemeID, MapPalette)?
 
@@ -45,6 +55,8 @@ struct CameraMarker: Equatable {
     var isFlock: Bool
     var selected: Bool
     var index: Int
+    /// The shown route passes it (drawn in the warning colour).
+    var onRoute = false
 }
 
 /// A cluster block (zoom < 12): `▣ count`.
@@ -63,6 +75,18 @@ struct LocationMarker: Equatable {
 struct PlaceMarker: Equatable {
     var world: Mercator
     var title: String
+}
+
+/// A route on the map: the chosen one bright and glowing, the alternative dim and dashed.
+struct RouteLine: Equatable {
+    var points: [Mercator]
+    var primary: Bool
+}
+
+/// A route's start or end ("A", "B") or the step under the pointer.
+struct RouteMark: Equatable {
+    var world: Mercator
+    var label: String
 }
 
 /// A region outline to draw (the downloaded regions, and the rectangle being drawn).
@@ -85,6 +109,10 @@ struct MapFrame: Equatable {
     var clusters: [ClusterMarker] = []
     var location: LocationMarker?
     var pin: PlaceMarker?
+    var routes: [RouteLine] = []
+    var routeMarks: [RouteMark] = []
+    /// The step under the pointer in the route panel.
+    var stepMark: Mercator?
     /// Point-of-interest categories to draw, one bit per `POICategory.rawValue` (0: none).
     var poiMask: UInt16 = 0
     var regions: [RegionOutline] = []

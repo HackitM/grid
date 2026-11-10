@@ -44,7 +44,7 @@ struct MapSearchBar: View {
             }
             .padding(.horizontal, 8)
             .frame(height: 26)
-            .background(theme.bg0.opacity(0.92))
+            .background(theme.bg0)
             .overlay(Rectangle().stroke(focused ? theme.lineStrong : theme.line, lineWidth: Metrics.hairline))
             if search.listOpen && !search.isEmptyQuery {
                 MapSearchResults(model: model) { focused = false }
