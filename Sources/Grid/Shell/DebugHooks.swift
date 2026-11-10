@@ -738,6 +738,47 @@ enum DebugHooks {
             case "catalog": Task { await m.alpr.loadCatalog() }
             case "check": Task { await m.alpr.checkFreshness(manual: true) }
             case "locate": m.locate()
+            case "gesture":
+                // {"op":"gesture","seconds":4,"pan":[vx,vy],"zoom":dz/s,"rotate":deg/s,"pitch":deg/s,"fling":bool,"hz":120,
+                //  "settle":8,"path":"<json out>"}: the deltas go through the map view's own gesture path
+                // (view-local camera, renderer, model) at `hz`; the result has frame times, label lag
+                // and tile coverage while moving and after the stop.
+                guard let v = MapContainerView.debugCurrent, v.debugProbe == nil, let path = c["path"] as? String else { break }
+                var spec = MapGestureProbe.Spec()
+                if let s = c["seconds"] as? Double { spec.seconds = s }
+                if let h = c["hz"] as? Double { spec.hz = h }
+                if let p = c["pan"] as? [Double], p.count == 2 { spec.pan = SIMD2(p[0], p[1]) }
+                if let z = c["zoom"] as? Double { spec.zoom = z }
+                if let r = c["rotate"] as? Double { spec.rotate = r }
+                if let p = c["pitch"] as? Double { spec.pitch = p }
+                if let f = c["fling"] as? Bool { spec.fling = f }
+                if let s = c["settle"] as? Double { spec.settle = s }
+                let probe = MapGestureProbe(spec, view: v)
+                let uploads0 = v.renderer.debugUploads, uploadMs0 = v.renderer.debugUploadMs
+                probe.coverage = { [weak v] cam in
+                    let cover = TileMath.cover(cam, viewport: m.viewport, maxZoom: m.tiles.source?.maxZoom ?? 14, limit: 48)
+                    let (missing, holes) = m.tiles.debugCoverage(cover)
+                    let drawn = v?.renderer.debugFrameTiles ?? []
+                    var drawnMissing = 0, drawnHoles = 0
+                    for t in cover where !drawn.contains(t) {
+                        drawnMissing += 1
+                        var p = TileMath.parent(t), steps = 0, found = false
+                        while let q = p, steps < 8 { if drawn.contains(q) { found = true; break }; p = TileMath.parent(q); steps += 1 }
+                        if !found { drawnHoles += 1 }
+                    }
+                    return ["cover": cover.count, "missing": missing, "holes": holes, "drawnMissing": drawnMissing, "drawnHoles": drawnHoles]
+                }
+                probe.done = { [weak v] result in
+                    var r = result
+                    r["gpuUploads"] = (v?.renderer.debugUploads ?? 0) - uploads0
+                    r["gpuUploadMs"] = (v?.renderer.debugUploadMs ?? 0) - uploadMs0
+                    r["loader"] = m.tiles.debugStats
+                    if let data = try? JSONSerialization.data(withJSONObject: r, options: [.prettyPrinted, .sortedKeys]) {
+                        try? data.write(to: URL(fileURLWithPath: path))
+                    }
+                }
+                v.debugProbe = probe
+                probe.begin()
             case "exaggeration": if let x = c["value"] as? Double { m.terrainExaggeration = x }
             case "context":
                 // Right-click menu at a view point (QA of the menu and terrain picking).

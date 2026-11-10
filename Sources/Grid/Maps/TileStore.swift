@@ -24,16 +24,27 @@ final class TileStore {
     @ObservationIgnored var enabled = false
     @ObservationIgnored private var cache: TileCache?
     @ObservationIgnored private var decoded: [TileID: TileGeometry] = [:]
-    @ObservationIgnored private var lru: [TileID] = []
+    /// When each decoded tile was last drawn or asked for (eviction takes the smallest).
+    @ObservationIgnored private var lastUse: [TileID: UInt64] = [:]
+    @ObservationIgnored private var useClock: UInt64 = 0
     @ObservationIgnored private var decodedBytes = 0
     @ObservationIgnored private var inFlight: Set<TileID> = []
     @ObservationIgnored private var queue: [TileID] = []
+    /// The tiles in view.
     @ObservationIgnored private var wanted: Set<TileID> = []
+    /// The tiles the frame draws: the view and the ring around it.
+    @ObservationIgnored private var drawn: Set<TileID> = []
+    /// Everything asked for: the view, its low-zoom backdrop and the tiles around and ahead of it.
+    @ObservationIgnored private var keep: Set<TileID> = []
+    @ObservationIgnored private var background: Set<TileID> = []
     @ObservationIgnored private var failed: [TileID: Date] = [:]
     @ObservationIgnored private var loadingSource = false
 
-    static let maxDecodedBytes = 160 << 20
-    static let maxInFlight = 6
+    static let maxDecodedBytes = 192 << 20
+    /// Loads running for tiles still asked for. Loads the view has moved away from finish (and
+    /// are cached) without holding up the queue, up to `maxInFlightTotal`.
+    static let maxInFlight = 10
+    static let maxInFlightTotal = 20
 
     /// Reads the TileJSON (each time the Map opens, so a new planet build is noticed).
     func loadSource(url: URL = defaultTileJSON, hosts: Set<String> = defaultHosts) async {
@@ -65,25 +76,42 @@ final class TileStore {
         return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// The tiles the current view needs (nearest first). Starts loads for missing ones.
-    func want(_ tiles: [TileID]) {
-        wanted = Set(tiles)
-        wantedCount = tiles.count
-        loadedCount = tiles.filter { decoded[$0] != nil }.count
+    /// What the current view needs, each list nearest first: `visible` is in view; `ring` is the
+    /// tiles around it and ahead of a gesture, drawn too so they are there before they scroll in;
+    /// `backdrop` is a few low-zoom ancestors that stand in for anything not loaded yet (loaded
+    /// first, so moving never shows empty ground); `prefetch` is loaded last and not drawn.
+    func want(_ visible: [TileID], ring: [TileID] = [], backdrop: [TileID] = [], prefetch: [TileID] = []) {
+        wanted = Set(visible)
+        drawn = wanted.union(ring)
+        background = Set(prefetch).union(ring).subtracting(wanted)
+        keep = drawn.union(backdrop).union(prefetch)
+        let loaded = visible.reduce(0) { $0 + (decoded[$1] != nil ? 1 : 0) }
+        if wantedCount != visible.count { wantedCount = visible.count }
+        if loadedCount != loaded { loadedCount = loaded }
         guard enabled, source != nil else { return }
-        queue = tiles.filter { decoded[$0] == nil && !inFlight.contains($0) && !(failed[$0].map { Date().timeIntervalSince($0) < 30 } ?? false) }
+        let now = Date()
+        var seen = Set<TileID>()
+        queue.removeAll(keepingCapacity: true)
+        for list in [backdrop, visible, ring, prefetch] {
+            for t in list where decoded[t] == nil && !inFlight.contains(t) && seen.insert(t).inserted {
+                if let f = failed[t], now.timeIntervalSince(f) < 30 { continue }
+                queue.append(t)
+            }
+        }
         pump()
     }
 
-    /// Geometry to draw for `tiles`: each loaded tile, else its nearest loaded ancestor (≤ 5 levels up).
+    /// Geometry to draw for `tiles`: each loaded tile, else its nearest loaded ancestor (≤ 6 levels up).
     func geometry(for tiles: [TileID]) -> [TileGeometry] {
         var out: [TileGeometry] = []
+        out.reserveCapacity(tiles.count + 4)
         var seen = Set<TileID>()
+        useClock &+= 1
         for t in tiles {
-            if let g = decoded[t] { if seen.insert(t).inserted { out.append(g); touch(t) } ; continue }
+            if let g = decoded[t] { if seen.insert(t).inserted { out.append(g); lastUse[t] = useClock } ; continue }
             var p = TileMath.parent(t), steps = 0
-            while let q = p, steps < 5 {
-                if let g = decoded[q] { if seen.insert(q).inserted { out.append(g); touch(q) }; break }
+            while let q = p, steps < 6 {
+                if let g = decoded[q] { if seen.insert(q).inserted { out.append(g); lastUse[q] = useClock }; break }
                 p = TileMath.parent(q); steps += 1
             }
         }
@@ -93,14 +121,17 @@ final class TileStore {
     func clearMemory() { resetMemory(); generation += 1 }
 
     private func resetMemory() {
-        decoded = [:]; lru = []; decodedBytes = 0; failed = [:]; queue = []
+        decoded = [:]; lastUse = [:]; decodedBytes = 0; failed = [:]; queue = []
         loadedCount = 0
     }
 
     private func pump() {
-        while inFlight.count < Self.maxInFlight, !queue.isEmpty {
+        while !queue.isEmpty, inFlight.count < Self.maxInFlightTotal {
+            var active = 0
+            for t in inFlight where keep.contains(t) { active += 1 }
+            guard active < Self.maxInFlight else { return }
             let t = queue.removeFirst()
-            guard wanted.contains(t), decoded[t] == nil, !inFlight.contains(t) else { continue }
+            guard keep.contains(t), decoded[t] == nil, !inFlight.contains(t) else { continue }
             inFlight.insert(t)
             Task { await self.load(t) }
         }
@@ -112,8 +143,10 @@ final class TileStore {
         let gen = generation
         // Cached tiles are read and decoded in one trip off the main thread: each hop back to the
         // main actor waits behind drawing while the map moves, which made tiles arrive late.
-        let cached = await Task.detached(priority: .userInitiated) { () -> TileGeometry?? in
-            guard let bytes = await cache.read(t) else { return .none }
+        // Tiles around the view decode behind the ones in it.
+        let priority: TaskPriority = background.contains(t) ? .utility : .userInitiated
+        let cached = await Task.detached(priority: priority) { () -> TileGeometry?? in
+            guard let bytes = cache.read(t) else { return .none }
             return .some(Self.decode(bytes, t))
         }.value
         guard gen == generation else { return }
@@ -121,7 +154,7 @@ final class TileStore {
         var data: Data?
         var fromNetwork = false
         if data == nil {
-            guard wanted.contains(t), let url = source.url(for: t) else { return }
+            guard keep.contains(t), let url = source.url(for: t) else { return }
             do {
                 let r = try await MapNetwork.shared.get(url, hosts: [source.host], maxBytes: TileCache.maxTileBytes)
                 switch r.status {
@@ -143,7 +176,7 @@ final class TileStore {
             if fromNetwork { statNetwork += 1 }
         }
         #endif
-        let result = await Task.detached(priority: .userInitiated) { Self.decode(bytes, t) }.value
+        let result = await Task.detached(priority: priority) { Self.decode(bytes, t) }.value
         guard gen == generation else { return }
         guard let geometry = result else {
             // Not a vector tile (a captive portal page, a truncated body…): don't cache it, retry later.
@@ -156,8 +189,10 @@ final class TileStore {
 
     private func insertLoaded(_ geometry: TileGeometry) {
         insert(geometry)
-        if wanted.contains(geometry.id) { loadedCount = wanted.filter { decoded[$0] != nil }.count }
-        revision &+= 1
+        guard keep.contains(geometry.id) else { return }
+        if wanted.contains(geometry.id) { loadedCount = wanted.reduce(0) { $0 + (decoded[$1] != nil ? 1 : 0) } }
+        // The frame only changes when this tile is drawn: its own place, or standing in for another.
+        if drawn.contains(geometry.id) || standsIn(geometry.id) { revision &+= 1 }
     }
 
     /// MVT bytes → geometry (empty bytes = outside coverage); nil when it isn't a vector tile.
@@ -180,23 +215,48 @@ final class TileStore {
     }
     #endif
 
+    #if DEBUG
+    /// How many of `cover` aren't decoded, and how many of those have no ancestor to stand in.
+    func debugCoverage(_ cover: [TileID]) -> (missing: Int, holes: Int) {
+        var missing = 0, holes = 0
+        for t in cover where decoded[t] == nil {
+            missing += 1
+            var p = TileMath.parent(t), steps = 0, found = false
+            while let q = p, steps < 6 { if decoded[q] != nil { found = true; break }; p = TileMath.parent(q); steps += 1 }
+            if !found { holes += 1 }
+        }
+        return (missing, holes)
+    }
+    #endif
+
+    /// A drawn tile that isn't loaded has `id` as an ancestor (so `id` would be drawn in its place).
+    private func standsIn(_ id: TileID) -> Bool {
+        for t in drawn where t.z > id.z && decoded[t] == nil {
+            let shift = UInt32(t.z - id.z)
+            if shift <= 6, t.x >> shift == id.x, t.y >> shift == id.y { return true }
+        }
+        return false
+    }
+
     private func insert(_ g: TileGeometry) {
         if let old = decoded[g.id] { decodedBytes -= old.byteCount }
         decoded[g.id] = g
         decodedBytes += g.byteCount
-        touch(g.id)
-        while decodedBytes > Self.maxDecodedBytes, let victim = lru.first(where: { !wanted.contains($0) }) ?? lru.first {
-            lru.removeAll { $0 == victim }
+        useClock &+= 1
+        lastUse[g.id] = useClock
+        guard decodedBytes > Self.maxDecodedBytes else { return }
+        // Least recently used first; tiles the view asked for go last.
+        let order = decoded.keys.sorted { a, b in
+            let ka = keep.contains(a), kb = keep.contains(b)
+            return ka != kb ? !ka : (lastUse[a] ?? 0) < (lastUse[b] ?? 0)
+        }
+        for victim in order where victim != g.id {
+            guard decodedBytes > Self.maxDecodedBytes * 7 / 8 else { break }
             if let v = decoded.removeValue(forKey: victim) { decodedBytes -= v.byteCount }
+            lastUse[victim] = nil
             #if DEBUG
             if wanted.contains(victim) { statEvictWanted += 1 }
             #endif
-            if victim == g.id { break }
         }
-    }
-
-    private func touch(_ t: TileID) {
-        if let i = lru.firstIndex(of: t) { lru.remove(at: i) }
-        lru.append(t)
     }
 }

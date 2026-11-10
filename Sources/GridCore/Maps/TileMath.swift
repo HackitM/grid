@@ -434,7 +434,7 @@ public struct GlobeProjection: MapScreenProjection {
 // MARK: - Gestures
 
 /// Camera changes for pan, zoom and rotate, shared by the model and the map view so both apply a
-/// gesture identically (the view shows it at once; the model follows at ≤ 30 Hz).
+/// gesture identically (the view shows it at once; the model applies the same gesture to its own camera).
 public enum MapGestureMath {
     public static func clamp(_ c: MapCamera) -> MapCamera {
         var c = c

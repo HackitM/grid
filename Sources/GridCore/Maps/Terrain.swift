@@ -108,8 +108,9 @@ public enum Contours {
         let n = TerrainGrid.size
         guard grid.heights.count == n * n, step > 0 else { return [] }
         let h = grid.heights.map { $0 * scale }
-        // Levels strictly inside (min, max): a level equal to the summit would be a dot.
-        let lo = (grid.minHeight * scale / step).rounded(.down) + 1, hi = (grid.maxHeight * scale / step).rounded(.up) - 1
+        // Levels strictly inside (min, max): a level equal to the summit would be a dot. Nothing at
+        // or below sea level: Terrarium holds ocean depths, and the zero line is just the coast.
+        let lo = max(1, (grid.minHeight * scale / step).rounded(.down) + 1), hi = (grid.maxHeight * scale / step).rounded(.up) - 1
         guard hi >= lo, Int(hi - lo) < maxLevels else { return [] }
         var out: [Line] = []
         var level = lo

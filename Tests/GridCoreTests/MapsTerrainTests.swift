@@ -94,3 +94,15 @@ final class MapsTerrainLiftTests: XCTestCase {
         XCTAssertEqual(l.lift(10), 10, accuracy: 0.1)   // small rises are nearly true
     }
 }
+
+final class MapsContourSeaLevelTests: XCTestCase {
+    func testNoContoursAtOrBelowSeaLevel() {
+        let n = TerrainGrid.size
+        // A coast: ocean floor at -400 m on the left rising to 300 m on the right.
+        var h = [Float](repeating: 0, count: n * n)
+        for j in 0..<n { for i in 0..<n { h[j * n + i] = -400 + 700 * Float(i) / Float(n - 1) } }
+        let lines = Contours.lines(TerrainGrid(id: TileID(z: 12, x: 0, y: 0), heights: h), step: 100, indexStep: 500)
+        XCTAssertFalse(lines.isEmpty)
+        XCTAssertTrue(lines.allSatisfy { $0.level > 0 })
+    }
+}

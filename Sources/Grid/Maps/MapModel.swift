@@ -14,7 +14,14 @@ final class MapModel {
     let location = LocationProvider()
     @ObservationIgnored weak var app: AppState?
 
-    var camera: MapCamera
+    /// The camera, always current: gestures land here at once. While a gesture runs, views that
+    /// read it are told about ten times a second (the map view draws gestures from its own copy
+    /// at full frame rate, and the frame is rebuilt only when what it draws changes).
+    var camera: MapCamera {
+        get { access(keyPath: \.camera); return cameraStore }
+        set { withMutation(keyPath: \.camera) { cameraStore = newValue } }
+    }
+    @ObservationIgnored private var cameraStore: MapCamera
     private(set) var viewport = SIMD2<Double>(1000, 700)
 
     // Layers and options
@@ -39,6 +46,18 @@ final class MapModel {
     @ObservationIgnored private let d = UserDefaults.standard
     @ObservationIgnored private var revealTask: Task<Void, Never>?
     @ObservationIgnored private var lastCover: Set<TileID> = []
+    /// The cover, nearest first.
+    @ObservationIgnored private var coverList: [TileID] = []
+    /// What the frame draws besides tiles that depends on the camera; a gesture rebuilds the frame
+    /// only when this (or the cover) changes.
+    private struct ContentKey: Equatable { var cover: Set<TileID>; var ring: Set<TileID>; var globe: Bool; var markerLevel: Int }
+    /// Prefetched tiles around the view that the frame carries too (drawn the moment they scroll
+    /// in, without waiting for the next frame): same level as the cover or coarser.
+    @ObservationIgnored private var ringList: [TileID] = []
+    @ObservationIgnored private var contentKey: ContentKey?
+    /// Geographic box of the cover: markers are collected for all of it, so panning inside it
+    /// needs no new frame.
+    @ObservationIgnored private var markerBox: BBox?
     @ObservationIgnored private var tileObserver: Task<Void, Never>?
 
     /// "Enable map data" (MAP-NET consent): nothing is fetched before it.
@@ -62,10 +81,10 @@ final class MapModel {
         // Start over the continental US (or the remembered view, if that setting is on).
         if d.bool(forKey: "map.rememberView"), let data = d.data(forKey: "map.lastView"),
            let cam = try? JSONDecoder().decode(MapCamera.self, from: data) {
-            camera = cam
+            cameraStore = cam
         } else {
             // Open on the globe, facing North America.
-            camera = MapCamera(center: TileMath.project(LonLat(lon: -96, lat: 36)), zoom: 2.3)
+            cameraStore = MapCamera(center: TileMath.project(LonLat(lon: -96, lat: 36)), zoom: 2.3)
         }
         tiles.enabled = enabledStore
         alpr.enabled = enabledStore
@@ -117,50 +136,108 @@ final class MapModel {
 
     /// Recomputes the wanted tiles and bumps the frame (call after camera, viewport or data changes).
     func refresh() {
-        let cover = TileMath.cover(camera, viewport: viewport, maxZoom: tiles.source?.maxZoom ?? 14, limit: 48)
-        lastCover = Set(cover)
-        tiles.want(cover)
-        if showTerrain && !camera.isGlobe { terrain.want(cover) }
+        plan()
         frameRevision &+= 1
     }
 
-    /// Terrain draws on the flat map only (not on the globe or mid-morph).
-    var terrainActive: Bool { enabled && showTerrain && !camera.isGlobe }
+    /// Asks the stores for the tiles of the current camera: the view, a low-zoom backdrop under
+    /// it, and the tiles around it and ahead of the gesture in progress. True when what the frame
+    /// draws changed.
+    @discardableResult
+    private func plan() -> Bool {
+        let cam = cameraStore
+        lastPlanTime = CACurrentMediaTime()
+        #if DEBUG
+        defer { MapDebugTimes.add("plan", since: lastPlanTime) }
+        #endif
+        let maxZoom = tiles.source?.maxZoom ?? 14
+        let cover = TileMath.cover(cam, viewport: viewport, maxZoom: maxZoom, limit: 48)
+        let coverSet = Set(cover)
 
-    /// Exaggeration × tilt ease: 0 when looking straight down (so the flat map stays true to
-    /// scale), easing to the exaggeration by 20° of tilt.
-    var terrainScale: Float {
-        guard terrainActive else { return 0 }
-        let x = min(1, max(0, (camera.pitch - 4) / 16))
-        // Zoomed out the camera is far away and relief flattens, so it gets up to 1.5× more.
-        let zoomBoost = 1 + 0.5 * min(1, max(0, (13 - camera.zoom) / 3))
-        return Float(terrainExaggeration * zoomBoost * x * x * (3 - 2 * x))
-    }
-
-    /// The lift for a frame: relative to the ground under the camera centre, with peaks kept
-    /// below 92% of the camera's height.
-    private func terrainLift(_ f: MapFrame) -> TerrainLift {
-        let s = terrainScale
-        guard s > 0 else { return .flat }
-        let base = max(0, f.rawElevation(at: camera.center) ?? 0)
-        let dist = 0.5 * max(1, viewport.y) / tan(MapProjection.fovY / 2)
-        let lat = TileMath.unproject(camera.center).lat
-        let camHeight = dist * cos(camera.pitch * .pi / 180) * TileMath.metersPerPoint(lat: lat, zoom: camera.zoom)
-        return TerrainLift(scale: s, base: Float(base), ceiling: Float(camHeight * 0.92))
-    }
-
-    func frame(palette: MapPalette, glow: Bool) -> MapFrame {
-        _ = tiles.revision; _ = alpr.revision; _ = frameRevision; _ = terrain.revision
-        let cover = Array(lastCover)
-        let ordered = cover.sorted { a, b in
-            let ca = TileMath.bounds(a), cb = TileMath.bounds(b)
-            let da = hypot((ca.nw.x + ca.se.x) / 2 - camera.center.x, (ca.nw.y + ca.se.y) / 2 - camera.center.y)
-            let db = hypot((cb.nw.x + cb.se.x) / 2 - camera.center.x, (cb.nw.y + cb.se.y) / 2 - camera.center.y)
-            return da < db
+        // Backdrop: the cover's ancestors two and four levels up. A handful of tiles that span
+        // many screens, so ground that scrolls or zooms into view is never empty.
+        var backdrop: [TileID] = []
+        var seen = Set<TileID>()
+        let top = Int(cover.map(\.z).max() ?? 0)
+        for level in [top - 2, top - 4] where level >= 0 {
+            for t in cover where Int(t.z) > level {
+                let shift = Int(t.z) - level
+                let a = TileID(z: level, x: Int(t.x) >> shift, y: Int(t.y) >> shift)
+                if seen.insert(a).inserted { backdrop.append(a) }
+            }
         }
-        var geometry = enabled ? tiles.geometry(for: ordered) : []
+
+        // Prefetch: a ring around the view at rest; where the gesture is heading while it moves.
+        var prefetch: [TileID] = []
+        func add(_ c: MapCamera, pad: Double, limit: Int) {
+            for t in TileMath.cover(c, viewport: viewport * pad, maxZoom: maxZoom, limit: limit)
+            where !coverSet.contains(t) && seen.insert(t).inserted { prefetch.append(t) }
+        }
+        if let v = gestureVelocity() {
+            for dt in [0.3, 0.6] { add(Self.advance(cam, by: v, seconds: dt, viewport: viewport), pad: 1.15, limit: 56) }
+        } else {
+            add(cam, pad: 1.35, limit: 80)
+        }
+        if prefetch.count > 48 { prefetch.removeSubrange(48...) }
+
+        // Deeper tiles ahead of a zoom-in are loaded but not drawn until the view reaches their level.
+        let ring = prefetch.filter { Int($0.z) <= top }
+        let ahead = prefetch.filter { Int($0.z) > top }
+        lastCover = coverSet
+        coverList = cover
+        ringList = ring
+        tiles.want(cover, ring: ring, backdrop: backdrop, prefetch: ahead)
+        if showTerrain && !cam.isGlobe { terrain.want(cover + backdrop, ahead: prefetch) }
+
+        let key = ContentKey(cover: coverSet, ring: Set(ring), globe: cam.isGlobe, markerLevel: cam.zoom >= 12 ? -1 : Int((cam.zoom * 4).rounded(.down)))
+        guard key != contentKey else { return false }
+        contentKey = key
+        markerBox = Self.box(of: cover)
+        return true
+    }
+
+    private static func box(of tiles: [TileID]) -> BBox? {
+        guard !tiles.isEmpty else { return nil }
+        var w = 180.0, s = 90.0, e = -180.0, n = -90.0
+        for t in tiles {
+            let b = TileMath.geoBounds(t)
+            w = min(w, b.west); s = min(s, b.south); e = max(e, b.east); n = max(n, b.north)
+        }
+        return BBox(west: max(-180, w), south: max(-85.06, s), east: min(180, e), north: min(85.06, n))
+    }
+
+    /// Terrain draws on the flat map only (not on the globe or mid-morph).
+    var terrainActive: Bool { enabled && showTerrain && !cameraStore.isGlobe }
+
+    /// What the last frame was built from.
+    private struct FrameKey: Equatable {
+        var tiles, alpr, frame, terrain, generation: Int
+        var palette: MapPalette
+        var glow, enabled: Bool
+        var location: LocationMarker?
+        var regions: [String]
+    }
+    @ObservationIgnored private var frameKey: FrameKey?
+    @ObservationIgnored private var frameStamp = 0
+
+    /// The frame for the map view. Rebuilt only when its inputs change (an unrelated SwiftUI
+    /// update gets the same frame back); the camera in it is the current one.
+    func frame(palette: MapPalette, glow: Bool) -> MapFrame {
+        let fix = location.fix.map { LocationMarker(world: TileMath.project($0.0), accuracyMeters: $0.1) }
+        let key = FrameKey(tiles: tiles.revision, alpr: alpr.revision, frame: frameRevision, terrain: terrain.revision,
+                           generation: tiles.generation, palette: palette, glow: glow, enabled: enabled, location: fix,
+                           regions: showRegions ? alpr.regions.map { "\($0.id)#\($0.meta.cameraCount)" } : [])
+        if key == frameKey, let f = lastFrame { return f }
+        frameKey = key
+        #if DEBUG
+        let t0 = CACurrentMediaTime()
+        defer { MapDebugTimes.add("frame", since: t0) }
+        #endif
+        let camera = cameraStore
+        let terrainOn = terrainActive
+        var geometry = key.enabled ? tiles.geometry(for: coverList + ringList) : []
         var grids: [TerrainGrid] = []
-        if terrainActive {
+        if terrainOn {
             // Contours join their tile's geometry (a new revision tells the renderer to re-upload it).
             for k in geometry.indices {
                 guard let t = terrain.terrain(for: geometry[k].id) else { continue }
@@ -173,11 +250,13 @@ final class MapModel {
         }
         var f = MapFrame(camera: camera, tileGeneration: tiles.generation, tiles: geometry,
                          palette: palette, glow: glow, buildings: showBuildings, reveal: reveal, gridFloor: showGrid)
+        frameStamp &+= 1
+        f.stamp = frameStamp
         f.terrain = grids
-        f.lift = terrainLift(f)
-        f.hillshade = terrainActive
+        f.exaggeration = terrainOn ? terrainExaggeration : 0
+        f.hillshade = terrainOn
         f.terrainFloor = max(0, grids.map(\.minHeight).min() ?? 0)
-        if showCameras, let box = visibleBBox() {
+        if showCameras, let box = markerBox {
             if camera.zoom >= 12 {
                 for i in alpr.index.query(box).prefix(4000) {
                     let c = alpr.index.cameras[i]
@@ -191,7 +270,7 @@ final class MapModel {
                 }
             }
         }
-        if let (p, acc) = location.fix { f.location = LocationMarker(world: TileMath.project(p), accuracyMeters: acc) }
+        f.location = fix
         if showRegions {
             for r in alpr.regions {
                 f.regions.append(RegionOutline(rings: r.meta.polygon.polygons.compactMap { $0.first?.map(TileMath.project) }, highlighted: false))
@@ -271,33 +350,101 @@ final class MapModel {
         refresh()
     }
 
-    /// Camera changed by gestures but not yet published to `camera`. The map view already shows
-    /// gestures at full frame rate from its own copy; the model (and SwiftUI) follows at ≤ 30 Hz.
-    @ObservationIgnored private var live: MapCamera?
-    @ObservationIgnored private var publishScheduled = false
+    // Gestures. The camera changes at once; the tile plan follows at ≤ 30 Hz with a last pass
+    // once the gesture has stopped (which swaps the look-ahead for the ring around the view).
+    @ObservationIgnored private var lastPlanTime: CFTimeInterval = 0
+    @ObservationIgnored private var planScheduled = false
+    @ObservationIgnored private var notifyScheduled = false
+    @ObservationIgnored private var settleScheduled = false
+    @ObservationIgnored private var lastGestureTime: CFTimeInterval = 0
+    /// Cameras of the last ~0.2 s of gestures (oldest first), for the velocity.
+    @ObservationIgnored private var trail: [(at: CFTimeInterval, camera: MapCamera)] = []
 
-    private func setLive(_ c: MapCamera) {
-        live = c
-        guard !publishScheduled else { return }
-        publishScheduled = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 30) { [weak self] in
-            guard let self else { return }
-            self.publishScheduled = false
-            if let l = self.live { self.live = nil; self.camera = l; self.refresh() }
+    private static let planInterval = 1.0 / 30
+
+    private func gestured(_ c: MapCamera) {
+        guard c != cameraStore else { return }
+        cameraStore = c
+        let now = CACurrentMediaTime()
+        lastGestureTime = now
+        trail.append((now, c))
+        if let i = trail.firstIndex(where: { now - $0.at <= 0.2 }), i > 0 { trail.removeFirst(i) }
+        if now - lastPlanTime >= Self.planInterval {
+            gesturePlan()
+        } else if !planScheduled {
+            planScheduled = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.planInterval - (now - lastPlanTime)) { [weak self] in
+                self?.planScheduled = false
+                self?.gesturePlan()
+            }
         }
+        if !notifyScheduled {
+            notifyScheduled = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                guard let self else { return }
+                self.notifyScheduled = false
+                self.withMutation(keyPath: \.camera) {}
+            }
+        }
+        scheduleSettle()
+    }
+
+    private func gesturePlan() {
+        if plan() { frameRevision &+= 1 }
+    }
+
+    private func scheduleSettle() {
+        guard !settleScheduled else { return }
+        settleScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self else { return }
+            self.settleScheduled = false
+            if CACurrentMediaTime() - self.lastGestureTime >= 0.18 {
+                self.trail.removeAll(keepingCapacity: true)
+                self.gesturePlan()
+            } else {
+                self.scheduleSettle()
+            }
+        }
+    }
+
+    /// Camera change per second over the last moments of a gesture; nil at rest.
+    private func gestureVelocity() -> (center: SIMD2<Double>, zoom: Double, bearing: Double, pitch: Double)? {
+        guard let a = trail.first, let b = trail.last, CACurrentMediaTime() - b.at < 0.12, b.at - a.at >= 0.03 else { return nil }
+        let dt = b.at - a.at
+        var db = b.camera.bearing - a.camera.bearing
+        if db > 180 { db -= 360 } else if db < -180 { db += 360 }
+        return (SIMD2(b.camera.center.x - a.camera.center.x, b.camera.center.y - a.camera.center.y) / dt,
+                (b.camera.zoom - a.camera.zoom) / dt, db / dt, (b.camera.pitch - a.camera.pitch) / dt)
+    }
+
+    /// Where the camera will be in `seconds` at this velocity (no further than about a screen and
+    /// a half, one zoom level or a sixth of a turn).
+    private static func advance(_ cam: MapCamera, by v: (center: SIMD2<Double>, zoom: Double, bearing: Double, pitch: Double),
+                                seconds: Double, viewport: SIMD2<Double>) -> MapCamera {
+        var c = cam
+        var d = v.center * seconds
+        let reach = 1.5 * max(viewport.x, viewport.y) / (256 * pow(2, cam.zoom))
+        let len = (d.x * d.x + d.y * d.y).squareRoot()
+        if len > reach { d *= reach / len }
+        c.center = Mercator(x: cam.center.x + d.x, y: cam.center.y + d.y)
+        c.zoom += min(1, max(-1, v.zoom * seconds))
+        c.bearing += min(60, max(-60, v.bearing * seconds))
+        c.pitch += min(20, max(-20, v.pitch * seconds))
+        return MapGestureMath.clamp(c)
     }
 
     func handle(_ g: MapGesture) {
         // Pan, zoom and rotate go through MapGestureMath, exactly as the map view applies them.
-        let cam = live ?? camera
+        let cam = cameraStore
         let mid = viewport / 2
         switch g {
         case .pan(let delta):
-            setLive(MapGestureMath.pan(cam, by: delta, viewport: viewport))
+            gestured(MapGestureMath.pan(cam, by: delta, viewport: viewport))
         case .zoom(let dz, let p):
-            setLive(MapGestureMath.zoom(cam, by: dz, around: p, viewport: viewport))
+            gestured(MapGestureMath.zoom(cam, by: dz, around: p, viewport: viewport))
         case .rotate(let db, let dp):
-            setLive(MapGestureMath.rotate(cam, bearing: db, pitch: dp))
+            gestured(MapGestureMath.rotate(cam, bearing: db, pitch: dp))
         case .click(let p):
             click(p, mapProjection(camera: camera, viewport: viewport))
         case .rectangle(let a, let b, let ended):
@@ -330,16 +477,23 @@ final class MapModel {
     /// The last frame built (its terrain lift places markers for hit-testing).
     @ObservationIgnored private var lastFrame: MapFrame?
 
+    /// The last frame with the terrain lift of the current camera (what is on screen).
+    private var drawnFrame: MapFrame? {
+        guard var f = lastFrame else { return nil }
+        f.lift = f.lift(for: cameraStore, viewport: viewport)
+        return f
+    }
+
     /// Screen point of a world point on the drawn terrain.
-    private func screenOnTerrain(_ w: Mercator, _ proj: any MapScreenProjection) -> SIMD2<Double>? {
-        proj.screen(w, heightMeters: lastFrame?.elevation(at: w) ?? 0)
+    private func screenOnTerrain(_ w: Mercator, _ proj: any MapScreenProjection, _ f: MapFrame?) -> SIMD2<Double>? {
+        proj.screen(w, heightMeters: f?.elevation(at: w) ?? 0)
     }
 
     /// The world point under a screen point on the drawn terrain: the ground-plane hit, refined a
     /// few times by the lift's screen offset there.
     private func pick(_ p: SIMD2<Double>, _ proj: any MapScreenProjection) -> Mercator? {
         guard var g = proj.groundPoint(screen: p) else { return nil }
-        guard let f = lastFrame, !f.lift.isFlat else { return g }
+        guard let f = drawnFrame, !f.lift.isFlat else { return g }
         for _ in 0..<4 {
             guard let lifted = proj.screen(g, heightMeters: f.elevation(at: g)), let flat = proj.screen(g),
                   let next = proj.groundPoint(screen: p - (lifted - flat)) else { break }
@@ -351,10 +505,12 @@ final class MapModel {
     private func click(_ p: SIMD2<Double>, _ proj: any MapScreenProjection) {
         if camera.zoom < 12 {
             // A cluster: zoom in on it.
-            if let box = visibleBBox() {
-                let cell = 44 / (256 * pow(2, camera.zoom))
+            // The same box and cell as the frame's clusters, so a click finds what is drawn.
+            if let box = markerBox ?? visibleBBox() {
+                let cell = 44 / (256 * pow(2, lastFrame?.camera.zoom ?? camera.zoom))
+                let drawn = drawnFrame
                 let hit = alpr.index.clusters(box, cellWorld: cell).compactMap { c -> (CameraCluster, Double)? in
-                    guard let s = screenOnTerrain(TileMath.project(c.center), proj) else { return nil }
+                    guard let s = screenOnTerrain(TileMath.project(c.center), proj, drawn) else { return nil }
                     let dist = hypot(s.x - p.x, s.y - p.y)
                     return dist < 18 ? (c, dist) : nil
                 }.min { $0.1 < $1.1 }
@@ -421,7 +577,7 @@ final class MapModel {
     /// Every programmatic camera change (fly to, reset, tilt toggle, QA): drops a pending
     /// gesture update so it can't overwrite this one.
     func setCamera(_ c: MapCamera) {
-        live = nil
+        trail.removeAll(keepingCapacity: true)
         var c = c
         c.center = Self.wrap(c.center)
         c.pitch = min(MapCamera.maxPitch, max(0, c.pitch))

@@ -6,14 +6,14 @@ import simd
 
 // The GridMap renderer (docs/maps/IMPLEMENTATION.md Brief C). Draws one `MapFrame`: the grid
 // floor, fills, glowing lines, extruded buildings and the overlay instances, on demand only.
-// Tiles are uploaded once into one MTLBuffer each (LRU of 60) and placed per frame with the
+// Tiles are uploaded once into one MTLBuffer each (LRU of 160) and placed per frame with the
 // contract projection (`MapProjection.tileMatrix`); colours and widths are per-frame uniform
 // tables indexed by `RenderClass.rawValue`, so theme and zoom changes never touch tile buffers.
 
 /// Everything compiled once per process (shared by every map view on the same device).
 private struct MapPipelines {
     let device: MTLDevice
-    let floor, lattice, fill, stencil, line, extrusion, overlay: MTLRenderPipelineState
+    let floor, lattice, fill, stencil, line, extrusion, overlay, label: MTLRenderPipelineState
     let terrainGround, terrainShade, terrainMask: MTLRenderPipelineState
     // Stencil bit planes: 0x01 fill-phase level mask, 0x02 water, 0x04 line-phase level mask.
     let dsNone, dsFill, dsFillWrite, dsWater, dsLattice, dsLine, dsLineWrite, dsExtrusion: MTLDepthStencilState
@@ -78,10 +78,11 @@ private struct MapPipelines {
               let line = pso("line_vertex", "line_fragment", blend: true, maxBlend: true),
               let extrusion = pso("ext_vertex", "ext_fragment", blend: false),
               let overlay = pso("overlay_vertex", "overlay_fragment", blend: true),
+              let label = pso("label_vertex", "label_fragment", blend: true),
               let terrainGround = pso("terrain_vertex", "terrain_ground_fragment", blend: false),
               let terrainShade = pso("terrain_vertex", "terrain_shade_fragment", blend: true),
               let terrainMask = pso("terrain_vertex", "terrain_mask_fragment", blend: false, colorWrite: false) else { return nil }
-        self.floor = floor; self.lattice = lattice; self.fill = fill; self.stencil = stencil; self.line = line; self.extrusion = extrusion; self.overlay = overlay
+        self.floor = floor; self.lattice = lattice; self.fill = fill; self.stencil = stencil; self.line = line; self.extrusion = extrusion; self.overlay = overlay; self.label = label
         self.terrainGround = terrainGround; self.terrainShade = terrainShade; self.terrainMask = terrainMask
 
         func ds(depth: Bool, test: Bool = false, stencil: MTLStencilDescriptor?) -> MTLDepthStencilState? {
@@ -252,7 +253,12 @@ final class MapRenderer: NSObject, MTKViewDelegate {
     /// Tiles of the current frame grouped by zoom, deepest level first (draw order).
     private var levels: [[GPUTile]] = []
     private var useClock: UInt64 = 0
-    static let maxGPUTiles = 60
+    /// Tiles kept on the GPU: a tilted view alone draws up to ~55 (cover plus stand-ins), and the
+    /// ones just scrolled out are the likeliest to come back.
+    static let maxGPUTiles = 160
+    static let maxGPUBytes = 320 << 20
+    private var gpuBytes = 0
+    private var uploadsPending = false
 
     private var uniformBlob = [UInt8](repeating: 0, count: MapUniformLayout.totalBytes)
     private var overlayInstances: [MapOverlayInstance] = []
@@ -260,13 +266,28 @@ final class MapRenderer: NSObject, MTKViewDelegate {
     private var overlayBufferIndex = 0
     private var inflight = DispatchSemaphore(value: 3)
 
+    // Labels: placed for the projection of the frame being encoded and drawn in the same pass.
+    private let planner = MapLabelPlanner()
+    private let atlas: MapLabelAtlas
+    private var plannerEpoch = -1
+    private var labelInstances: [MapLabelInstance] = []
+    private var labelBuffers: [MTLBuffer?] = [nil, nil, nil]
+    private var labelBufferIndex = 0
+    /// Cluster counts of the frame being encoded (text and the left end of its box, in points).
+    private var clusterCounts: [(text: String, left: SIMD2<Double>)] = []
+
     /// Drawing is wanted (window key and visible). While false, frames are kept and drawn once on resume.
     var isActive = true { didSet { if isActive && dirty { requestDraw() } } }
     private var dirty = false
     /// True while a drag is in progress (the view sets it); the label pass thins itself out.
     var dragging = false
-    /// Called after each frame is encoded with the projection it used, for label placement.
-    var onFrameDrawn: ((any MapScreenProjection, MapFrame) -> Void)?
+    #if DEBUG
+    /// Called after each frame is encoded with the projection it used (QA measurements).
+    var debugOnFrameDrawn: ((any MapScreenProjection) -> Void)?
+    /// Main-thread time of the last frame's label pass (placement and instances) and its label count.
+    private(set) var debugLastLabelMs: Double = 0
+    private(set) var debugLastLabelCount = 0
+    #endif
 
     // QA readouts (§3.3 C).
     var gpuTileCount: Int { gpuTiles.count }
@@ -275,6 +296,13 @@ final class MapRenderer: NSObject, MTKViewDelegate {
     #if DEBUG
     /// Main-thread time spent encoding the last frame (uniforms, tile matrices, overlays, commands).
     private(set) var debugLastEncodeCPUms: Double = 0
+    #endif
+
+    #if DEBUG
+    /// Tiles in the frame being drawn, and GPU uploads so far (count, main-thread milliseconds).
+    var debugFrameTiles: Set<TileID> { Set(frame?.tiles.map(\.id) ?? []) }
+    private(set) var debugUploads = 0
+    private(set) var debugUploadMs = 0.0
     #endif
 
     #if DEBUG
@@ -298,6 +326,7 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         self.pipes = pipes
         self.queue = queue
         self.view = view
+        atlas = MapLabelAtlas(device: device)
         super.init()
         view.device = device
         view.colorPixelFormat = MapPipelines.colorFormat
@@ -320,21 +349,47 @@ final class MapRenderer: NSObject, MTKViewDelegate {
     func setFrame(_ f: MapFrame) {
         if f.tileGeneration != tileGeneration {
             gpuTiles.removeAll()
+            gpuBytes = 0
             tileGeneration = f.tileGeneration
         }
         frame = f
         camera = f.camera
         useClock &+= 1
         var byZoom: [UInt8: [GPUTile]] = [:]
+        // Uploads are main-thread work: past a few milliseconds the rest wait for the next turn
+        // (the frame lists the view's tiles first, so what waits is the ring around it).
+        let started = CACurrentMediaTime()
+        var deferred = false
         for t in f.tiles {
             let gpu: GPUTile
             if let g = gpuTiles[t.id], g.revision == t.revision { gpu = g } else {
+                if CACurrentMediaTime() - started > 0.006 {
+                    deferred = true
+                    // The copy already on the GPU (older contours) still draws meanwhile.
+                    guard let stale = gpuTiles[t.id] else { continue }
+                    stale.lastUsed = useClock
+                    byZoom[t.id.z, default: []].append(stale)
+                    continue
+                }
+                #if DEBUG
+                let t0 = CACurrentMediaTime()
+                defer { debugUploads += 1; debugUploadMs += (CACurrentMediaTime() - t0) * 1000 }
+                #endif
                 guard let g = GPUTile(t, device: pipes.device) else { continue }
+                gpuBytes += g.bytes - (gpuTiles[t.id]?.bytes ?? 0)
                 gpuTiles[t.id] = g
                 gpu = g
             }
             gpu.lastUsed = useClock
             byZoom[t.id.z, default: []].append(gpu)
+        }
+        if deferred, !uploadsPending {
+            uploadsPending = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.uploadsPending = false
+                if let f = self.frame { let cam = self.camera; self.setFrame(f); if let cam { self.camera = cam } }
+            }
         }
         levels = byZoom.keys.sorted(by: >).map { byZoom[$0]! }
         updateDEMs(f)
@@ -376,9 +431,13 @@ final class MapRenderer: NSObject, MTKViewDelegate {
     }
 
     private func evict() {
-        guard gpuTiles.count > Self.maxGPUTiles else { return }
-        let victims = gpuTiles.values.sorted { $0.lastUsed < $1.lastUsed }.prefix(gpuTiles.count - Self.maxGPUTiles)
-        for v in victims where v.lastUsed != useClock { gpuTiles[v.id] = nil }
+        guard gpuTiles.count > Self.maxGPUTiles || gpuBytes > Self.maxGPUBytes else { return }
+        // Least recently drawn first; never a tile of the current frame.
+        for v in gpuTiles.values.sorted(by: { $0.lastUsed < $1.lastUsed }) {
+            guard gpuTiles.count > Self.maxGPUTiles || gpuBytes > Self.maxGPUBytes, v.lastUsed != useClock else { break }
+            gpuTiles[v.id] = nil
+            gpuBytes -= v.bytes
+        }
     }
 
     private func requestDraw() {
@@ -399,6 +458,10 @@ final class MapRenderer: NSObject, MTKViewDelegate {
         // The clear colour is read when the pass descriptor is made.
         let bg = frame.palette.bg0
         view.clearColor = MTLClearColor(red: Double(bg.x), green: Double(bg.y), blue: Double(bg.z), alpha: 1)
+        #if DEBUG
+        let d0 = CACurrentMediaTime()
+        defer { MapDebugTimes.add("draw", since: d0) }
+        #endif
         guard let drawable = view.currentDrawable, let pass = renderPass(resolvingInto: drawable.texture, clear: bg) else { return }
         let scale = Double(view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
         dirty = false
@@ -456,18 +519,23 @@ final class MapRenderer: NSObject, MTKViewDelegate {
     private func encode(frame: MapFrame, camera: MapCamera, pass: MTLRenderPassDescriptor, drawableSize: CGSize, scale: Double) -> MTLCommandBuffer? {
         #if DEBUG
         let t0 = CACurrentMediaTime()
-        defer { debugLastEncodeCPUms = (CACurrentMediaTime() - t0) * 1000 }
+        defer { debugLastEncodeCPUms = (CACurrentMediaTime() - t0) * 1000; MapDebugTimes.add("encode", since: t0) }
         #endif
         let viewportPt = SIMD2<Double>(drawableSize.width / scale, drawableSize.height / scale)
         let proj = mapProjection(camera: camera, viewport: viewportPt)
+        // The terrain lift follows the camera being drawn (not the one the frame was built for).
+        var frame = frame
+        frame.lift = frame.lift(for: camera, viewport: viewportPt)
         let globe = proj as? GlobeProjection          // fully a globe (no fills, no masks)
         let px = SIMD2<Float>(Float(drawableSize.width), Float(drawableSize.height))
         let pitched = globe == nil && frame.buildings && camera.pitch > 5
         let shade = globe == nil && frame.hillshade && proj is MapProjection
         let terrain3D = shade && !frame.lift.isFlat
         fillUniforms(frame: frame, proj: proj, viewportPx: px, scale: Float(scale), flat: !pitched, shade: shade, terrain3D: terrain3D)
+        let levels = visibleLevels(proj)
         for level in levels { for t in level { t.uniforms = tileUniforms(t, proj: proj) } }
         buildOverlays(frame: frame, proj: proj, scale: scale)
+        buildLabels(frame: frame, proj: proj, scale: scale)
 
         inflight.wait()
         guard let cmd = queue.makeCommandBuffer() else { inflight.signal(); return nil }
@@ -559,8 +627,11 @@ final class MapRenderer: NSObject, MTKViewDelegate {
                 }
             }
             encodeOverlays(enc, bindFrame)
+            encodeLabels(enc, bindFrame)
             enc.endEncoding()
-            onFrameDrawn?(proj, frame)
+            #if DEBUG
+            debugOnFrameDrawn?(proj)
+            #endif
             return cmd
         }
 
@@ -633,9 +704,101 @@ final class MapRenderer: NSObject, MTKViewDelegate {
 
         // 5. Overlays (CPU-projected, instanced SDF quads).
         encodeOverlays(enc, bindFrame)
+        encodeLabels(enc, bindFrame)
         enc.endEncoding()
-        onFrameDrawn?(proj, frame)
+        #if DEBUG
+        debugOnFrameDrawn?(proj)
+        #endif
         return cmd
+    }
+
+    /// The frame's levels without the tiles that are wholly off screen. The frame carries the ring
+    /// around the view (so ground is ready before it scrolls in); those cost nothing until they show.
+    private func visibleLevels(_ proj: any MapScreenProjection) -> [[GPUTile]] {
+        guard let flat = proj as? MapProjection else { return levels }
+        let vp = flat.viewport
+        // Room for what stands above the ground plane (raised terrain, buildings, glow).
+        let margin = 0.3 * max(vp.x, vp.y) + 200
+        func visible(_ t: GPUTile) -> Bool {
+            let (nw, se) = TileMath.bounds(t.id)
+            var lo = SIMD2<Double>(.infinity, .infinity), hi = -lo
+            for c in [nw, Mercator(x: se.x, y: nw.y), se, Mercator(x: nw.x, y: se.y)] {
+                guard let s = flat.screen(c) else { return true }      // reaches behind the camera: keep
+                lo = simd_min(lo, s); hi = simd_max(hi, s)
+            }
+            return hi.x > -margin && hi.y > -margin && lo.x < vp.x + margin && lo.y < vp.y + margin
+        }
+        var out: [[GPUTile]] = []
+        out.reserveCapacity(levels.count)
+        for level in levels {
+            let kept = level.filter(visible)
+            if !kept.isEmpty { out.append(kept) }
+        }
+        return out
+    }
+
+    // MARK: Labels
+
+    private static func labelColor(_ v: SIMD4<Float>, _ alpha: Float = 1) -> SIMD4<Float> { SIMD4(v.x, v.y, v.z, v.w * alpha) }
+
+    private func buildLabels(frame: MapFrame, proj: any MapScreenProjection, scale: Double) {
+        #if DEBUG
+        let t0 = CACurrentMediaTime()
+        defer { debugLastLabelMs = (CACurrentMediaTime() - t0) * 1000; debugLastLabelCount = labelInstances.count; MapDebugTimes.add("labels", since: t0) }
+        #endif
+        labelInstances.removeAll(keepingCapacity: true)
+        let placed = planner.place(frame: frame, projection: proj, counts: clusterCounts)
+        guard !placed.isEmpty else { return }
+        if atlas.texture == nil || atlas.scale != CGFloat(scale) || plannerEpoch != planner.epoch {
+            atlas.reset(scale: CGFloat(scale))
+            plannerEpoch = planner.epoch
+        }
+        func slots() -> [MapLabelAtlas.Slot?] {
+            placed.map { atlas.slot($0.id, text: planner.text(of: $0.id), bold: $0.style == .count, width: planner.width(of: $0.id)) }
+        }
+        var found = slots()
+        if found.contains(where: { $0 == nil }) {
+            // Full: start the atlas over and rasterise what this frame shows.
+            atlas.reset(scale: CGFloat(scale))
+            found = slots()
+        }
+        let p = frame.palette
+        let place = Self.labelColor(p.text), road = Self.labelColor(p.textDim), water = Self.labelColor(p.accent, 0.8)
+        let aw = Float(MapLabelAtlas.width), ah = Float(MapLabelAtlas.height)
+        for (l, slot) in zip(placed, found) {
+            guard let slot else { continue }
+            let half = SIMD2(Float(slot.w), Float(slot.h)) / 2
+            var c = SIMD2(Float(l.center.x * scale), Float(l.center.y * scale))
+            var rot = SIMD2<Float>(1, 0)
+            if l.angle == 0 {
+                // Level text sits on whole pixels (texels map 1:1, so it stays sharp).
+                c = (c - half).rounded(.toNearestOrAwayFromZero) + half
+            } else {
+                rot = SIMD2(Float(cos(l.angle)), Float(sin(l.angle)))
+            }
+            let color: SIMD4<Float>
+            switch l.style { case .place, .count: color = place; case .road: color = road; case .water: color = water }
+            labelInstances.append(MapLabelInstance(center: c, half: half,
+                                                   uv: SIMD4(Float(slot.x) / aw, Float(slot.y) / ah, Float(slot.x + slot.w) / aw, Float(slot.y + slot.h) / ah),
+                                                   color: color, rot: rot))
+        }
+    }
+
+    private func encodeLabels(_ enc: MTLRenderCommandEncoder, _ bindFrame: (MTLRenderCommandEncoder, Int?, Int?) -> Void) {
+        guard !labelInstances.isEmpty, let texture = atlas.texture else { return }
+        labelBufferIndex = (labelBufferIndex + 1) % labelBuffers.count
+        let need = labelInstances.count * MemoryLayout<MapLabelInstance>.stride
+        if (labelBuffers[labelBufferIndex]?.length ?? 0) < need {
+            labelBuffers[labelBufferIndex] = pipes.device.makeBuffer(length: max(need, 128 * MemoryLayout<MapLabelInstance>.stride), options: .storageModeShared)
+        }
+        guard let buf = labelBuffers[labelBufferIndex] else { return }
+        labelInstances.withUnsafeBytes { src in buf.contents().copyMemory(from: src.baseAddress!, byteCount: src.count) }
+        enc.setDepthStencilState(pipes.dsNone)
+        enc.setRenderPipelineState(pipes.label)
+        enc.setVertexBuffer(buf, offset: 0, index: 0)
+        bindFrame(enc, 2, nil)
+        enc.setFragmentTexture(texture, index: 0)
+        enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: labelInstances.count)
     }
 
     private func encodeOverlays(_ enc: MTLRenderCommandEncoder, _ bindFrame: (MTLRenderCommandEncoder, Int?, Int?) -> Void) {
@@ -851,11 +1014,15 @@ final class MapRenderer: NSObject, MTKViewDelegate {
             }
         }
 
-        // Clusters: ▣ blocks (the count is drawn as a label by the view).
+        // Clusters: ▣ blocks, each with its count as a label beside it.
+        clusterCounts.removeAll(keepingCapacity: true)
         for c in frame.clusters {
             guard let q = screen(c.world), onScreen(q) else { continue }
-            let side = Float(Self.clusterSide(c.count)) * s
-            add(.cluster, at: px(q), size: SIMD2(repeating: side + 2 * s), color: p.accent)
+            let side = Self.clusterSide(c.count)
+            add(.cluster, at: px(q), size: SIMD2(repeating: Float(side) * s + 2 * s), color: p.accent)
+            if c.count > 0, q.x > -40, q.y > -20, q.x < vp.x + 40, q.y < vp.y + 20 {
+                clusterCounts.append((Self.countText(c.count), SIMD2(q.x + side / 2 + 3, q.y)))
+            }
         }
 
         // You: accuracy ring and dot.
@@ -865,6 +1032,10 @@ final class MapRenderer: NSObject, MTKViewDelegate {
             add(.ring, at: px(q), size: SIMD2(repeating: r * 2 + 4 * s), color: ring, p: SIMD4(1 * s, 0, 0, 0))
             add(.locationDot, at: px(q), size: SIMD2(repeating: 22 * s), color: p.accent)
         }
+    }
+
+    static func countText(_ n: Int) -> String {
+        n >= 10_000 ? "\(n / 1000)K" : (n >= 1000 ? String(format: "%.1fK", Double(n) / 1000) : "\(n)")
     }
 
     /// Side of a cluster block in points for a count (grows slowly with log2).

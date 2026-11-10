@@ -37,8 +37,9 @@ final class TerrainStore {
     @ObservationIgnored private var wanted: Set<TileID> = []
     /// The wanted tiles in the order given (nearest first).
     @ObservationIgnored private var wantedList: [TileID] = []
+    @ObservationIgnored private var aheadSet: Set<TileID> = []
 
-    static let maxDEM = 48, maxTiles = 96
+    static let maxDEM = 96, maxTiles = 320
     /// Disk cap for cached elevation tiles (oldest removed first).
     nonisolated static let maxDiskBytes: Int64 = 150 << 20
     @ObservationIgnored private var bytesSinceTrim = 0
@@ -47,15 +48,19 @@ final class TerrainStore {
 
     /// The map tiles in view (nearest first); loads what's missing. Until a tile's own elevation
     /// arrives it borrows a coarser one already in memory, so nothing sits at the wrong height.
-    func want(_ ids: [TileID]) {
-        wanted = Set(ids); wantedList = ids
+    /// `ahead` (tiles around the view, loaded early) get their own elevation but never a borrowed one.
+    func want(_ ids: [TileID], ahead: [TileID] = []) {
+        wantedList = ids + ahead
+        wanted = Set(wantedList)
+        aheadSet = Set(ahead).subtracting(ids)
         guard enabled else { return }
         var borrowed = false
-        for t in ids where !building.contains(t) {
+        let direct = ids.count
+        for (k, t) in wantedList.enumerated() where !building.contains(t) {
             let d = Terrarium.demTile(for: t)
             if let have = tiles[t], !have.provisional { continue }
             if let heights = dem[d] { build(t, from: d, heights); continue }
-            if tiles[t] == nil, let (a, h) = loadedAncestor(of: d) {
+            if k < direct, tiles[t] == nil, let (a, h) = loadedAncestor(of: d) {
                 if let grid = Terrarium.grid(for: t, dem: a, heights: h, demSize: 256) {
                     insert(t, TileTerrain(grid: grid, contours: [], labels: [], provisional: true))
                     borrowed = true
@@ -67,6 +72,12 @@ final class TerrainStore {
             }
         }
         if borrowed { revision &+= 1 }
+    }
+
+    /// Runs the wanted list again (after a load finished and freed a slot).
+    private func pump() {
+        let direct = wantedList.filter { !aheadSet.contains($0) }
+        want(direct, ahead: wantedList.filter { aheadSet.contains($0) })
     }
 
     private func loadedAncestor(of d: TileID) -> (TileID, [Float])? {
@@ -81,7 +92,15 @@ final class TerrainStore {
     private func insert(_ t: TileID, _ terrain: TileTerrain) {
         tiles[t] = terrain
         tileOrder.removeAll { $0 == t }; tileOrder.append(t)
-        while tileOrder.count > Self.maxTiles { tiles[tileOrder.removeFirst()] = nil }
+        guard tileOrder.count > Self.maxTiles else { return }
+        // Oldest first, but never a tile the view is asking for (it would be rebuilt at once, and
+        // its geometry uploaded again).
+        var excess = tileOrder.count - Self.maxTiles
+        tileOrder.removeAll { id in
+            guard excess > 0, !wanted.contains(id) else { return false }
+            tiles[id] = nil; excess -= 1
+            return true
+        }
     }
 
     func clear() {
@@ -107,7 +126,7 @@ final class TerrainStore {
 
     private func loadDEM(_ d: TileID) async {
         // Afterwards, start whatever the in-flight cap held back.
-        defer { loadingDEM.remove(d); if enabled { want(wantedList) } }
+        defer { loadingDEM.remove(d); if enabled { pump() } }
         // Disk read and decode together, off the main thread.
         let url = file(d)
         if let cached = await Task.detached(priority: .userInitiated, operation: { () -> [Float]? in
@@ -145,7 +164,15 @@ final class TerrainStore {
     private func store(_ d: TileID, _ heights: [Float]) {
         dem[d] = heights
         demOrder.removeAll { $0 == d }; demOrder.append(d)
-        while demOrder.count > Self.maxDEM { dem[demOrder.removeFirst()] = nil }
+        if demOrder.count > Self.maxDEM {
+            let needed = Set(wantedList.map { Terrarium.demTile(for: $0) })
+            var excess = demOrder.count - Self.maxDEM
+            demOrder.removeAll { id in
+                guard excess > 0, id != d, !needed.contains(id) else { return false }
+                dem[id] = nil; excess -= 1
+                return true
+            }
+        }
         for t in wantedList where Terrarium.demTile(for: t) == d && (tiles[t]?.provisional ?? true) { build(t, from: d, heights) }
     }
 

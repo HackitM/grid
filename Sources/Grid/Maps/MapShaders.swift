@@ -99,6 +99,7 @@ enum MapUniformLayout {
         assert(MemoryLayout<MapFrameScalars>.size == 528 && MemoryLayout<MapFrameScalars>.stride == 528, "FrameU scalars")
         assert(MemoryLayout<MapTileUniforms>.stride == 112, "TileU")
         assert(MemoryLayout<MapOverlayInstance>.stride == 64, "OverlayInst")
+        assert(MemoryLayout<MapLabelInstance>.stride == 64, "LabelInst")
         assert(MemoryLayout<LineVertex>.stride == 32 && MemoryLayout<ExtrusionVertex>.stride == 16, "vertex structs")
     }
     static let tableBytes = mapClassTableCount * MemoryLayout<SIMD4<Float>>.stride
@@ -140,6 +141,7 @@ struct DrawU { uint cls; };
 struct LineVertex { float2 pos; float2 normal; float side; float along; ushort cls; ushort flags; };
 struct ExtrusionVertex { float2 pos; float height; ushort shade; ushort flags; };
 struct OverlayInst { float2 center; float2 size; float4 color; float4 p; uint kind; float q0; float q1; float q2; };
+struct LabelInst { float2 center; float2 ext; float4 uv; float4 color; float2 rot; float2 pad; };
 
 static float4 premul(float4 c, float a) { float k = c.a * a; return float4(c.rgb * k, k); }
 static float4 over(float4 dst, float4 src) { return src + dst * (1.0 - src.a); }
@@ -612,5 +614,33 @@ fragment float4 overlay_fragment(OverlayOut in [[stage_in]], constant FrameU& u 
     }
     a *= in.color.a;
     return float4(rgb * a, a);
+}
+
+// ---------------------------------------------------------------- labels (instanced atlas quads)
+
+struct LabelOut {
+    float4 pos [[position]];
+    float2 uv;
+    float4 color [[flat]];
+};
+
+vertex LabelOut label_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
+                             const device LabelInst* inst [[buffer(0)]], constant FrameU& u [[buffer(2)]]) {
+    LabelInst i = inst[iid];
+    float2 corner = float2(float(vid & 1), float((vid >> 1) & 1));           // strip: (0,0) (1,0) (0,1) (1,1)
+    float2 local = (corner * 2.0 - 1.0) * i.ext;
+    float2 screen = i.center + float2(local.x * i.rot.x - local.y * i.rot.y, local.x * i.rot.y + local.y * i.rot.x);
+    float2 ndc = screen / u.viewportPx * 2.0 - 1.0;
+    LabelOut o;
+    o.pos = float4(ndc.x, -ndc.y, 0.0, 1.0);
+    o.uv = mix(i.uv.xy, i.uv.zw, corner);
+    o.color = i.color;
+    return o;
+}
+
+fragment float4 label_fragment(LabelOut in [[stage_in]], texture2d<float> atlas [[texture(0)]]) {
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    float a = atlas.sample(s, in.uv).r * in.color.a;
+    return float4(in.color.rgb * a, a);
 }
 """
