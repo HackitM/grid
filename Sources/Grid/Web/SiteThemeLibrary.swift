@@ -18,6 +18,8 @@ final class SiteThemeLibrary {
         case idle
         case checking
         case done(updated: Int, at: Date)
+        /// The repository has no theme index (nothing published there yet).
+        case nothingPublished(at: Date)
         case failed(String)
     }
 
@@ -165,7 +167,13 @@ final class SiteThemeLibrary {
         updateState = .checking
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "browser.themes.lastCheck")
         do {
-            let indexData = try await Self.get(Self.feedBase.appendingPathComponent("index.json"), maxBytes: SiteThemeIndex.maxBytes)
+            let indexData: Data
+            do {
+                indexData = try await Self.get(Self.feedBase.appendingPathComponent("index.json"), maxBytes: SiteThemeIndex.maxBytes)
+            } catch FeedError.http(404) {
+                updateState = .nothingPublished(at: Date())
+                return
+            }
             let index = try SiteThemeIndex.parse(indexData)
             let appVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String).flatMap(SemanticVersion.init)
             var updated = 0

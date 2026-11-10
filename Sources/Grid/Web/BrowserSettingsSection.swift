@@ -21,6 +21,7 @@ struct BrowserSettingsSection: View {
         case .idle: "Themes update from GRID’s repository when you check."
         case .checking: "Checking for theme updates…"
         case .done(let n, let at): (n == 0 ? "Themes are up to date" : "\(n) theme\(n == 1 ? "" : "s") updated") + " · " + at.formatted(date: .omitted, time: .shortened)
+        case .nothingPublished(let at): "No theme updates are published yet; using the themes inside GRID · " + at.formatted(date: .omitted, time: .shortened)
         case .failed(let m): "△ \(m)"
         }
     }
