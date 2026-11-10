@@ -149,10 +149,9 @@ struct InspectorContent: View {
     }
 
     private func load() async {
-        let url = entry.url, e = entry
+        let e = entry
         details = await Task.detached { FileDetails.read(e) }.value
         preview = await Self.makePreview(e)
-        _ = url
     }
 
     static func makePreview(_ e: FileEntry) async -> Preview {

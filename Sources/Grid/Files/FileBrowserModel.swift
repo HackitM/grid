@@ -19,10 +19,24 @@ final class FileBrowserModel {
     private var backStack: [URL] = []
     private var forwardStack: [URL] = []
 
-    var sortKey: FileSortKey = .name { didSet { recomputeVisible() } }
-    var ascending = true { didSet { recomputeVisible() } }
-    var query = "" { didSet { if mode == .deep { scheduleDeepSearch() }; recomputeVisible() } }
-    var mode: FileSearchMode = .here { didSet { if mode == .deep { scheduleDeepSearch() } else { cancelDeepSearch() }; recomputeVisible() } }
+    // Each of these re-flattens (and re-sorts) the outline, so they only react to a real change:
+    // navigating resets `query` and `mode` every time, which used to sort the old folder twice.
+    var sortKey: FileSortKey = .name { didSet { if sortKey != oldValue { recomputeVisible() } } }
+    var ascending = true { didSet { if ascending != oldValue { recomputeVisible() } } }
+    var query = "" {
+        didSet {
+            guard query != oldValue else { return }
+            if mode == .deep { scheduleDeepSearch() }
+            recomputeVisible()
+        }
+    }
+    var mode: FileSearchMode = .here {
+        didSet {
+            guard mode != oldValue else { return }
+            if mode == .deep { scheduleDeepSearch() } else { cancelDeepSearch() }
+            recomputeVisible()
+        }
+    }
 
     /// Primary ("cursor") selection: drives the inspector and keyboard movement. Setting it
     /// directly makes it the only selected item.
@@ -228,13 +242,9 @@ final class FileBrowserModel {
     private func load() {
         loadTask?.cancel()
         loading = true
-        let url = currentURL, hidden = settings.showHiddenFiles
+        let url = currentURL, hidden = settings.showHiddenFiles, key = sortKey, asc = ascending
         loadTask = Task { [weak self] in
-            let result = await Task.detached(priority: .userInitiated) { () -> Result<[FileEntry], ListingError> in
-                do { return .success(try FileListing.list(url, showHidden: hidden)) }
-                catch let e as ListingError { return .failure(e) }
-                catch { return .failure(.other(url.path, error.localizedDescription)) }
-            }.value
+            let result = await Self.listing(of: url, showHidden: hidden, sortKey: key, ascending: asc)
             guard let self, !Task.isCancelled, self.currentURL == url else { return }
             self.loading = false
             switch result {
@@ -257,6 +267,24 @@ final class FileBrowserModel {
                 self.unwatch()
             }
         }
+    }
+
+    /// Lists one folder off the main thread, already in the current sort order. The outline is
+    /// flattened (and sorted per level) on the main thread; handing it sorted input turns that
+    /// sort into a single confirming pass, which is what keeps opening a folder with tens of
+    /// thousands of items from stalling the UI.
+    nonisolated private static func listing(of url: URL, showHidden: Bool, sortKey: FileSortKey,
+                                            ascending: Bool) async -> Result<[FileEntry], ListingError> {
+        await Task.detached(priority: .userInitiated) {
+            do {
+                let items = try FileListing.list(url, showHidden: showHidden)
+                return .success(FileListing.sorted(items, by: sortKey, ascending: ascending))
+            } catch let e as ListingError {
+                return .failure(e)
+            } catch {
+                return .failure(.other(url.path, error.localizedDescription))
+            }
+        }.value
     }
 
     /// Drops selected ids that no longer resolve to a loaded entry.
@@ -337,7 +365,7 @@ final class FileBrowserModel {
     private func loadChildren(of id: String, silent: Bool) {
         guard let e = entryIndex[id] else { return }
         childTasks[id]?.cancel()
-        let url = e.url, hidden = settings.showHiddenFiles
+        let url = e.url, hidden = settings.showHiddenFiles, key = sortKey, asc = ascending
         if !silent {
             // Only show the inline "loading…" row if the listing is actually slow.
             Task { [weak self] in
@@ -348,11 +376,7 @@ final class FileBrowserModel {
             }
         }
         childTasks[id] = Task { [weak self] in
-            let result = await Task.detached(priority: .userInitiated) { () -> Result<[FileEntry], ListingError> in
-                do { return .success(try FileListing.list(url, showHidden: hidden)) }
-                catch let e as ListingError { return .failure(e) }
-                catch { return .failure(.other(url.path, error.localizedDescription)) }
-            }.value
+            let result = await Self.listing(of: url, showHidden: hidden, sortKey: key, ascending: asc)
             guard let self, !Task.isCancelled else { return }
             self.childTasks[id] = nil
             switch result {
@@ -406,16 +430,20 @@ final class FileBrowserModel {
             childReloadWork[path] = nil
         }
         for path in wanted where childWatchers[path] == nil {
-            let fd = Darwin.open(path, O_EVTONLY)
-            guard fd >= 0 else { continue }
-            let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
-            src.setEventHandler { [weak self] in
-                MainActor.assumeIsolated { self?.debouncedChildReload(path) }
-            }
-            src.setCancelHandler { Darwin.close(fd) }
-            src.resume()
-            childWatchers[path] = src
+            childWatchers[path] = Self.makeWatcher(path: path) { [weak self] in self?.debouncedChildReload(path) }
         }
+    }
+
+    /// Watches one folder for changes (event-only descriptor: it does not keep a volume from
+    /// unmounting and reads nothing). Nil when the folder can't be opened, e.g. no permission.
+    private static func makeWatcher(path: String, onChange: @escaping @MainActor () -> Void) -> DispatchSourceFileSystemObject? {
+        let fd = Darwin.open(path, O_EVTONLY | O_CLOEXEC)
+        guard fd >= 0 else { return nil }
+        let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
+        src.setEventHandler { MainActor.assumeIsolated { onChange() } }
+        src.setCancelHandler { Darwin.close(fd) }
+        src.resume()
+        return src
     }
 
     private func debouncedChildReload(_ path: String) {
@@ -433,15 +461,7 @@ final class FileBrowserModel {
 
     private func watch(_ url: URL) {
         unwatch()
-        let fd = Darwin.open(url.path, O_EVTONLY)
-        guard fd >= 0 else { return }
-        let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
-        src.setEventHandler { [weak self] in
-            MainActor.assumeIsolated { self?.debouncedReload() }
-        }
-        src.setCancelHandler { Darwin.close(fd) }
-        src.resume()
-        watcher = src
+        watcher = Self.makeWatcher(path: url.path) { [weak self] in self?.debouncedReload() }
     }
 
     private func unwatch() {
@@ -549,16 +569,24 @@ final class FileBrowserModel {
     /// Terminal-like apps that execute the file they are asked to open.
     static let executingApps: Set<String> = ["com.apple.Terminal", "com.googlecode.iterm2", "com.mitchellh.ghostty",
                                              "net.kovidgoyal.kitty", "com.github.wez.wezterm", "io.alacritty",
-                                             "dev.warp.Warp-Stable", "co.zeit.hyper"]
+                                             "dev.warp.Warp-Stable", "co.zeit.hyper",
+                                             // Runs a .jar as a program.
+                                             "com.apple.JarLauncher"]
 
     /// Non-nil when "opening" this file would execute it (Finder semantics), with a short reason.
+    ///
+    /// A symlink is judged by what it points at: the link's own type is just "alias", so a link
+    /// to a script or binary would otherwise be run without the question.
     func runReason(_ url: URL) -> String? {
+        let target = url.resolvingSymlinksInPath()
         // Apps and other bundles are launched deliberately; that is what opening them means.
-        if NSWorkspace.shared.isFilePackage(atPath: url.path) { return nil }
-        if let app = defaultApp(for: url), let bid = Bundle(url: app)?.bundleIdentifier, Self.executingApps.contains(bid) {
-            return "Its default app is \(app.deletingPathExtension().lastPathComponent), which runs it as a program."
+        if NSWorkspace.shared.isFilePackage(atPath: target.path) { return nil }
+        for candidate in target == url ? [url] : [url, target] {
+            if let app = defaultApp(for: candidate), let bid = Bundle(url: app)?.bundleIdentifier, Self.executingApps.contains(bid) {
+                return "Its default app is \(app.deletingPathExtension().lastPathComponent), which runs it as a program."
+            }
         }
-        if let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType, type.conforms(to: .unixExecutable) {
+        if let type = try? target.resourceValues(forKeys: [.contentTypeKey]).contentType, type.conforms(to: .unixExecutable) {
             return "It is an executable program."
         }
         return nil
