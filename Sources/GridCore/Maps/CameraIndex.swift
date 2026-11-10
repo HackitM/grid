@@ -71,6 +71,18 @@ public struct CameraIndex: Sendable {
         return out
     }
 
+    /// How many cameras are inside the box: `query(box).count` without building or sorting the
+    /// list (asked many times a second while the map moves).
+    public func count(in box: BBox) -> Int {
+        guard box.isValid, !cameras.isEmpty else { return 0 }
+        let a = TileMath.project(LonLat(lon: box.west, lat: box.north)), b = TileMath.project(LonLat(lon: box.east, lat: box.south))
+        var n = 0
+        forEachCandidate(minX: a.x, minY: a.y, maxX: b.x, maxY: b.y) { i in
+            if box.contains(cameras[i].coordinate) { n += 1 }
+        }
+        return n
+    }
+
     /// Grid clusters (cells of `cellWorld` Mercator units) of the cameras in the box. A cell with
     /// one camera is that camera. Sorted by representative index.
     public func clusters(_ box: BBox, cellWorld: Double) -> [CameraCluster] {
@@ -83,6 +95,8 @@ public struct CameraIndex: Sendable {
         var cells: [Cell: Acc] = [:]
         for i in idx {   // ascending, so the first camera seen is the lowest index
             let m = mercator[i]
+            // A camera without a usable position (possible only if built by hand) has no cell.
+            guard m.x.isFinite, m.y.isFinite, abs(m.x) <= 4, abs(m.y) <= 4 else { continue }
             let c = Cell(x: Int64((m.x / cellWorld).rounded(.down)), y: Int64((m.y / cellWorld).rounded(.down)))
             var acc = cells[c] ?? Acc(count: 0, sum: .zero, rep: i)
             acc.count += 1; acc.sum += m
