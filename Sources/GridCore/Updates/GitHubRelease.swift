@@ -70,6 +70,16 @@ public struct UpdateFeed: Sendable {
         return parts.count >= 2 && parts[0].lowercased() == owner.lowercased() && parts[1].lowercased() == repo.lowercased()
     }
 
+    /// Whether a download may be redirected to `url`. GitHub serves release assets from its own
+    /// CDN (`objects.githubusercontent.com`, `release-assets.githubusercontent.com`), so the first
+    /// request to github.com always redirects; anything that is not HTTPS on a GitHub-owned host
+    /// is refused rather than followed.
+    public static func isTrustedDownloadHost(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https", url.user == nil, url.password == nil,
+              url.port == nil || url.port == 443, let host = url.host?.lowercased() else { return false }
+        return host == "github.com" || host.hasSuffix(".github.com") || host.hasSuffix(".githubusercontent.com")
+    }
+
     /// Drops a release whose page or download links leave the repository (a tampered or
     /// unexpected response); keeps only asset links under `/releases/download/`.
     public func validated(_ r: GitHubRelease) -> GitHubRelease? {

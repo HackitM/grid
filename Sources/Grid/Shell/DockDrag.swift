@@ -78,7 +78,11 @@ final class DockDrag {
     /// Applies a drop (set by AppState).
     @ObservationIgnored var perform: (DragPayload, DockTarget, DropEdge?) -> Void = { _, _, _ in }
 
+    /// Esc was pressed during the current gesture: its remaining events are ignored.
     @ObservationIgnored private var cancelled = false
+    /// Where the gesture that was cancelled began, to recognise a later, different gesture.
+    @ObservationIgnored private var cancelledGestureStart: CGPoint?
+    @ObservationIgnored private var activeGestureStart: CGPoint?
     @ObservationIgnored private var escMonitor: Any?
     @ObservationIgnored private var pushedCursor = false
 
@@ -96,8 +100,16 @@ final class DockDrag {
 
     // MARK: Gesture plumbing (called by `dockDragSource`)
 
-    func changed(_ p: DragPayload, label: String, location: CGPoint) {
-        if cancelled { return }                  // Esc pressed: ignore the rest of this gesture
+    /// `gestureStart` is where this drag gesture began. If the source view goes away mid-drag
+    /// (its tab closes, its panel is hidden), SwiftUI never reports the gesture's end; a gesture
+    /// with a different start then shows that the cancelled one is over.
+    func changed(_ p: DragPayload, label: String, location: CGPoint, gestureStart: CGPoint? = nil) {
+        if cancelled {
+            // Esc pressed: ignore the rest of that gesture, but not the next one.
+            guard let gestureStart, let old = cancelledGestureStart, old != gestureStart else { return }
+            reset()
+        }
+        activeGestureStart = gestureStart
         if payload == nil { begin(p, label: label) }
         self.location = location
         let h = resolveHover(at: location)
@@ -113,6 +125,7 @@ final class DockDrag {
     func cancel() {
         guard payload != nil else { return }
         cancelled = true
+        cancelledGestureStart = activeGestureStart
         clearVisuals()
     }
 
@@ -139,6 +152,8 @@ final class DockDrag {
     private func reset() {
         clearVisuals()
         cancelled = false
+        cancelledGestureStart = nil
+        activeGestureStart = nil
     }
 
     // MARK: Hit testing
@@ -232,7 +247,7 @@ extension View {
     func dockDragSource(_ payload: DragPayload, label: String) -> some View {
         gesture(
             DragGesture(minimumDistance: 5, coordinateSpace: .global)
-                .onChanged { v in DockDrag.shared.changed(payload, label: label, location: v.location) }
+                .onChanged { v in DockDrag.shared.changed(payload, label: label, location: v.location, gestureStart: v.startLocation) }
                 .onEnded { _ in DockDrag.shared.ended() }
         )
     }

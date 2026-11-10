@@ -121,8 +121,7 @@ public struct TileSource: Sendable, Equatable {
         for (e, r) in [("&copy;", "©"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&amp;", "&")] {
             out = out.replacingOccurrences(of: e, with: r)
         }
-        let cleaned = out.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) || $0 == " " }
-        let words = String(String.UnicodeScalarView(cleaned)).split(whereSeparator: { $0.isWhitespace })
+        let words = DisplayText.stripped(out, keepingBidi: true).split(whereSeparator: { $0.isWhitespace })
         return String(words.joined(separator: " ").prefix(maxAttributionLength))
     }
 }

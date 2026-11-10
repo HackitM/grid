@@ -62,12 +62,17 @@ enum MapRouteExport {
         }
     }
 
-    /// A file name from free text: no slashes, colons or control characters, at most 80 characters.
+    /// A file name from free text (place names can come from the search server): no slashes,
+    /// colons, control or invisible formatting characters, no leading or trailing dots or spaces,
+    /// at most 80 characters. The save panel adds the extension and the user picks the folder.
     static func safeFileName(_ s: String) -> String {
-        let bad = CharacterSet(charactersIn: "/:\\").union(.controlCharacters)
+        let bad = CharacterSet(charactersIn: "/:\\").union(.controlCharacters).union(.newlines)
+        let edges = CharacterSet.whitespaces.union(CharacterSet(charactersIn: "."))
         let cleaned = String(String.UnicodeScalarView(s.unicodeScalars.map { bad.contains($0) ? " " : $0 }))
-            .trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ".")))
-        return cleaned.isEmpty ? "GRID route" : String(cleaned.prefix(80))
+            .trimmingCharacters(in: edges)
+        // Cutting to length can expose a new trailing space or dot.
+        let name = String(cleaned.prefix(80)).trimmingCharacters(in: edges)
+        return name.isEmpty ? "GRID route" : name
     }
 
     // MARK: Print

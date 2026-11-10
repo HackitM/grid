@@ -10,8 +10,12 @@ public enum MVTDecoder {
     /// are skipped without looking at their features).
     public static func decode(_ data: Data, layers wanted: Set<String>? = nil, limits: MVTLimits = .init()) throws -> MVTTile {
         guard data.count <= limits.maxBytes else { throw MVTError.tooLarge }
-        let bytes = [UInt8](data)
-        var reader = PBReader(bytes, 0..<bytes.count)
+        // Decoded in place: the readers below borrow the bytes and never outlive this call.
+        return try data.withUnsafeBytes { raw in try decodeTile(raw.bindMemory(to: UInt8.self), wanted, limits) }
+    }
+
+    private static func decodeTile(_ bytes: UnsafeBufferPointer<UInt8>, _ wanted: Set<String>?, _ limits: MVTLimits) throws -> MVTTile {
+        var reader = PBReader(bytes)
         var out: [MVTLayer] = []
         var layerCount = 0
         var geometryBudget = max(0, limits.maxGeometryInts)
@@ -34,7 +38,7 @@ public enum MVTDecoder {
 
     // MARK: Layer
 
-    private static func decodeLayer(_ bytes: [UInt8], _ range: Range<Int>, _ wanted: Set<String>?, _ limits: MVTLimits,
+    private static func decodeLayer(_ bytes: UnsafeBufferPointer<UInt8>, _ range: Range<Int>, _ wanted: Set<String>?, _ limits: MVTLimits,
                                     _ geometryBudget: inout Int, _ geom: inout [UInt32], _ tagScratch: inout [UInt32]) throws -> MVTLayer? {
         // Pass 1: find the name without parsing anything else.
         var nameRange: Range<Int>?
@@ -97,7 +101,7 @@ public enum MVTDecoder {
 
     // MARK: Values
 
-    private static func parseValue(_ bytes: [UInt8], _ range: Range<Int>, _ limits: MVTLimits) -> MVTValue? {
+    private static func parseValue(_ bytes: UnsafeBufferPointer<UInt8>, _ range: Range<Int>, _ limits: MVTLimits) -> MVTValue? {
         var r = PBReader(bytes, range)
         var result: MVTValue?
         do {
@@ -108,18 +112,10 @@ public enum MVTDecoder {
                     if sr.count > limits.maxStringBytes { result = nil; continue }
                     if let s = String(bytes: bytes[sr], encoding: .utf8) { result = .string(s) } else { result = nil }
                 case (2, 5):
-                    guard r.i + 4 <= r.end else { return nil }
-                    var bits: UInt32 = 0
-                    for k in 0..<4 { bits |= UInt32(bytes[r.i + k]) << UInt32(8 * k) }
-                    r.i += 4
-                    let f = Float(bitPattern: bits)
+                    let f = Float(bitPattern: try r.fixed32())
                     result = f.isFinite ? .double(Double(f)) : nil
                 case (3, 1):
-                    guard r.i + 8 <= r.end else { return nil }
-                    var bits: UInt64 = 0
-                    for k in 0..<8 { bits |= UInt64(bytes[r.i + k]) << UInt64(8 * k) }
-                    r.i += 8
-                    let d = Double(bitPattern: bits)
+                    let d = Double(bitPattern: try r.fixed64())
                     result = d.isFinite ? .double(d) : nil
                 case (4, 0):
                     result = .int(Int64(bitPattern: try r.varint()))
@@ -128,7 +124,7 @@ public enum MVTDecoder {
                     result = v <= UInt64(Int64.max) ? .int(Int64(v)) : .double(Double(v))
                 case (6, 0):
                     let v = try r.varint()
-                    result = .int(Int64(bitPattern: v >> 1) ^ -Int64(bitPattern: v & 1))
+                    result = .int(PBReader.zigzag(v))
                 case (7, 0):
                     result = .bool(try r.varint() != 0)
                 default:
@@ -143,7 +139,7 @@ public enum MVTDecoder {
 
     // MARK: Features
 
-    private static func decodeFeature(_ bytes: [UInt8], _ range: Range<Int>, _ keys: [String?], _ values: [MVTValue?], _ extent: Int32,
+    private static func decodeFeature(_ bytes: UnsafeBufferPointer<UInt8>, _ range: Range<Int>, _ keys: [String?], _ values: [MVTValue?], _ extent: Int32,
                                       _ limits: MVTLimits, _ budget: inout Int, _ ints: inout [UInt32], _ tagInts: inout [UInt32]) throws -> MVTFeature? {
         var id: UInt64?
         var type = 0
@@ -278,56 +274,5 @@ public enum MVTDecoder {
         out.reserveCapacity(pts.count)
         for p in pts where out.last != p { out.append(p) }
         return out
-    }
-}
-
-// MARK: - Protobuf reader
-
-struct PBReader {
-    let b: [UInt8]
-    var i: Int
-    let end: Int
-
-    init(_ bytes: [UInt8], _ range: Range<Int>) { b = bytes; i = range.lowerBound; end = range.upperBound }
-
-    mutating func varint() throws -> UInt64 {
-        var result: UInt64 = 0
-        var shift: UInt64 = 0
-        for k in 0..<10 {
-            guard i < end else { throw MVTError.truncated }
-            let byte = b[i]; i += 1
-            if k == 9 && byte > 1 { throw MVTError.malformed("varint overflow") }
-            result |= UInt64(byte & 0x7f) << shift
-            if byte & 0x80 == 0 { return result }
-            shift += 7
-        }
-        throw MVTError.malformed("varint too long")
-    }
-
-    /// Next (field number, wire type), or nil at the end of the message.
-    mutating func nextField() throws -> (Int, Int)? {
-        guard i < end else { return nil }
-        let key = try varint()
-        let field = Int(key >> 3)
-        guard field > 0 else { throw MVTError.malformed("field 0") }
-        return (field, Int(key & 7))
-    }
-
-    mutating func lengthDelimited() throws -> Range<Int> {
-        let len = try varint()
-        guard len <= UInt64(end - i) else { throw MVTError.truncated }
-        let r = i..<(i + Int(len))
-        i = r.upperBound
-        return r
-    }
-
-    mutating func skip(_ wire: Int) throws {
-        switch wire {
-        case 0: _ = try varint()
-        case 1: guard end - i >= 8 else { throw MVTError.truncated }; i += 8
-        case 2: _ = try lengthDelimited()
-        case 5: guard end - i >= 4 else { throw MVTError.truncated }; i += 4
-        default: throw MVTError.malformed("wire type \(wire)")
-        }
     }
 }

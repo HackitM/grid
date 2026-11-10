@@ -243,7 +243,7 @@ when that folder is itself inside (you navigated there). `/dev` is never readabl
 - `userInitiated`: runs only while `onAction` handles your click, **once per click**. Required
   for commands that change things (kill, `brew services start`, `git push`, …, marked △ at
   approval); read-only commands may run on refresh. `kill`/`pkill`/`killall` can never target GRID
-  or a widget host.
+  or a widget host, by process id or by the names `Grid` and `GridWidgetHost`.
 - Commands run **without a shell**, with a clean environment, in a temporary working folder, under
   a sandbox that blocks all networking including local sockets such as ssh-agent or docker
   (unless `net: true`), file writes outside that temporary folder (unless `writes: true`),
@@ -276,7 +276,8 @@ or contacts.
 - **Budgets.** A widget is paused, with the reason shown, if a render or action uses more than
   2 s of its own time (time spent waiting on GRID doesn't count) or 30 s of wall-clock time
   (longer if an approved command's timeout needs it), it sustains more than 25% of a CPU core for
-  10 s, it goes over 150 MB of memory, it has more than 32 calls in flight, or it sends malformed or
+  10 s, it goes over 150 MB of memory, it has more than 32 calls in flight, it sends more than
+  3,000 messages in half a second (logs and `invalidate()` included), or it sends malformed or
   oversized messages.
   It restarts after 5 s, then 10 s; after 3 strikes it stays stopped until you press Restart.
 - **Rate limits.** `exec` and `net`: bursts of 10, then 30 per minute each; all other calls 600

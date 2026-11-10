@@ -122,44 +122,23 @@ final class BrowserExtensions: NSObject {
 
     // MARK: Install / remove
 
-    /// Picks a folder or .zip, reviews what it asks for, then installs.
+    /// Installs from a folder, .zip or .crx the user picked: unpack, check, review, copy, load.
     func install(from source: URL, app: AppState) async {
         let staging = FileManager.default.temporaryDirectory.appendingPathComponent("grid-ext-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: staging) }
         do {
-            var root = source
-            if source.pathExtension.lowercased() == "zip" || source.pathExtension.lowercased() == "crx" {
-                try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
-                let zip = source.pathExtension.lowercased() == "crx" ? try Self.stripCRXHeader(source, into: staging) : source
-                let p = Process()
-                p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-                p.arguments = ["-x", "-k", zip.path, staging.appendingPathComponent("x").path]
-                try p.run(); p.waitUntilExit()
-                guard p.terminationStatus == 0 else { throw NSError(domain: "GRID", code: 1, userInfo: [NSLocalizedDescriptionKey: "Couldn't unpack the archive."]) }
-                root = staging.appendingPathComponent("x")
-                // An archive with a single top folder: use it.
-                if !FileManager.default.fileExists(atPath: root.appendingPathComponent("manifest.json").path),
-                   let only = try? FileManager.default.contentsOfDirectory(atPath: root.path).filter({ !$0.hasPrefix(".") }), only.count == 1 {
-                    root = root.appendingPathComponent(only[0])
-                }
-            }
-            guard FileManager.default.fileExists(atPath: root.appendingPathComponent("manifest.json").path) else {
-                throw NSError(domain: "GRID", code: 2, userInfo: [NSLocalizedDescriptionKey: "No manifest.json: not a browser extension."])
-            }
-            try Self.validateTree(root)
+            // Unpacking and walking the tree can take seconds for a large extension: off the main thread.
+            let root = try await BlockingWork.run { Result { try Self.unpackedRoot(of: source, staging: staging) } }.get()
             let probe = try await WKWebExtension(resourceBaseURL: root)
             let name = probe.displayName ?? root.lastPathComponent
             let perms = probe.requestedPermissions.map(\.rawValue).sorted()
             let hosts = probe.allRequestedMatchPatterns.map(\.string).sorted()
-            let ok = await confirm(app, name: name, version: probe.displayVersion ?? "", perms: perms, hosts: hosts)
-            guard ok else { return }
+            guard await confirm(app, name: name, version: probe.displayVersion ?? "", perms: perms, hosts: hosts) else { return }
             let id = UUID().uuidString
             let dest = Self.dir.appendingPathComponent(id, isDirectory: true)
-            try FileManager.default.copyItem(at: root, to: dest)
-            do { try Self.validateTree(dest) } catch { try? FileManager.default.removeItem(at: dest); throw error }
+            try await BlockingWork.run { Result { try Self.copyValidated(root, to: dest) } }.get()
             // Approve exactly what was reviewed (re-applied on every launch by `load`).
-            let entry = Installed(id: id, folder: id, enabled: true,
-                                  permissions: probe.requestedPermissions.map(\.rawValue), matchPatterns: probe.allRequestedMatchPatterns.map(\.string))
+            let entry = Installed(id: id, folder: id, enabled: true, permissions: perms, matchPatterns: hosts)
             installed.append(entry)
             let item = await load(entry)
             items.append(item)
@@ -167,6 +146,57 @@ final class BrowserExtensions: NSObject {
             app.flash(.info, "Installed \(name)")
         } catch {
             app.flash(.error, "Couldn't install: \(error.localizedDescription)")
+        }
+    }
+
+    nonisolated private static func failure(_ code: Int, _ message: String) -> NSError {
+        NSError(domain: "GRID", code: code, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    /// The folder holding manifest.json: `source` itself, or an archive unpacked into `staging`.
+    /// The tree is validated before it is returned. Runs off the main thread.
+    nonisolated private static func unpackedRoot(of source: URL, staging: URL) throws -> URL {
+        let fm = FileManager.default
+        var root = source
+        let kind = source.pathExtension.lowercased()
+        if kind == "zip" || kind == "crx" {
+            try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+            let zip = kind == "crx" ? try stripCRXHeader(source, into: staging) : source
+            root = staging.appendingPathComponent("x")
+            try unzip(zip, to: root)
+            // An archive with a single top folder: use it.
+            if !fm.fileExists(atPath: root.appendingPathComponent("manifest.json").path),
+               let only = try? fm.contentsOfDirectory(atPath: root.path).filter({ !$0.hasPrefix(".") }), only.count == 1 {
+                root = root.appendingPathComponent(only[0])
+            }
+        }
+        guard fm.fileExists(atPath: root.appendingPathComponent("manifest.json").path) else {
+            throw failure(2, "No manifest.json: not a browser extension.")
+        }
+        try validateTree(root)
+        return root
+    }
+
+    /// Unpacks with ditto, run directly with an argument list (no shell). Links inside the
+    /// archive are extracted as links and then refused by `validateTree`.
+    nonisolated private static func unzip(_ zip: URL, to destination: URL) throws {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        p.arguments = ["-x", "-k", zip.path, destination.path]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        try p.run()
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else { throw failure(1, "Couldn't unpack the archive.") }
+    }
+
+    /// Copies the reviewed tree into GRID's folder and checks the copy too, in case the source
+    /// changed between the review and the copy. Runs off the main thread.
+    nonisolated private static func copyValidated(_ root: URL, to dest: URL) throws {
+        try FileManager.default.copyItem(at: root, to: dest)
+        do { try validateTree(dest) } catch {
+            try? FileManager.default.removeItem(at: dest)
+            throw error
         }
     }
 
@@ -208,7 +238,7 @@ final class BrowserExtensions: NSObject {
 
     /// An extension may contain only regular files and folders: a symbolic link (or a special
     /// file) could let it serve files from outside its folder, e.g. `l -> ~/.ssh`.
-    static func validateTree(_ root: URL) throws {
+    nonisolated static func validateTree(_ root: URL) throws {
         let base = root.resolvingSymlinksInPath().standardizedFileURL.path
         guard let e = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isSymbolicLinkKey, .isRegularFileKey, .isDirectoryKey],
                                                      options: [], errorHandler: { _, _ in false }) else {
@@ -229,7 +259,7 @@ final class BrowserExtensions: NSObject {
     }
 
     /// CRX3: "Cr24" + version + header length + header, then a zip.
-    static func stripCRXHeader(_ crx: URL, into dir: URL) throws -> URL {
+    nonisolated static func stripCRXHeader(_ crx: URL, into dir: URL) throws -> URL {
         let d = try Data(contentsOf: crx)
         guard d.count > 16, d.prefix(4) == Data("Cr24".utf8) else { throw NSError(domain: "GRID", code: 3, userInfo: [NSLocalizedDescriptionKey: "Not a .crx file."]) }
         let version = d.subdata(in: 4..<8).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }

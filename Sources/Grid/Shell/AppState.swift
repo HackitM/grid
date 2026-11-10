@@ -78,10 +78,14 @@ final class AppState {
     /// Closing the terminal panel only hides it: sessions keep running.
     func closePanel(_ p: WorkspacePanel) {
         workspace.hide(p)
-        if p == .terminal, !terminals.sessions.isEmpty {
-            flash(.info, "Terminal panel closed; \(terminals.sessions.count) session\(terminals.sessions.count == 1 ? "" : "s") still running" + shortcuts.hint(.toggleTerminalPanel))
+        let running = terminals.sessions.count
+        if p == .terminal, running > 0 {
+            flash(.info, "Terminal panel closed; \(running) session\(running == 1 ? "" : "s") still running" + shortcuts.hint(.toggleTerminalPanel))
         }
     }
+
+    // MARK: Models
+
     let layout = LayoutState()
     let shortcuts = ShortcutStore()
     let widgets = WidgetStore()
@@ -116,6 +120,8 @@ final class AppState {
     let fileOps: FileOperations
 
     @ObservationIgnored private var noticeTask: Task<Void, Never>?
+
+    // MARK: Setup
 
     init() {
         let s = Settings()
@@ -273,8 +279,6 @@ final class AppState {
         }
     }
 
-    /// Clears the screen and scrollback of a session (display only) and asks an idle shell to
-    /// redraw its prompt.
     /// Keeps floating widget windows and the Now Playing listener in step with the deck.
     func widgetsChanged() {
         floatingWidgets.sync()
@@ -291,6 +295,8 @@ final class AppState {
         widgets.widgets.contains { $0.kind == .music && $0.bool("status", true) }
     }
 
+    /// Clears the screen and scrollback of a session (display only) and asks an idle shell to
+    /// redraw its prompt.
     func clearScrollback(_ s: TerminalSession) {
         // Erase screen + scrollback in the emulator (ED 2 / ED 3); this is display-only.
         s.view.feed(text: "\u{1b}[H\u{1b}[2J\u{1b}[3J")

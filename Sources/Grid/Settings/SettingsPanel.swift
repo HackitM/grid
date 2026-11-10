@@ -210,7 +210,7 @@ private struct ShellRow: View {
     var body: some View {
         let s = app.settings
         let resolved = ShellEnvironment.resolveShell(override: s.shellOverride)
-        let invalid = !draft.isEmpty && !FileManager.default.isExecutableFile(atPath: draft)
+        let invalid = !draft.isEmpty && !ShellEnvironment.isUsableShell(draft.trimmingCharacters(in: .whitespaces))
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 12) {
                 Text("Shell").font(GridFont.body).foregroundStyle(theme.textDim).frame(width: 150, alignment: .leading)

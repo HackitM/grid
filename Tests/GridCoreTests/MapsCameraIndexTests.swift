@@ -45,12 +45,26 @@ final class MapsCameraIndexTests: XCTestCase {
             let box = BBox(west: w, south: s, east: w + Double.random(in: 0.01 ... 25, using: &rng), north: s + Double.random(in: 0.01 ... 12, using: &rng))
             let brute = cams.indices.filter { box.contains(cams[$0].coordinate) }
             XCTAssertEqual(index.query(box), brute)
+            XCTAssertEqual(index.count(in: box), brute.count)
         }
         // Whole world, empty and invalid boxes.
         XCTAssertEqual(index.query(BBox(west: -180, south: -90, east: 180, north: 90)).count, 20_000)
         XCTAssertTrue(index.query(BBox(west: 10, south: 10, east: 11, north: 11)).isEmpty)
         XCTAssertTrue(index.query(BBox(west: 5, south: 0, east: 1, north: 1)).isEmpty)
         XCTAssertTrue(CameraIndex([]).query(BBox(west: -1, south: -1, east: 1, north: 1)).isEmpty)
+        XCTAssertEqual(index.count(in: BBox(west: -180, south: -90, east: 180, north: 90)), 20_000)
+        XCTAssertEqual(index.count(in: BBox(west: 5, south: 0, east: 1, north: 1)), 0)
+        XCTAssertEqual(CameraIndex([]).count(in: BBox(west: -1, south: -1, east: 1, north: 1)), 0)
+    }
+
+    func testCameraWithoutAPositionNeverTraps() {
+        let bad = ALPRCamera(id: .node(1), coordinate: LonLat(lon: .nan, lat: .infinity), directions: [], vendor: .unknown,
+                             operatorName: nil, mount: nil, zone: nil, lastEdited: nil)
+        let index = CameraIndex([bad] + alprTestCameras(50, seed: 3))
+        let world = BBox(west: -180, south: -90, east: 180, north: 90)
+        XCTAssertEqual(index.query(world).count, 50)
+        XCTAssertEqual(index.clusters(world, cellWorld: 0.01).reduce(0) { $0 + $1.count }, 50)
+        XCTAssertNotNil(index.nearest(to: LonLat(lon: -100, lat: 40), maxWorldDistance: 1))
     }
 
     func testNearestMatchesBruteForce() {

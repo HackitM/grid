@@ -94,6 +94,8 @@ final class GridMenu {
     /// main thread can't make the opening click's release look late).
     private var openedAt: TimeInterval = 0
     private var openedAtMouse = NSPoint.zero
+    /// A mouse button went down inside the menu (an ordinary click on a row, as opposed to the
+    /// release of the click that opened the menu).
     private var downInMenu = false
     private var typed = ""
     private var typedAt = Date.distantPast
@@ -166,7 +168,13 @@ final class GridMenu {
         origin.y = max(screen.visibleFrame.minY + 4, min(origin.y, screen.visibleFrame.maxY - size.height - 4))
         // Opened above the pointer (no room below): unfold upwards from the bottom edge.
         level.unfoldsUp = origin.y + size.height / 2 > anchorY
-        present(level, contentFrame: NSRect(origin: origin, size: size))
+        guard present(level, contentFrame: NSRect(origin: origin, size: size)) else {
+            // Nothing is on screen, so nothing may be tracked either: an "open" menu without a
+            // panel would swallow every click and key press.
+            self.onClose = nil
+            onClose?()
+            return
+        }
         levels = [level]
         install(window: window)
     }
@@ -211,9 +219,10 @@ final class GridMenu {
 
     private static let wakeSubtype: Int16 = 0x6D6E   // "mn"
 
-
-    private func present(_ level: GridMenuLevel, contentFrame: NSRect) {
-        guard let app else { return }
+    /// Puts one level on screen in its own panel. False when there is no app state to style it.
+    @discardableResult
+    private func present(_ level: GridMenuLevel, contentFrame: NSRect) -> Bool {
+        guard let app else { return false }
         let fx = app.settings.effects
         let panel = GridMenuPanel(contentRect: contentFrame.insetBy(dx: -Self.inset, dy: -Self.inset))
         let root = GridMenuView(level: level, size: contentFrame.size, owner: self)
@@ -228,6 +237,7 @@ final class GridMenu {
         level.contentFrame = contentFrame
         // With Motion on, the view unfolds itself (MenuUnfold); its first frame is fully folded.
         panel.orderFrontRegardless()
+        return true
     }
 
     private func install(window: NSWindow?) {
@@ -268,18 +278,7 @@ final class GridMenu {
             if let (lvl, idx) = hit(mouse) { hover(lvl, idx) }
             return e.type == .mouseMoved ? e : nil
         case .leftMouseUp, .rightMouseUp:
-            let held = e.timestamp - openedAt
-            let deliberate = downInMenu || held > 0.3
-                || hypot(mouse.x - openedAtMouse.x, mouse.y - openedAtMouse.y) > 5
-            defer { downInMenu = false }
-            if let (lvl, idx) = hit(mouse) {
-                if deliberate, let idx { activate(lvl, idx, viaKeyboard: false) }
-                return nil
-            }
-            // Releasing the opening click outside the menu keeps it open (click-to-open);
-            // releasing after a press-drag elsewhere closes it, like a native menu.
-            if deliberate && !downInMenu && held > 0.3 { dismiss() }
-            return e.type == .rightMouseUp ? nil : e
+            return handleMouseUp(e, at: mouse)
         case .scrollWheel:
             if hit(mouse) != nil { return e }
             // A trackpad sends zero-length scrolls when two fingers rest or lift (the two-finger
@@ -293,6 +292,29 @@ final class GridMenu {
         default:
             return e
         }
+    }
+
+    /// A button was released. Either it ends an ordinary click on a row (`downInMenu`), or it is
+    /// the release of the click that opened the menu, which must tell two gestures apart:
+    ///
+    /// - click-to-open: press and release in place. The menu stays open and nothing is chosen,
+    ///   however long the press lasted. A slow two-finger trackpad click easily exceeds any time
+    ///   limit, and a menu that had to be moved to fit the screen can sit right under the pointer,
+    ///   so time alone must never choose a row or close the menu.
+    /// - press-drag-release: the pointer travelled before the release. Over a row it chooses that
+    ///   row; outside the menu it closes it, like a native menu (after a moment, so a click that
+    ///   merely jitters by a few points doesn't close what it just opened).
+    private func handleMouseUp(_ e: NSEvent, at mouse: NSPoint) -> NSEvent? {
+        let held = e.timestamp - openedAt
+        let dragged = hypot(mouse.x - openedAtMouse.x, mouse.y - openedAtMouse.y) > 5
+        let clickedInMenu = downInMenu
+        downInMenu = false
+        if let (lvl, idx) = hit(mouse) {
+            if clickedInMenu || dragged, let idx { activate(lvl, idx, viaKeyboard: false) }
+            return nil
+        }
+        if dragged && !clickedInMenu && held > 0.3 { dismiss() }
+        return e.type == .rightMouseUp ? nil : e
     }
 
     /// The level and selectable row under a screen point (`row` is nil over padding or separators).
@@ -419,7 +441,7 @@ final class GridMenu {
         if origin.x + size.width > screen.visibleFrame.maxX { origin.x = parent.contentFrame.minX - size.width + 2 }
         origin.y = max(screen.visibleFrame.minY + 4, min(origin.y, screen.visibleFrame.maxY - size.height - 4))
         if selectFirst { child.highlighted = children.firstIndex(where: \.isSelectable) }
-        present(child, contentFrame: NSRect(origin: origin, size: size))
+        guard present(child, contentFrame: NSRect(origin: origin, size: size)) else { return }
         levels.append(child)
     }
 
@@ -429,7 +451,7 @@ final class GridMenu {
 
     // MARK: Helpers
 
-    /// Where a mouse event happened, in screen coordinates (falls back to the pointer).
+    /// Button presses and releases: the events whose time and place say how a menu was opened.
     static func isMouseEvent(_ e: NSEvent) -> Bool {
         switch e.type {
         case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp: true
@@ -437,6 +459,7 @@ final class GridMenu {
         }
     }
 
+    /// Where a mouse event happened, in screen coordinates (falls back to the pointer).
     static func screenLocation(of e: NSEvent) -> NSPoint {
         switch e.type {
         case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp,

@@ -36,14 +36,19 @@ final class SystemMonitor {
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var lastTicks: [(UInt32, UInt32, UInt32, UInt32)] = []
     @ObservationIgnored private var lastNet: [String: (rx: UInt32, tx: UInt32, at: Date)] = [:]
+    /// `mach_host_self()` hands out a new reference to the host port on every call; asking once
+    /// keeps a monitor that samples for days from accumulating them.
+    private static let hostPort = mach_host_self()
 
     func subscribe() {
         subscribers += 1
         if timer == nil {
             sample()
-            timer = Timer.scheduledTimer(withTimeInterval: Self.interval, repeats: true) { [weak self] _ in
+            let t = Timer.scheduledTimer(withTimeInterval: Self.interval, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.sample() }
             }
+            t.tolerance = 0.2      // lets macOS batch this wake-up with others
+            timer = t
         }
     }
 
@@ -58,7 +63,9 @@ final class SystemMonitor {
         var l = [Double](repeating: 0, count: 3)
         if getloadavg(&l, 3) == 3 { load = (l[0], l[1], l[2]) }
         sampleNetwork()
-        power = Self.readPower()
+        // Assigning an @Observable property redraws its readers even when the value is the same.
+        let p = Self.readPower()
+        if p != power { power = p }
         sampledAt = Date()
     }
 
@@ -71,7 +78,7 @@ final class SystemMonitor {
         var count: natural_t = 0
         var info: processor_info_array_t?
         var infoCount: mach_msg_type_number_t = 0
-        guard host_processor_info(mach_host_self(), PROCESSOR_CPU_LOAD_INFO, &count, &info, &infoCount) == KERN_SUCCESS,
+        guard host_processor_info(Self.hostPort, PROCESSOR_CPU_LOAD_INFO, &count, &info, &infoCount) == KERN_SUCCESS,
               let info else { return }
         defer { vm_deallocate(mach_task_self_, vm_address_t(bitPattern: info), vm_size_t(Int(infoCount) * MemoryLayout<integer_t>.stride)) }
         var ticks: [(UInt32, UInt32, UInt32, UInt32)] = []
@@ -100,7 +107,7 @@ final class SystemMonitor {
         var stats = vm_statistics64()
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size)
         let r = withUnsafeMutablePointer(to: &stats) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count) }
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { host_statistics64(Self.hostPort, HOST_VM_INFO64, $0, &count) }
         }
         guard r == KERN_SUCCESS else { return }
         let page = UInt64(vm_kernel_page_size)
@@ -145,7 +152,7 @@ final class SystemMonitor {
             }
             lastNet[name] = (rx, tx, now)
         }
-        net = rates
+        if rates != net { net = rates }
     }
 
     /// Busiest active interface with an IPv4 address (what "auto" shows).

@@ -8,6 +8,7 @@ import simd
 // drawing with (anchors projected, collision-placed by GridCore's LabelPlacer), and draws them in
 // the same render pass from an atlas of rasterised strings, so a label can never trail the map
 // under it. SF Mono 9.5 medium; places uppercase; road and contour names run along their line.
+// Work that comes in bursts (a new tile's anchors, strings to rasterise) is spread over frames.
 
 /// One label quad (`LabelInst` in the shader). Pixels, top-left origin.
 struct MapLabelInstance {
@@ -24,8 +25,10 @@ struct MapLabelInstance {
 // MARK: - Planner
 
 /// Turns the frame's label anchors into placed labels. Owned by the renderer; main thread only.
-/// Built to run every frame: strings are interned to integers once, each tile's anchors are
-/// prepared once per tile revision, and a frame only projects, culls and collides.
+/// Built to run every frame: each tile's anchors are prepared once per tile revision (a few
+/// tiles per frame at most), and a frame only projects, culls and collides. A string is
+/// interned and measured the first time one of its anchors comes into view, never for a whole
+/// tile at once: a city tile carries thousands of names, and almost all of them stay off screen.
 @MainActor
 final class MapLabelPlanner {
     static let font = NSFont.monospacedSystemFont(ofSize: 9.5, weight: .medium)
@@ -36,6 +39,13 @@ final class MapLabelPlanner {
     static let maxPOIs = 28
     /// A POI's glyph: its box in points, and the gap before its name.
     static let iconSize: Double = 12, iconGap: Double = 3
+    /// Boxes handed to the collision pass per frame.
+    static let maxCandidates = 2000
+    /// The string table starts over beyond this many strings.
+    static let maxStrings = 12_000
+    /// No label is wider than this (40 characters): anchors further than that from the view are
+    /// dropped before their text is looked at.
+    private static let widestLabel: Double = 800
 
     enum Style: UInt8 { case place, road, water, count, poi }
 
@@ -56,10 +66,14 @@ final class MapLabelPlanner {
         var iconCenter: SIMD2<Double> = .zero
     }
 
-    // Interned strings: one id per (style, display text).
-    private var ids: [String: Int32] = [:]
+    // MARK: String table
+
+    /// One id per (style, display text).
+    private struct StringKey: Hashable { let style: Style; let text: String }
+    private var ids: [StringKey: Int32] = [:]
     private var texts: [String] = []
     private var styles: [Style] = []
+    /// Width in points; nan until the string is first needed on screen.
     private var widths: [Double] = []
     /// Frame number in which each id was last taken as a candidate / placed.
     private var seenIn: [UInt32] = []
@@ -69,34 +83,70 @@ final class MapLabelPlanner {
     private(set) var epoch = 0
 
     func text(of id: Int32) -> String { texts[Int(id)] }
-    func width(of id: Int32) -> Double { widths[Int(id)] }
 
-    private func measure(_ text: String, _ font: NSFont) -> Double {
-        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font]))
-        return CTLineGetTypographicBounds(line, nil, nil, nil)
+    /// The string's width in points, measured the first time it is asked for.
+    func width(of id: Int32) -> Double {
+        let i = Int(id)
+        if widths[i].isNaN { widths[i] = Self.measure(texts[i], bold: styles[i] == .count) }
+        return widths[i]
+    }
+
+    /// The advance every printable ASCII glyph shares in the two (monospaced) label fonts.
+    private static let asciiAdvance: (regular: Double, bold: Double) = (lineWidth("0", font), lineWidth("0", countFont))
+
+    private static func lineWidth(_ text: String, _ font: NSFont) -> Double {
+        CTLineGetTypographicBounds(CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font])), nil, nil, nil)
+    }
+
+    /// A string's typographic width. Plain ASCII needs no layout: the fonts are monospaced, so
+    /// it is the glyph advance times the length (the same number CoreText gives). Anything else
+    /// (accents, other scripts, fallback fonts) is laid out.
+    private static func measure(_ text: String, bold: Bool) -> Double {
+        if text.utf8.allSatisfy({ $0 >= 0x20 && $0 <= 0x7E }) {
+            return Double(text.utf8.count) * (bold ? asciiAdvance.bold : asciiAdvance.regular)
+        }
+        return lineWidth(text, bold ? countFont : font)
     }
 
     private func intern(_ text: String, _ style: Style) -> Int32 {
-        let key = "\(style.rawValue)|\(text)"
+        let key = StringKey(style: style, text: text)
         if let id = ids[key] { return id }
         let id = Int32(texts.count)
         ids[key] = id
         texts.append(text); styles.append(style)
-        widths.append(measure(text, style == .count ? Self.countFont : Self.font))
+        widths.append(.nan)
         seenIn.append(0); placedIn.append(0)
         return id
     }
 
+    private func startOver() {
+        // Anchors notice through `epoch` and take new ids when they next come into view.
+        ids = [:]; texts = []; styles = []; widths = []; seenIn = []; placedIn = []
+        epoch += 1
+    }
+
+    /// A name as drawn: trimmed, at most 40 characters, places in capitals.
     static func display(_ text: String, kind: LabelKind) -> String {
-        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let capped = t.count > 40 ? String(t.prefix(40)) : t
+        var t = text
+        // Almost every name starts and ends on a visible ASCII character and needs no trimming.
+        let visible: ClosedRange<UInt8> = 0x21...0x7E
+        let startsAndEndsVisible = t.utf8.first.map(visible.contains) == true && t.utf8.last.map(visible.contains) == true
+        if !startsAndEndsVisible { t = t.trimmingCharacters(in: .whitespacesAndNewlines) }
+        // 40 bytes or fewer can't be more than 40 characters.
+        let capped = t.utf8.count > 40 && t.count > 40 ? String(t.prefix(40)) : t
         return kind == .place ? capped.uppercased() : capped
     }
+
+    // MARK: Tiles
 
     /// One anchor, ready to project: world position, the point a little further along its line
     /// (labels that follow a line), and the height scale at its latitude.
     private struct Anchor {
-        var id: Int32
+        var text: String
+        var style: Style
+        /// The text's id in the string table, valid while `idEpoch` is the planner's epoch.
+        var id: Int32 = -1
+        var idEpoch = -1
         var priority: Int
         var minZoom: Float
         var place: Bool
@@ -105,30 +155,36 @@ final class MapLabelPlanner {
         var icon: UInt8 = 0
         var x, y, ax, ay: Double
         var worldPerMeter: Double
-        /// Elevation in metres from the frame's terrain (nan: none), refreshed per frame build.
+        /// Elevation in metres from the frame's terrain (nan: none), valid while `rawEpoch` is
+        /// the planner's terrain epoch.
         var raw: Double = .nan
+        var rawEpoch = -1
     }
+
     private final class TileLabels {
         let revision: Int
+        /// World bounds of the tile (its anchors all lie inside).
+        let lo, hi: SIMD2<Double>
         var anchors: [Anchor]
-        var rawStamp = Int.min
-        init(revision: Int, anchors: [Anchor]) { self.revision = revision; self.anchors = anchors }
+        init(revision: Int, lo: SIMD2<Double>, hi: SIMD2<Double>, anchors: [Anchor]) {
+            self.revision = revision; self.lo = lo; self.hi = hi; self.anchors = anchors
+        }
     }
     private var tileCache: [TileID: TileLabels] = [:]
 
-    private func prepared(_ t: TileGeometry) -> TileLabels {
-        if let c = tileCache[t.id], c.revision == t.revision { return c }
+    /// A tile's anchors in world coordinates with their display text. No string is interned or
+    /// measured here.
+    private func prepare(_ t: TileGeometry) -> TileLabels {
         let (nw, se) = TileMath.bounds(t.id)
         let w = se.x - nw.x, h = se.y - nw.y
         var out: [Anchor] = []
-        out.reserveCapacity(t.labels.count)
+        out.reserveCapacity(t.labels.count + t.pois.count)
         for a in t.labels where !a.text.isEmpty {
             let text = Self.display(a.text, kind: a.kind)
             guard !text.isEmpty else { continue }
             let style: Style = a.kind == .place ? .place : (a.kind == .road ? .road : .water)
             let x = nw.x + Double(a.pos.x) * w, y = nw.y + Double(a.pos.y) * h
-            let hasDir = a.dir != .zero
-            out.append(Anchor(id: intern(text, style), priority: a.priority, minZoom: a.minZoom, place: a.kind == .place, hasDir: hasDir,
+            out.append(Anchor(text: text, style: style, priority: a.priority, minZoom: a.minZoom, place: a.kind == .place, hasDir: a.dir != .zero,
                               x: x, y: y, ax: x + Double(a.dir.x) * w * 0.02, ay: y + Double(a.dir.y) * h * 0.02,
                               worldPerMeter: MapProjection.worldUnitsPerMeter(y: y)))
         }
@@ -136,39 +192,74 @@ final class MapLabelPlanner {
             let text = Self.display(a.name, kind: .road)
             guard !text.isEmpty else { continue }
             let x = nw.x + Double(a.pos.x) * w, y = nw.y + Double(a.pos.y) * h
-            out.append(Anchor(id: intern(text, .poi), priority: 920 + min(a.rank, 79), minZoom: a.minZoom, place: false, hasDir: false,
+            out.append(Anchor(text: text, style: .poi, priority: 920 + min(a.rank, 79), minZoom: a.minZoom, place: false, hasDir: false,
                               icon: a.category.rawValue, x: x, y: y, ax: x, ay: y, worldPerMeter: MapProjection.worldUnitsPerMeter(y: y)))
         }
-        let c = TileLabels(revision: t.revision, anchors: out)
+        let c = TileLabels(revision: t.revision, lo: SIMD2(nw.x, nw.y), hi: SIMD2(se.x, se.y), anchors: out)
         tileCache[t.id] = c
         return c
     }
 
-    // The frame's tiles, deepest first, kept while the same frame is drawn again.
+    // The frame's tiles with labels, deepest first, kept while the same frame is drawn again.
     private var orderStamp = Int.min
+    private var wanted: [TileGeometry] = []
+    /// The prepared tiles of `wanted`, in the same order.
     private var order: [TileLabels] = []
-    private var boxes: [LabelBox] = []
-    private var candidates: [Placed] = []
+    /// Tiles of the frame still to be prepared (their labels join in one of the next frames).
+    private(set) var hasUnpreparedTiles = false
+    /// The frame's elevation grids; anchors look their elevation up again when these change.
+    private var terrainIDs: [TileID] = []
+    private var terrainEpoch = 0
 
-    private func startOver() {
-        ids = [:]; texts = []; styles = []; widths = []; seenIn = []; placedIn = []
-        tileCache = [:]; orderStamp = Int.min; order = []
-        epoch += 1
-    }
-
-    /// Places labels for a frame as drawn by `proj`. Deepest tiles win duplicates (same text and
-    /// kind). Cluster counts (`counts`: text and the left end of its box) go first so names never
-    /// cover them. Labels on screen in the previous frame are placed before new ones.
-    func place(frame: MapFrame, projection proj: any MapScreenProjection, counts: [(text: String, left: SIMD2<Double>)] = []) -> [Placed] {
-        if texts.count > 12_000 { startOver() }
+    /// Brings `order` up to date with the frame, preparing new tiles for at most `budget` seconds
+    /// (always at least one, so labels keep arriving).
+    private func refreshTiles(_ frame: MapFrame, budget: CFTimeInterval) {
         if frame.stamp == 0 || frame.stamp != orderStamp {
             orderStamp = frame.stamp
-            order = frame.tiles.filter { !$0.labels.isEmpty || !$0.pois.isEmpty }.sorted { $0.id.z > $1.id.z }.map(prepared)
+            wanted = frame.tiles.filter { !$0.labels.isEmpty || !$0.pois.isEmpty }.sorted { $0.id.z > $1.id.z }
+            hasUnpreparedTiles = true
             if tileCache.count > 2 * frame.tiles.count + 64 {
                 let keep = Set(frame.tiles.map(\.id))
                 tileCache = tileCache.filter { keep.contains($0.key) }
             }
+            if !frame.terrain.map(\.id).elementsEqual(terrainIDs) {
+                terrainIDs = frame.terrain.map(\.id)
+                terrainEpoch += 1
+            }
         }
+        guard hasUnpreparedTiles else { return }
+        let deadline = budget.isFinite ? CACurrentMediaTime() + budget : .infinity
+        var preparedOne = false
+        hasUnpreparedTiles = false
+        order.removeAll(keepingCapacity: true)
+        for t in wanted {
+            if let c = tileCache[t.id], c.revision == t.revision {
+                order.append(c)
+            } else if !preparedOne || deadline == .infinity || CACurrentMediaTime() < deadline {
+                order.append(prepare(t))
+                preparedOne = true
+            } else {
+                hasUnpreparedTiles = true
+                // The tile's earlier revision (before its contours arrived) serves meanwhile.
+                if let stale = tileCache[t.id] { order.append(stale) }
+            }
+        }
+    }
+
+    // MARK: Placement
+
+    private var boxes: [LabelBox] = []
+    private var candidates: [Placed] = []
+
+    /// Places labels for a frame as drawn by `proj`. Deepest tiles win duplicates (same text and
+    /// kind). Cluster counts (`counts`: text and the left end of its box) go first so names never
+    /// cover them. Labels on screen in the previous frame are placed before new ones.
+    /// `prepareBudget`: seconds this call may spend preparing tiles it hasn't seen (see
+    /// `hasUnpreparedTiles`).
+    func place(frame: MapFrame, projection proj: any MapScreenProjection, counts: [(text: String, left: SIMD2<Double>)] = [],
+               prepareBudget: CFTimeInterval = .infinity) -> [Placed] {
+        if texts.count > Self.maxStrings { startOver() }
+        refreshTiles(frame, budget: prepareBudget)
         frameNo &+= 1
         if frameNo < 2 { frameNo = 2; for i in seenIn.indices { seenIn[i] = 0; placedIn[i] = 0 } }
         let vp = proj.viewport
@@ -182,71 +273,106 @@ final class MapLabelPlanner {
             guard c.w > 1e-9 else { return nil }
             return SIMD2((c.x / c.w + 1) / 2 * vp.x, (1 - c.y / c.w) / 2 * vp.y)
         }
+        let half = Self.labelHeight / 2
+        /// Anchors further than this from the view can't put a label in it.
+        let far = Self.widestLabel / 2 + half
+        /// False when none of a tile's anchors can be near the view (the frame carries a ring of
+        /// tiles around it). Raised terrain moves anchors off their place on the ground plane.
+        func mayShow(_ tile: TileLabels) -> Bool {
+            guard flat != nil else { return true }
+            let margin = far + 10 + (lifted ? 0.3 * max(vp.x, vp.y) + 200 : 0)
+            var lo = SIMD2<Double>(repeating: .infinity), hi = -lo
+            for corner in 0..<4 {
+                let c = m * SIMD4(corner & 1 == 0 ? tile.lo.x : tile.hi.x, corner & 2 == 0 ? tile.lo.y : tile.hi.y, 0, 1)
+                guard c.w > 1e-9 else { return true }
+                let s = SIMD2((c.x / c.w + 1) / 2 * vp.x, (1 - c.y / c.w) / 2 * vp.y)
+                lo = simd_min(lo, s); hi = simd_max(hi, s)
+            }
+            return hi.x > -margin && hi.y > -margin && lo.x < vp.x + margin && lo.y < vp.y + margin
+        }
 
         boxes.removeAll(keepingCapacity: true)
         candidates.removeAll(keepingCapacity: true)
         for c in counts where !c.text.isEmpty {
             let id = intern(c.text, .count)
-            let w = widths[Int(id)] + 6
+            let w = width(of: id) + 6
             let center = SIMD2(c.left.x + w / 2, c.left.y)
             boxes.append(LabelBox(center: center, size: SIMD2(w, Self.labelHeight), priority: Int.min / 2, keep: placedIn[Int(id)] == frameNo - 1))
             candidates.append(Placed(id: id, style: .count, center: center, angle: 0))
         }
         let countBoxes = boxes.count
-        let half = Self.labelHeight / 2
-        outer: for tile in order {
-            if lifted, frame.stamp == 0 || tile.rawStamp != frame.stamp {
-                tile.rawStamp = frame.stamp
-                for i in tile.anchors.indices {
-                    tile.anchors[i].raw = frame.rawElevation(at: Mercator(x: tile.anchors[i].x, y: tile.anchors[i].y)) ?? .nan
+        for tile in order where mayShow(tile) {
+            let full = tile.anchors.withUnsafeMutableBufferPointer { anchors -> Bool in
+                for i in anchors.indices where anchors[i].minZoom <= zoom {
+                    let icon = anchors[i].icon
+                    // A name shows once per frame; points of interest repeat (two cafés of a chain),
+                    // and the collision pass drops a copy in the same spot.
+                    if icon != 0 {
+                        guard frame.poiMask & (1 << UInt16(icon)) != 0 else { continue }
+                    } else if anchors[i].idEpoch == epoch, seenIn[Int(anchors[i].id)] == frameNo { continue }
+                    var z = 0.0
+                    if lifted {
+                        if anchors[i].rawEpoch != terrainEpoch {
+                            anchors[i].raw = frame.rawElevation(at: Mercator(x: anchors[i].x, y: anchors[i].y)) ?? .nan
+                            anchors[i].rawEpoch = terrainEpoch
+                        }
+                        if !anchors[i].raw.isNaN { z = frame.lift.lift(anchors[i].raw) }
+                    }
+                    guard let s = screen(anchors[i].x, anchors[i].y, z, anchors[i].worldPerMeter) else { continue }
+                    // Too far for any label to reach the view: its text is never looked at.
+                    guard s.x > -far, s.y > -far - 10, s.x < vp.x + far, s.y < vp.y + far else { continue }
+                    let a = anchors[i]
+                    let id: Int32
+                    if a.idEpoch == epoch { id = a.id } else {
+                        id = intern(a.text, a.style)
+                        anchors[i].id = id; anchors[i].idEpoch = epoch
+                        if icon == 0, seenIn[Int(id)] == frameNo { continue }
+                    }
+                    let textWidth = width(of: id)
+                    let tw = textWidth + 8
+                    // Nothing wider than this can reach the view from here.
+                    let reach = tw / 2 + half
+                    guard s.x > -reach, s.y > -reach - 10, s.x < vp.x + reach, s.y < vp.y + reach else { continue }
+                    let keep = placedIn[Int(id)] == frameNo - 1
+                    if icon != 0 {
+                        // Glyph on the point, name to its right.
+                        let left = s.x - Self.iconSize / 2 - 1
+                        let wbox = Self.iconSize + Self.iconGap + textWidth + 4
+                        let box = SIMD2(left + wbox / 2, s.y)
+                        guard box.x + wbox / 2 > 0, box.y + half > 0, box.x - wbox / 2 < vp.x, box.y - half < vp.y else { continue }
+                        seenIn[Int(id)] = frameNo
+                        boxes.append(LabelBox(center: box, size: SIMD2(wbox, Self.labelHeight), priority: a.priority, keep: keep))
+                        candidates.append(Placed(id: id, style: .poi, center: SIMD2(s.x + Self.iconSize / 2 + Self.iconGap + textWidth / 2, s.y),
+                                                 angle: 0, icon: icon, iconCenter: s))
+                        if boxes.count >= Self.maxCandidates { return true }
+                        continue
+                    }
+                    var size = SIMD2(tw, Self.labelHeight)
+                    var center = s + SIMD2(0, a.place ? 10 : 0)
+                    var angle = 0.0
+                    // Labels that belong to a line (road names, contour heights) run along it.
+                    if a.hasDir, let s2 = screen(a.ax, a.ay, z, a.worldPerMeter) {
+                        angle = atan2(s2.y - s.y, s2.x - s.x)
+                        if angle > .pi / 2 { angle -= .pi } else if angle < -.pi / 2 { angle += .pi }   // keep it readable
+                        let c = abs(cos(angle)), sn = abs(sin(angle))
+                        size = SIMD2(tw * c + Self.labelHeight * sn, tw * sn + Self.labelHeight * c)
+                        center = s
+                    }
+                    // Only a label that touches the view takes its name (another anchor of the same
+                    // name further in may still show).
+                    guard center.x + size.x / 2 > 0, center.y + size.y / 2 > 0, center.x - size.x / 2 < vp.x, center.y - size.y / 2 < vp.y else { continue }
+                    seenIn[Int(id)] = frameNo
+                    boxes.append(LabelBox(center: center, size: size, priority: a.priority, keep: keep))
+                    candidates.append(Placed(id: id, style: a.style, center: center, angle: angle))
+                    if boxes.count >= Self.maxCandidates { return true }
                 }
+                return false
             }
-            for a in tile.anchors where a.minZoom <= zoom {
-                // A name shows once per frame; points of interest repeat (two cafés of a chain),
-                // and the collision pass drops a copy in the same spot.
-                if a.icon != 0 {
-                    guard frame.poiMask & (1 << UInt16(a.icon)) != 0 else { continue }
-                } else if seenIn[Int(a.id)] == frameNo { continue }
-                let z = lifted && !a.raw.isNaN ? frame.lift.lift(a.raw) : 0
-                guard let s = screen(a.x, a.y, z, a.worldPerMeter) else { continue }
-                let tw = widths[Int(a.id)] + 8
-                // Nothing wider than this can reach the view from here.
-                let reach = tw / 2 + half
-                guard s.x > -reach, s.y > -reach - 10, s.x < vp.x + reach, s.y < vp.y + reach else { continue }
-                if a.icon != 0 {
-                    // Glyph on the point, name to its right.
-                    let left = s.x - Self.iconSize / 2 - 1
-                    let wbox = Self.iconSize + Self.iconGap + widths[Int(a.id)] + 4
-                    let box = SIMD2(left + wbox / 2, s.y)
-                    guard box.x + wbox / 2 > 0, box.y + half > 0, box.x - wbox / 2 < vp.x, box.y - half < vp.y else { continue }
-                    seenIn[Int(a.id)] = frameNo
-                    boxes.append(LabelBox(center: box, size: SIMD2(wbox, Self.labelHeight), priority: a.priority, keep: placedIn[Int(a.id)] == frameNo - 1))
-                    candidates.append(Placed(id: a.id, style: .poi, center: SIMD2(s.x + Self.iconSize / 2 + Self.iconGap + widths[Int(a.id)] / 2, s.y),
-                                             angle: 0, icon: a.icon, iconCenter: s))
-                    if boxes.count >= 2000 { break outer }
-                    continue
-                }
-                var size = SIMD2(tw, Self.labelHeight)
-                var center = s + SIMD2(0, a.place ? 10 : 0)
-                var angle = 0.0
-                // Labels that belong to a line (road names, contour heights) run along it.
-                if a.hasDir, let s2 = screen(a.ax, a.ay, z, a.worldPerMeter) {
-                    angle = atan2(s2.y - s.y, s2.x - s.x)
-                    if angle > .pi / 2 { angle -= .pi } else if angle < -.pi / 2 { angle += .pi }   // keep it readable
-                    let c = abs(cos(angle)), sn = abs(sin(angle))
-                    size = SIMD2(tw * c + Self.labelHeight * sn, tw * sn + Self.labelHeight * c)
-                    center = s
-                }
-                // Only a label that touches the view takes its name (another anchor of the same
-                // name further in may still show).
-                guard center.x + size.x / 2 > 0, center.y + size.y / 2 > 0, center.x - size.x / 2 < vp.x, center.y - size.y / 2 < vp.y else { continue }
-                seenIn[Int(a.id)] = frameNo
-                boxes.append(LabelBox(center: center, size: size, priority: a.priority, keep: placedIn[Int(a.id)] == frameNo - 1))
-                candidates.append(Placed(id: a.id, style: styles[Int(a.id)], center: center, angle: angle))
-                if boxes.count >= 2000 { break outer }
-            }
+            if full { break }
         }
         var out: [Placed] = []
+        out.reserveCapacity(Self.maxLabels + Self.maxPOIs + countBoxes)
+        Self.drawnPOIs.removeAll(keepingCapacity: true)
         var names = 0, pois = 0
         for i in LabelPlacer.place(boxes: boxes, viewport: vp, max: Self.maxLabels + Self.maxPOIs + countBoxes, padding: 4) {
             let c = candidates[i]
@@ -259,8 +385,8 @@ final class MapLabelPlanner {
             }
             placedIn[Int(c.id)] = frameNo
             out.append(c)
+            if c.icon != 0 { Self.drawnPOIs.append((c.iconCenter, texts[Int(c.id)])) }
         }
-        Self.drawnPOIs = out.filter { $0.icon != 0 }.map { ($0.iconCenter, texts[Int($0.id)]) }
         return out
     }
 }
@@ -317,9 +443,19 @@ final class MapLabelAtlas {
         }
     }
 
-    /// The slot holding a place category's glyph (an SF Symbol), rasterised on first use.
+    /// Glyphs share the slot table with strings, under negative ids.
+    private static func iconID(_ category: POICategory) -> Int32 { -Int32(category.rawValue) - 1 }
+
+    /// The slot of a string that is already in the atlas (nothing is rasterised).
+    func cachedSlot(_ id: Int32) -> Slot? { slots[id] }
+
+    /// The slot of a glyph that is already in the atlas (nothing is rasterised).
+    func cachedIconSlot(_ category: POICategory) -> Slot? { slots[Self.iconID(category)] }
+
+    /// The slot holding a place category's glyph (an SF Symbol), rasterised on first use; nil
+    /// when the atlas has no room left.
     func iconSlot(_ category: POICategory) -> Slot? {
-        let id = -Int32(category.rawValue) - 1
+        let id = Self.iconID(category)
         if let s = slots[id] { return s }
         guard let texture, let ctx = scratch else { return nil }
         let side = min(ctx.height, Int((CGFloat(MapLabelPlanner.iconSize) * scale).rounded(.up)) + 2)

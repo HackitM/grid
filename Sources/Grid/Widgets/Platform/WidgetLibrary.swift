@@ -209,8 +209,7 @@ final class WidgetLibrary {
             // A different package under the same id must not inherit the old one's secrets or data.
             if (try? WidgetPackage.load(dest))?.digest != pkg.digest {
                 deleteSecrets(ref)
-                storage[ref] = nil
-                try? FileManager.default.removeItem(at: storageURL(ref))
+                forgetStorage(ref)
             }
             try FileManager.default.removeItem(at: dest)
         }
@@ -227,8 +226,7 @@ final class WidgetLibrary {
         try? FileManager.default.trashItem(at: e.folder, resultingItemURL: nil)
         approvals[ref] = nil
         deleteSecrets(ref)
-        storage[ref] = nil
-        try? FileManager.default.removeItem(at: storageURL(ref))
+        forgetStorage(ref)
         logs[ref] = nil
         entries = Self.scan()
     }
@@ -375,6 +373,14 @@ final class WidgetLibrary {
         let s = (try? Data(contentsOf: storageURL(ref))).flatMap { try? JSONDecoder().decode([String: WidgetJSON].self, from: $0) } ?? [:]
         storage[ref] = s
         return s
+    }
+
+    /// Deletes a widget's stored data. A debounced write still waiting to run is cancelled first,
+    /// or it would put the file back half a second after the widget was removed.
+    private func forgetStorage(_ ref: String) {
+        storageSaves.removeValue(forKey: ref)?.cancel()
+        storage[ref] = nil
+        try? FileManager.default.removeItem(at: storageURL(ref))
     }
 
     /// Applies a change; returns false (and changes nothing) if it would exceed the quota.

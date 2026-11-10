@@ -238,10 +238,12 @@ final class GlobeRenderer: NSObject, MTKViewDelegate {
         #if DEBUG
         Self.debugFrames += 1
         #endif
+        let size = SIMD2<Float>(Float(view.drawableSize.width), Float(view.drawableSize.height))
+        // Nothing to draw into yet (and the shader divides by the radius).
+        guard size.x >= 1, size.y >= 1 else { return }
         guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
               let cmd = queue.makeCommandBuffer(), let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
         let scale = Float(view.window?.backingScaleFactor ?? 2)
-        let size = SIMD2<Float>(Float(view.drawableSize.width), Float(view.drawableSize.height))
         let radius = min(size.x, size.y) * 0.40
         let angle = GlobeView.angle(at: Date(), since: start)
         var u = GlobeUniforms()
@@ -249,31 +251,7 @@ final class GlobeRenderer: NSObject, MTKViewDelegate {
         u.sweep = -angle * 3; u.spacing = Float(spacing); u.oceanSpacing = Float(oceanSpacing)
         u.dotPx = 0.9 * scale; u.scale = scale; u.rows = rows; u.oceanRows = oceanRows
         u.accent = colors.accent; u.text = colors.text; u.line = colors.line
-
-        // Project the cities on the CPU (14 points) for the spikes and labels.
-        var spikes = [SIMD4<Float>](repeating: SIMD4(-1e5, -1e5, -1e5, -1e5), count: 16)
-        var labels: [(String, CGPoint, Float)] = []
-        let (sa, ca, st, ct) = (sin(angle), cos(angle), sin(GlobeView.tilt), cos(GlobeView.tilt))
-        func project(_ p: SIMD3<Float>) -> (Float, Float, Float) {
-            let x = p.x * ca + p.z * sa
-            let z1 = -p.x * sa + p.z * ca
-            let y = p.y * ct - z1 * st
-            let z = p.y * st + z1 * ct
-            return (size.x / 2 + radius * x, size.y / 2 - radius * y, z)
-        }
-        for (i, city) in GlobeView.cities.prefix(16).enumerated() {
-            let la = city.lat * .pi / 180, lo = city.lon * .pi / 180
-            let base = SIMD3<Float>(cos(la) * sin(lo), sin(la), cos(la) * cos(lo))
-            let (x0, y0, z) = project(base)
-            guard z > 0.08 else { continue }
-            let (x1, y1, _) = project(base * (1 + city.height))
-            spikes[i] = SIMD4(x0, y0, x1, y1)
-            if city.label && z > 0.35 { labels.append((city.name, CGPoint(x: CGFloat(x1 / scale), y: CGFloat(y1 / scale)), min(1, z * 1.4))) }
-        }
-        withUnsafeMutableBytes(of: &u.spikes) { raw in
-            for i in 0..<16 { raw.storeBytes(of: spikes[i], toByteOffset: i * MemoryLayout<SIMD4<Float>>.stride, as: SIMD4<Float>.self) }
-        }
-        u.cityCount = Int32(min(16, GlobeView.cities.count))
+        let labels = placeCities(in: &u, size: size, radius: radius, angle: angle, scale: scale)
 
         enc.setRenderPipelineState(pipeline)
         enc.setFragmentBytes(&u, length: MemoryLayout<GlobeUniforms>.stride, index: 0)
@@ -289,6 +267,49 @@ final class GlobeRenderer: NSObject, MTKViewDelegate {
         if Self.debugNoLabels { return }
         #endif
         labelHost?.place(labels)
+    }
+
+    /// The most cities the shader's spike table holds (`spikes[16]`).
+    private static let maxSpikes = 16
+    /// A table entry the shader skips (a city on the far side).
+    private static let hiddenSpike = SIMD4<Float>(repeating: -1e5)
+
+    /// Projects the cities on the CPU (a handful of points): writes the spikes of the visible
+    /// ones into the uniforms and returns the labels to show (name, tip in points, opacity).
+    private func placeCities(in u: inout GlobeUniforms, size: SIMD2<Float>, radius: Float, angle: Float, scale: Float) -> [(String, CGPoint, Float)] {
+        var labels: [(String, CGPoint, Float)] = []
+        let (sa, ca, st, ct) = (sin(angle), cos(angle), sin(GlobeView.tilt), cos(GlobeView.tilt))
+        /// Unit-sphere point → pixel position and depth (z > 0 faces the viewer).
+        func project(_ p: SIMD3<Float>) -> (x: Float, y: Float, z: Float) {
+            let x = p.x * ca + p.z * sa
+            let z1 = -p.x * sa + p.z * ca
+            let y = p.y * ct - z1 * st
+            let z = p.y * st + z1 * ct
+            return (size.x / 2 + radius * x, size.y / 2 - radius * y, z)
+        }
+        let cities = GlobeView.cities.prefix(Self.maxSpikes)
+        withUnsafeMutableBytes(of: &u.spikes) { table in
+            for i in 0..<Self.maxSpikes {
+                var spike = Self.hiddenSpike
+                if i < cities.count {
+                    let city = cities[i]
+                    let la = city.lat * .pi / 180, lo = city.lon * .pi / 180
+                    let base = SIMD3<Float>(cos(la) * sin(lo), sin(la), cos(la) * cos(lo))
+                    let foot = project(base)
+                    if foot.z > 0.08 {
+                        let tip = project(base * (1 + city.height))
+                        spike = SIMD4(foot.x, foot.y, tip.x, tip.y)
+                        // Labels only well onto the facing side, fading in from the limb.
+                        if city.label && foot.z > 0.35 {
+                            labels.append((city.name, CGPoint(x: CGFloat(tip.x / scale), y: CGFloat(tip.y / scale)), min(1, foot.z * 1.4)))
+                        }
+                    }
+                }
+                table.storeBytes(of: spike, toByteOffset: i * MemoryLayout<SIMD4<Float>>.stride, as: SIMD4<Float>.self)
+            }
+        }
+        u.cityCount = Int32(cities.count)
+        return labels
     }
 }
 
@@ -325,8 +346,7 @@ final class GlobeLabelLayer: NSView {
     func place(_ items: [(String, CGPoint, Float)]) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        let shown = Set(items.map(\.0))
-        for (name, l) in layers where !shown.contains(name) { l.isHidden = true }
+        for (name, l) in layers where !items.contains(where: { $0.0 == name }) { l.isHidden = true }
         for (name, p, alpha) in items {
             guard let l = layers[name] else { continue }
             l.isHidden = false
@@ -387,9 +407,13 @@ final class GlobeMetalContainer: NSView {
         updatePaused()
     }
 
+    override func viewDidHide() { super.viewDidHide(); updatePaused() }
+    override func viewDidUnhide() { super.viewDidUnhide(); updatePaused() }
+
     /// Animates only while wanted, the window is key and actually visible; otherwise draws once.
     private func updatePaused() {
         var visible = window.map { $0.isKeyWindow && $0.occlusionState.contains(.visible) && !$0.isMiniaturized } ?? false
+        if isHiddenOrHasHiddenAncestor { visible = false }
         #if DEBUG
         if GlobeView.debugForceActive { visible = window != nil }
         #endif

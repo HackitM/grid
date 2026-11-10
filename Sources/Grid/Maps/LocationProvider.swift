@@ -53,10 +53,39 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.authorizationChanged() }
     }
 
-    func cancel() { if state == .explaining || state == .asking { state = .idle }; wantsFix = false }
+    /// Closes whichever card is showing (GRID's explanation, or "location is off") and stops
+    /// waiting for macOS's prompt. A request already made to macOS and a fix are left alone.
+    func cancel() {
+        switch state {
+        case .explaining, .asking, .denied, .restricted, .servicesOff, .failed: state = .idle
+        case .idle, .locating, .fix: break
+        }
+        wantsFix = false
+    }
 
-    /// Forgets the fix (e.g. when the Map page closes).
-    func clear() { if case .fix = state { state = .idle } }
+    /// Forgets the fix, and a request still under way (when the Map page closes): a position
+    /// that arrives after this is dropped, not kept.
+    func clear() {
+        switch state {
+        case .fix, .locating: state = .idle
+        default: break
+        }
+    }
+
+    /// The position once the request under way has produced one; nil if it failed, was declined
+    /// or cancelled, or took longer than `timeout` seconds.
+    func waitForFix(timeout: TimeInterval = 60) async -> LonLat? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !Task.isCancelled, Date() < deadline {
+            switch state {
+            case .fix(let position, _, _): return position
+            case .locating, .asking, .explaining: break
+            case .idle, .denied, .restricted, .servicesOff, .failed: return nil
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return nil
+    }
 
     private func makeManager() -> CLLocationManager {
         let m = CLLocationManager()
@@ -94,6 +123,8 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
         let p = LonLat(lon: l.coordinate.longitude, lat: l.coordinate.latitude)
         let acc = l.horizontalAccuracy, t = l.timestamp
         MainActor.assumeIsolated {
+            // Only a position that was asked for and is still wanted is kept.
+            guard state == .locating else { return }
             guard p.isValid, acc >= 0 else { state = .failed("macOS returned an unusable position."); return }
             state = .fix(p, accuracy: acc, at: t)
         }
@@ -102,6 +133,7 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         let ns = error as NSError
         MainActor.assumeIsolated {
+            guard state == .locating else { return }
             if ns.domain == kCLErrorDomain && ns.code == CLError.denied.rawValue { state = .denied }
             else if ns.domain == kCLErrorDomain && ns.code == CLError.locationUnknown.rawValue { state = .failed("Location unknown right now. Try again in a moment.") }
             else { state = .failed("Couldn't get a location (\(ns.code)).") }

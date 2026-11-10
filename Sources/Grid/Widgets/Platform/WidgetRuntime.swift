@@ -44,6 +44,10 @@ final class WidgetRuntime {
     @ObservationIgnored private var callBucket = TokenBucket(burst: 120, perMinute: 600, now: Date().timeIntervalSince1970)
     static let maxOutstandingCalls = 32
     @ObservationIgnored private var lastTick = Date()
+    /// Messages received since the last watchdog tick. The host can write lines far faster than a
+    /// well-behaved widget needs; each one costs main-thread time here, so a flood is a strike.
+    @ObservationIgnored private var messagesSinceTick = 0
+    static let maxMessagesPerTick = 3000
 
     // Scheduling
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
@@ -52,6 +56,8 @@ final class WidgetRuntime {
     @ObservationIgnored private var restartTask: Task<Void, Never>?
     @ObservationIgnored private var stopTask: Task<Void, Never>?
     @ObservationIgnored private var lastInvalidate = Date.distantPast
+    /// A delayed `grid.invalidate()` render is already queued (at most one at a time).
+    @ObservationIgnored private var invalidateScheduled = false
     @ObservationIgnored private var hostRefresh: Int?
 
     // Budgets
@@ -162,9 +168,12 @@ final class WidgetRuntime {
         let sources = pkg.sources.map { ["name": $0.name, "code": $0.code] }
         h.send(["t": "load", "sources": sources])
         watchdog?.invalidate()
-        watchdog = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
+        timer.tolerance = 0.1      // lets macOS batch this wake-up with others
+        watchdog = timer
+        messagesSinceTick = 0
         // Loading counts against the render budget too.
         renderInFlight = 0
         jsTime = 0
@@ -179,6 +188,7 @@ final class WidgetRuntime {
         if let h = host { h.onMessage = nil; h.terminate() }
         host = nil
         renderInFlight = nil; actionInFlight = nil; outstandingCalls = 0; renderDirty = nil
+        invalidateScheduled = false
         busy = false
         if usesSystemStats { SystemMonitor.shared.unsubscribe(); usesSystemStats = false }
     }
@@ -197,6 +207,7 @@ final class WidgetRuntime {
         let now = Date()
         let dt = now.timeIntervalSince(lastTick)
         lastTick = now
+        messagesSinceTick = 0
         // Time spent waiting on GRID (exec, net, files) doesn't count against the widget.
         if (renderInFlight != nil || actionInFlight != nil) && outstandingCalls == 0 {
             jsTime += dt
@@ -251,6 +262,8 @@ final class WidgetRuntime {
     // MARK: - Messages from the host
 
     private func handle(_ m: [String: Any]) {
+        messagesSinceTick += 1
+        guard messagesSinceTick <= Self.maxMessagesPerTick else { violation("more than \(Self.maxMessagesPerTick) messages in half a second"); return }
         guard let t = m["t"] as? String else { violation("message without a type"); return }
         switch t {
         case "ready":
@@ -266,20 +279,7 @@ final class WidgetRuntime {
             phase = .error(String(describing: m["error"] ?? "Couldn't load.").prefix(500).description)
             library?.log(ref, "error", "Load failed: \(m["error"] ?? "")")
             shutdown()
-        case "view":
-            guard let id = (m["id"] as? NSNumber)?.intValue, id == renderInFlight else { return }   // stale
-            finishRender()
-            if (m["same"] as? Bool) != true {
-                guard let raw = m["tree"], let data = try? JSONSerialization.data(withJSONObject: raw, options: [.fragmentsAllowed]),
-                      let json = try? JSONDecoder().decode(WidgetJSON.self, from: data) else { violation("unreadable view"); return }
-                let (parsed, warnings) = WidgetTreeParser.parse(json)
-                let node = sanitizeIcons(parsed)
-                for w in Set(warnings).prefix(3) { library?.log(ref, "warn", w) }
-                if node != tree { tree = node }
-            }
-            if case .error = phase { phase = .running }
-            scheduleRefresh((m["refreshIn"] as? NSNumber)?.doubleValue)
-            if let again = renderDirty { renderDirty = nil; requestRender(again) }
+        case "view": handleView(m)
         case "renderError":
             guard let id = (m["id"] as? NSNumber)?.intValue, id == renderInFlight else { return }
             finishRender()
@@ -296,38 +296,75 @@ final class WidgetRuntime {
             busy = renderInFlight != nil
             if let e = m["error"] as? String { library?.log(ref, "error", "Action failed: \(e)") }
             requestRender("action")
-        case "call":
-            guard let call = (m["call"] as? NSNumber)?.intValue, let api = m["api"] as? String else { violation("bad call"); return }
-            let args = m["args"] as? [Any] ?? []
-            guard outstandingCalls < Self.maxOutstandingCalls else { violation("more than \(Self.maxOutstandingCalls) calls in flight"); return }
-            guard callBucket.take(now: Date().timeIntervalSince1970) else {
-                host?.send(["t": "result", "call": call, "ok": false, "error": "Rate limited: too many calls.", "kind": "RateLimited"]); return
-            }
-            outstandingCalls += 1
-            Task { [weak self] in
-                guard let self else { return }
-                let result = await self.broker(api, args)
-                self.outstandingCalls = max(0, self.outstandingCalls - 1)
-                guard let h = self.host else { return }
-                switch result {
-                case .success(let v): h.send(["t": "result", "call": call, "ok": true, "value": v])
-                case .failure(let e): h.send(["t": "result", "call": call, "ok": false, "error": e.message, "kind": e.kind])
-                }
-            }
+        case "call": handleCall(m)
         case "log":
             guard logBucket.take(now: Date().timeIntervalSince1970) else { return }
             library?.log(ref, (m["level"] as? String).flatMap { ["log", "warn", "error"].contains($0) ? $0 : nil } ?? "log",
                          String(describing: m["msg"] ?? "").prefix(2000).description)
-        case "invalidate":
-            let now = Date()
-            if now.timeIntervalSince(lastInvalidate) >= 1 { lastInvalidate = now; requestRender("invalidate") }
-            else if renderDirty == nil {
-                lastInvalidate = now
-                Task { [weak self] in try? await Task.sleep(for: .seconds(1)); self?.requestRender("invalidate") }
-            }
+        case "invalidate": handleInvalidate()
         case "__malformed": violation("malformed message")
         case "__oversize": violation("message larger than 1 MiB")
         default: violation("unknown message \(t.prefix(40))")
+        }
+    }
+
+    /// A finished render: validate the tree, show it if it changed, and schedule the next refresh.
+    private func handleView(_ m: [String: Any]) {
+        guard let id = (m["id"] as? NSNumber)?.intValue, id == renderInFlight else { return }   // stale
+        finishRender()
+        if (m["same"] as? Bool) != true {
+            guard let raw = m["tree"] else { violation("unreadable view"); return }
+            let (parsed, warnings) = WidgetTreeParser.parse(Self.widgetJSON(raw))
+            let node = sanitizeIcons(parsed)
+            for w in Set(warnings).prefix(3) { library?.log(ref, "warn", w) }
+            if node != tree { tree = node }
+        }
+        if case .error = phase { phase = .running }
+        scheduleRefresh((m["refreshIn"] as? NSNumber)?.doubleValue)
+        if let again = renderDirty { renderDirty = nil; requestRender(again) }
+    }
+
+    /// A `grid.*` API call: rate-limit it, broker it against the approved manifest, and answer.
+    private func handleCall(_ m: [String: Any]) {
+        guard let call = (m["call"] as? NSNumber)?.intValue, let api = m["api"] as? String else { violation("bad call"); return }
+        let args = m["args"] as? [Any] ?? []
+        guard outstandingCalls < Self.maxOutstandingCalls else { violation("more than \(Self.maxOutstandingCalls) calls in flight"); return }
+        guard callBucket.take(now: Date().timeIntervalSince1970) else {
+            host?.send(["t": "result", "call": call, "ok": false, "error": "Rate limited: too many calls.", "kind": "RateLimited"]); return
+        }
+        outstandingCalls += 1
+        let caller = host
+        Task { [weak self] in
+            guard let self else { return }
+            let result = await self.broker(api, args)
+            // The host may have been replaced while GRID worked (strike, restart, reload). The answer
+            // then belongs to a process that is gone, and the new process's call count isn't ours to lower.
+            guard let h = self.host, h === caller else { return }
+            self.outstandingCalls = max(0, self.outstandingCalls - 1)
+            switch result {
+            case .success(let v): h.send(["t": "result", "call": call, "ok": true, "value": v])
+            case .failure(let e): h.send(["t": "result", "call": call, "ok": false, "error": e.message, "kind": e.kind])
+            }
+        }
+    }
+
+    /// `grid.invalidate()`: render now if the last one was over a second ago, else once, a second
+    /// from now. However often the widget asks, at most one delayed render is ever queued.
+    private func handleInvalidate() {
+        let now = Date()
+        if now.timeIntervalSince(lastInvalidate) >= 1 {
+            lastInvalidate = now
+            requestRender("invalidate")
+        } else if !invalidateScheduled {
+            invalidateScheduled = true
+            let caller = host
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(1))
+                guard let self, self.host === caller, self.invalidateScheduled else { return }
+                self.invalidateScheduled = false
+                self.lastInvalidate = Date()
+                self.requestRender("invalidate")
+            }
         }
     }
 
@@ -336,6 +373,8 @@ final class WidgetRuntime {
     private func sanitizeIcons(_ n: WidgetNode) -> WidgetNode {
         let ctx = callContext()
         let patterns = (perms.fsRead ?? []) + (perms.filesSelection == true ? ["{selection}", "{folder}/*"] : [])
+        // Resolved once per tree (and only if some row has a path icon), not once per row.
+        var sensitiveRoots: [String]?
         func fix(_ n: WidgetNode) -> WidgetNode {
             switch n {
             case .stack(let a, let g, let c): return .stack(axis: a, gap: g, children: c.map(fix))
@@ -343,7 +382,12 @@ final class WidgetRuntime {
                 return .list(items.map { it in
                     var it = it
                     if let i = it.icon, i.hasPrefix("/") || i.hasPrefix("~") {
-                        let ok = PathRule.lexicallyPlausible(i, patterns: patterns, context: ctx) && PathRule.allows(i, patterns: patterns, context: ctx)
+                        var ok = PathRule.lexicallyPlausible(i, patterns: patterns, context: ctx)
+                        if ok {
+                            let roots = sensitiveRoots ?? PathRule.canonicalSensitiveRoots()
+                            sensitiveRoots = roots
+                            ok = PathRule.allows(i, patterns: patterns, context: ctx, sensitiveRoots: roots)
+                        }
                         if !ok { it.icon = nil }
                     }
                     return it
@@ -394,7 +438,7 @@ final class WidgetRuntime {
             }
         }
         return ["settings": s, "secrets": secrets, "size": expanded ? "expanded" : "compact",
-                "theme": app?.settings.theme.rawValue ?? "legacy", "now": ISO8601DateFormatter().string(from: Date()), "reason": reason]
+                "theme": app?.settings.theme.rawValue ?? "legacy", "now": Date().widgetISO8601, "reason": reason]
     }
 
     /// Next automatic refresh: the render's `refreshIn`, else the manifest's `refresh`.
@@ -410,9 +454,7 @@ final class WidgetRuntime {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled, let self else { return }
             // Don't burn cycles while GRID is hidden or the screen is locked: try again later.
-            if !NSApp.isActive && NSApp.windows.allSatisfy({ !$0.occlusionState.contains(.visible) }) {
-                self.scheduleRefresh(refreshIn); return
-            }
+            guard AppVisibility.isOnScreen else { self.scheduleRefresh(refreshIn); return }
             self.requestRender("refresh")
         }
     }
@@ -474,9 +516,7 @@ final class WidgetRuntime {
             if taskStarted == nil { taskStarted = Date() }
             busy = true
             var msg: [String: Any] = ["t": "action", "id": id, "action": a.value ?? "", "ctx": context("action")]
-            if let p = a.payload, let d = try? JSONEncoder().encode(p), let obj = try? JSONSerialization.jsonObject(with: d, options: [.fragmentsAllowed]) {
-                msg["payload"] = obj
-            }
+            if let payload = Self.jsonObject(a.payload) { msg["payload"] = payload }
             h.send(msg)
         case "copy":
             guard perms.clipboardWrite == true else { return deny("clipboard.write") }
@@ -559,12 +599,12 @@ final class WidgetRuntime {
             let opts = args.count > 1 ? args[1] as? [String: Any] : nil
             let maxBytes = (args.count > 1 ? (args[1] as? NSNumber)?.intValue : nil) ?? 64 * 1024
             // Symlink resolution touches the disk: do it (and the read) off the main thread.
-            return await Task.detached(priority: .utility) { () -> CallResult in
+            return await BlockingWork.run { () -> CallResult in
                 guard PathRule.allows(path, patterns: patterns, context: ctx) else {
                     return .failure(CallError(message: "Not permitted: reading \(path).", kind: "PermissionError"))
                 }
                 return Self.fileCall(api, PathRule.canonical(path, home: NSHomeDirectory()), opts: opts, maxBytes: maxBytes)
-            }.value
+            }
         case "exec":
             guard let command = str(0), let argv = args.count > 1 ? args[1] as? [String] : [] else { return .failure(CallError(message: "exec(command, args).")) }
             let t: ExecTemplate
@@ -576,10 +616,13 @@ final class WidgetRuntime {
                 guard actionInFlight != nil, clickExecTokens > 0 else { return denied("this command runs only once per click (userInitiated)") }
                 clickExecTokens -= 1
             }
-            // Never signal GRID itself or a widget host.
-            if ["kill", "killall", "pkill"].contains((t.command as NSString).lastPathComponent) {
-                let protected = Set([String(getpid())] + library.hostPIDs.map(String.init))
-                if argv.contains(where: protected.contains) { return denied("signalling GRID's own processes") }
+            // Never signal GRID itself or a widget host, by process ID or (killall, pkill) by name.
+            let program = (t.command as NSString).lastPathComponent
+            if ["kill", "killall", "pkill"].contains(program) {
+                let pids = Set([String(getpid())] + library.hostPIDs.map(String.init))
+                let names = Set([ProcessInfo.processInfo.processName, "GridWidgetHost"].map { $0.lowercased() })
+                let targetsGRID = argv.contains { pids.contains($0) || (program != "kill" && names.contains($0.lowercased())) }
+                if targetsGRID { return denied("signalling GRID's own processes") }
             }
             guard execBucket.take(now: Date().timeIntervalSince1970) else { return .failure(CallError(message: "Rate limited: too many commands (30/min).", kind: "RateLimited")) }
             return await Self.runExec(t, argv)
@@ -627,7 +670,7 @@ final class WidgetRuntime {
         var d: [String: Any] = ["path": e.url.path, "name": e.name, "kind": e.kind, "isFolder": e.isNavigableFolder,
                                 "isPackage": e.isPackage, "isHidden": e.isHidden, "isSymlink": e.isSymlink]
         if let s = e.size { d["size"] = s }
-        if let m = e.modified { d["modified"] = ISO8601DateFormatter().string(from: m) }
+        if let m = e.modified { d["modified"] = m.widgetISO8601 }
         if let u = e.typeIdentifier { d["uti"] = u }
         return d
     }
@@ -643,7 +686,7 @@ final class WidgetRuntime {
         case "fs.stat":
             var d = info(FileListing.entry(for: url))
             d["mode"] = String(format: "%o", st.st_mode & 0o7777)
-            d["created"] = ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: TimeInterval(st.st_birthtimespec.tv_sec)))
+            d["created"] = Date(timeIntervalSince1970: TimeInterval(st.st_birthtimespec.tv_sec)).widgetISO8601
             return .success(d)
         case "fs.list":
             do {
@@ -676,8 +719,9 @@ final class WidgetRuntime {
         }
     }
 
+    /// Waits for the command on a GCD thread: it may block for the template's whole timeout.
     nonisolated static func runExec(_ t: ExecTemplate, _ argv: [String]) async -> CallResult {
-        await Task.detached(priority: .utility) { runExecSync(t, argv) }.value
+        await BlockingWork.run { runExecSync(t, argv) }
     }
 
     /// Runs an approved command under sandbox-exec with a scrubbed environment (blocking).
@@ -764,7 +808,7 @@ final class WidgetRuntime {
     nonisolated static func fetch(_ url: URL, options: [String: Any], secrets: [String: (value: String, hosts: [String])]) async -> CallResult {
         guard let host = url.host?.lowercased() else { return .failure(CallError(message: "Bad URL.")) }
         // Refuse hosts that resolve to this Mac or the local network (DNS rebinding included).
-        let addrs = await Task.detached { resolve(host) }.value
+        let addrs = await BlockingWork.run { resolve(host) }
         if addrs.isEmpty { return .failure(CallError(message: "Couldn't resolve \(host).", kind: "NetworkError")) }
         if addrs.contains(where: NetRule.isPrivateAddress) { return .failure(CallError(message: "\(host) resolves to a private address.", kind: "PermissionError")) }
 
@@ -831,14 +875,32 @@ final class WidgetRuntime {
         return out
     }
 
+    // MARK: JSON values (JSONSerialization objects ⇄ WidgetJSON)
+
+    /// Converts what `JSONSerialization` produced into a `WidgetJSON`, directly. (Going through
+    /// `Data` and `JSONDecoder` again cost several times as much, on the main thread, per render.)
     nonisolated static func widgetJSON(_ any: Any) -> WidgetJSON {
-        guard let d = try? JSONSerialization.data(withJSONObject: any, options: [.fragmentsAllowed]),
-              let j = try? JSONDecoder().decode(WidgetJSON.self, from: d) else { return .null }
-        return j
+        switch any {
+        case let s as String: return .string(s)
+        case let n as NSNumber:
+            // JSON true/false arrive as CFBoolean; every other NSNumber is a number.
+            return CFGetTypeID(n) == CFBooleanGetTypeID() ? .bool(n.boolValue) : .number(n.doubleValue)
+        case let a as [Any]: return .array(a.map(widgetJSON))
+        case let o as [String: Any]: return .object(o.mapValues(widgetJSON))
+        default: return .null
+        }
     }
 
+    /// The reverse: a value `JSONSerialization` can write. nil only for nil.
     nonisolated static func jsonObject(_ j: WidgetJSON?) -> Any? {
-        guard let j, let d = try? JSONEncoder().encode(j) else { return nil }
-        return try? JSONSerialization.jsonObject(with: d, options: [.fragmentsAllowed])
+        switch j {
+        case nil: return nil
+        case .null: return NSNull()
+        case .bool(let b): return b
+        case .number(let n): return n.isFinite ? n : NSNull()
+        case .string(let s): return s
+        case .array(let a): return a.map { jsonObject($0) ?? NSNull() }
+        case .object(let o): return o.mapValues { jsonObject($0) ?? NSNull() }
+        }
     }
 }

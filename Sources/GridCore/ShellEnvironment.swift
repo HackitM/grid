@@ -4,16 +4,23 @@ import Foundation
 public enum ShellEnvironment {
     /// The user's login shell from the directory service, then $SHELL, then /bin/zsh.
     public static func resolveShell(override: String? = nil, environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
-        let fm = FileManager.default
-        if let o = override?.trimmingCharacters(in: .whitespaces), !o.isEmpty, fm.isExecutableFile(atPath: o) {
-            return o
-        }
+        if let o = override?.trimmingCharacters(in: .whitespaces), isUsableShell(o) { return o }
         if let pw = getpwuid(getuid()), let cs = pw.pointee.pw_shell {
             let s = String(cString: cs)
-            if !s.isEmpty, fm.isExecutableFile(atPath: s) { return s }
+            if isUsableShell(s) { return s }
         }
-        if let s = environment["SHELL"], fm.isExecutableFile(atPath: s) { return s }
+        if let s = environment["SHELL"], isUsableShell(s) { return s }
         return "/bin/zsh"
+    }
+
+    /// An absolute path to an executable file. A folder also counts as "executable" to the
+    /// system (the bit means searchable there), and a relative path would depend on wherever
+    /// GRID happened to be started from, so both are refused.
+    public static func isUsableShell(_ path: String) -> Bool {
+        guard path.hasPrefix("/") else { return false }
+        var isDir: ObjCBool = false
+        let fm = FileManager.default
+        return fm.fileExists(atPath: path, isDirectory: &isDir) && !isDir.boolValue && fm.isExecutableFile(atPath: path)
     }
 
     /// Variables describing *another* terminal or tool that must not leak into our sessions

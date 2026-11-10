@@ -698,3 +698,19 @@ trip leaves the Mac, and there is no helper runtime.
   the same turn list on the clipboard.
 - **Not yet**: routes that cross from one region's data into another's, way-via turn
   restrictions, traffic, time-dependent access.
+
+## Addendum: review pass (structure and performance notes)
+
+- **MapModel** is split by concern: `MapModel.swift` (state, lifecycle), `+TilePlan` (cover,
+  backdrop, ring and prefetch; look-ahead constants in `MapModel.Prefetch`), `+Frame` (frame
+  building with cached markers, route and outline projections), `+Gestures`, `+Picking`.
+  `CamerasInView` counts and lists cameras in view off the main thread.
+- **Renderer**: `encode` is `prepare` (CPU) plus `MapFramePass` (one method per pass); frame
+  uniforms live in one triple-buffered buffer; tile uploads run on a serial background queue
+  (printing uploads synchronously), with tiles from the previous frame covering the ground until
+  they land; atlas rasterisation and new-tile label preparation each have a 1.5 ms per-frame
+  budget; labels are interned and measured only when they come within reach of the view.
+- **Routing core**: snaps within 1 m of an edge end are the junction; up to 6 roads within 30 m of
+  the nearest are tried as start / end candidates (charged at walking pace), which removed the
+  loops round a block before the destination; searches can be cancelled; the edge grid stores
+  32-bit ids and clamps its cells.

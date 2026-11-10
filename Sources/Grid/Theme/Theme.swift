@@ -45,7 +45,13 @@ struct Theme: Equatable {
     let termCursor: NSColor
     let termSelection: NSColor
 
-    static func make(_ id: ThemeID) -> Theme {
+    /// The theme's tokens. Built once per theme: this is read at the top of the root view and by
+    /// every menu, so it should cost a lookup, not thirty colour conversions.
+    static func make(_ id: ThemeID) -> Theme { all[id] ?? build(id) }
+
+    private static let all: [ThemeID: Theme] = Dictionary(uniqueKeysWithValues: ThemeID.allCases.map { ($0, build($0)) })
+
+    private static func build(_ id: ThemeID) -> Theme {
         switch id {
         case .legacy:
             return Theme(id: id,

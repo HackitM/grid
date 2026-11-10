@@ -27,6 +27,8 @@ final class BrowserModel {
     let settings = BrowserSettings()
     let adBlocker = AdBlocker()
     let themes = SiteThemes()
+    /// Every tab's downloads (kept here so a download outlives the tab that started it).
+    @ObservationIgnored let downloads = BrowserDownloads()
     /// Visit history for the new-tab page (local only; cleared with browsing data).
     private(set) var history: [HistoryItem] = []
 
@@ -60,6 +62,7 @@ final class BrowserModel {
             }
         }
         activeID = tabs.first?.id
+        downloads.model = self
         adBlocker.onChange = { [weak self] in self?.tabs.forEach { $0.applyContentBlocking() } }
         themes.onChange = { [weak self] in self?.tabs.forEach { $0.refreshThemeScripts() } }
         initializing = false
@@ -244,7 +247,8 @@ final class BrowserTab: Identifiable {
     @ObservationIgnored private var _webView: WKWebView?
     @ObservationIgnored private var coordinator: BrowserTabCoordinator?
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
-    @ObservationIgnored private var blockingApplied = false
+    /// The rule lists currently installed in this tab's content controller.
+    @ObservationIgnored private var appliedRuleLists: [WKContentRuleList] = []
     @ObservationIgnored var alertTimes: [Date] = []
 
     init(model: BrowserModel, pendingURL: URL?, configuration: WKWebViewConfiguration? = nil) {
@@ -269,6 +273,9 @@ final class BrowserTab: Identifiable {
         let model = model!
         let config = model.makeConfiguration(base: configuration)
         configuration = nil
+        // Added before the web view exists, so nothing has to be removed from its content
+        // controller afterwards (see `refreshThemeScripts` for why removing is best avoided).
+        config.userContentController.addUserScript(themeScript(model))
         let w = GridWebView(frame: .zero, configuration: config)
         w.allowsBackForwardNavigationGestures = true
         w.allowsMagnification = true
@@ -279,7 +286,7 @@ final class BrowserTab: Identifiable {
         w.uiDelegate = c
         _webView = w
         applyAppearance()
-        refreshThemeScripts()
+        refreshThemeState()
         observe(w)
         return w
     }
@@ -320,6 +327,7 @@ final class BrowserTab: Identifiable {
         _webView?.uiDelegate = nil
         _webView?.removeFromSuperview()
         _webView = nil
+        appliedRuleLists = []
     }
 
     private func observe(_ w: WKWebView) {
@@ -354,11 +362,18 @@ final class BrowserTab: Identifiable {
 
     var themeEntry: SiteThemeEntry? { SiteThemeCatalog.entry(for: url) }
 
+    private func themeScript(_ model: BrowserModel) -> WKUserScript {
+        model.themes.userScript(theme: model.app?.settings.themeValue ?? Theme.make(.legacy))
+    }
+
+    /// Replaces the theme script after a theme or per-site setting changed. WebKit can only remove
+    /// user scripts all at once, which also drops scripts other parts of WebKit added to this
+    /// controller, so this runs only on an actual change, never when a tab is created.
     func refreshThemeScripts() {
         guard let w = _webView, let model else { return }
         let ucc = w.configuration.userContentController
         ucc.removeAllUserScripts()
-        let script = model.themes.userScript(theme: model.app?.settings.themeValue ?? Theme.make(.legacy))
+        let script = themeScript(model)
         ucc.addUserScript(script)
         refreshThemeState()
         // Apply to the page that's already loaded too (the user script only runs on the next load).
@@ -377,18 +392,17 @@ final class BrowserTab: Identifiable {
 
     // MARK: Content blocking
 
-    /// Adds or removes the ad-blocking rule lists for the page about to load.
+    /// Adds or removes the ad-blocking rule lists for the page about to load. Called for every
+    /// main-frame navigation, so it does nothing when the right lists are already installed:
+    /// re-adding them made WebKit hand every list to the page's processes again on each click.
     func prepareBlocking(for url: URL?) {
         guard let w = _webView, let model else { return }
-        let want = model.adBlocker.shouldBlock(on: SiteKey.of(url))
+        let wanted = model.adBlocker.shouldBlock(on: SiteKey.of(url)) ? model.adBlocker.ruleLists : []
+        guard !wanted.elementsEqual(appliedRuleLists, by: ===) else { return }
         let ucc = w.configuration.userContentController
-        if want {
-            ucc.removeAllContentRuleLists()
-            model.adBlocker.ruleLists.forEach { ucc.add($0) }
-        } else if blockingApplied {
-            ucc.removeAllContentRuleLists()
-        }
-        blockingApplied = want
+        ucc.removeAllContentRuleLists()
+        wanted.forEach { ucc.add($0) }
+        appliedRuleLists = wanted
     }
 
     /// Re-applies blocking after settings or lists change (takes effect on the next load).
@@ -438,16 +452,15 @@ final class BrowserTab: Identifiable {
 // MARK: - Delegate
 
 @MainActor
-final class BrowserTabCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+final class BrowserTabCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
     weak var tab: BrowserTab?
-    private var downloads: [ObjectIdentifier: URL] = [:]
 
     init(tab: BrowserTab) { self.tab = tab }
 
     private var model: BrowserModel? { tab?.browserModel }
     private var app: AppState? { model?.app }
 
-    // Navigation policy
+    // MARK: Navigation policy
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, preferences: WKWebpagePreferences) async -> (WKNavigationActionPolicy, WKWebpagePreferences) {
         guard let url = action.request.url else { return (.cancel, preferences) }
@@ -493,8 +506,14 @@ final class BrowserTabCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate,
         return .allow
     }
 
-    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.delegate = self }
-    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.delegate = self }
+    // Downloads are handed to the browser's own delegate, which outlives this tab (BrowserDownloads).
+    // Without a model there is nobody to confirm or quarantine, so the download is cancelled.
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { adopt(download) }
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { adopt(download) }
+
+    private func adopt(_ download: WKDownload) {
+        if let downloads = model?.downloads { downloads.adopt(download) } else { download.cancel { _ in } }
+    }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { tab?.didFinish() }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { tab?.didFail(error) }
@@ -520,7 +539,9 @@ final class BrowserTabCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate,
                                      confirmLabel: "Open", destructive: false, onConfirm: { NSWorkspace.shared.open(url) }))
     }
 
-    // Popups: only for user-initiated window.open/target=_blank (WebKit enforces the gesture).
+    // MARK: Popups
+
+    // Only for user-initiated window.open/target=_blank (WebKit enforces the gesture).
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard let model, let url = action.request.url else { return nil }
@@ -537,7 +558,9 @@ final class BrowserTabCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate,
         if let t = tab { model?.close(t.id) }
     }
 
-    // Page dialogs: drawn by GRID, clearly labelled as coming from the page; rate-limited.
+    // MARK: Page dialogs
+
+    // Drawn by GRID, clearly labelled as coming from the page; rate-limited.
 
     /// Who's talking: the frame's host, else the page's, else "This page" (blank/sandboxed frames).
     static func origin(_ frame: WKFrameInfo, _ webView: WKWebView) -> String {
@@ -584,43 +607,14 @@ final class BrowserTabCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate,
         return panel.runModal() == .OK ? panel.urls : nil
     }
 
-    func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
+    /// Camera and microphone: always WebKit's own per-site prompt, never granted silently.
+    /// The name must match the delegate's async signature exactly, or WebKit never calls it
+    /// (an earlier spelling only "nearly matched" and was silently unused).
+    func webView(_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin, initiatedBy frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
         .prompt
     }
 
-    // Downloads: ask first, save to ~/Downloads, quarantine.
-
-    func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String) async -> URL? {
-        guard let app else { return nil }
-        let name = FileNaming.sanitizedDownloadName(suggestedFilename)
-        let size = response.expectedContentLength > 0 ? " (" + ByteCountFormatter.string(fromByteCount: response.expectedContentLength, countStyle: .file) + ")" : ""
-        let host = response.url?.host ?? "this site"
-        let ok = await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
-            let shown = app.present(Confirmation(code: "WEB.DOWNLOAD", title: "Download “\(name)”?",
-                                                 message: "From \(host)\(size). It will be saved to Downloads.",
-                                                 confirmLabel: "Download", destructive: false,
-                                                 onConfirm: { c.resume(returning: true) }, onCancel: { c.resume(returning: false) }))
-            if !shown { c.resume(returning: false) }
-        }
-        guard ok else { return nil }
-        let dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-        let dest = FileNaming.uniqueURL(in: dir, name: name)
-        downloads[ObjectIdentifier(download)] = dest
-        return dest
-    }
-
-    func downloadDidFinish(_ download: WKDownload) {
-        guard let dest = downloads.removeValue(forKey: ObjectIdentifier(download)) else { return }
-        Self.quarantine(dest, from: download.originalRequest?.url)
-        app?.flash(.info, "Downloaded \(dest.lastPathComponent)", actionLabel: "Reveal") {
-            NSWorkspace.shared.activateFileViewerSelecting([dest])
-        }
-    }
-
-    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
-        downloads.removeValue(forKey: ObjectIdentifier(download))
-        app?.flash(.error, "Download failed: \(error.localizedDescription)")
-    }
+    // MARK: Quarantine
 
     /// Marks a download as coming from the internet so Gatekeeper checks it on first open.
     static func quarantine(_ file: URL, from source: URL?) {

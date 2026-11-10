@@ -166,12 +166,13 @@ public enum FolderMeasure {
         let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey]
         guard let e = FileManager.default.enumerator(at: url, includingPropertiesForKeys: keys, options: [],
                                                      errorHandler: { _, _ in r.unreadable += 1; return true }) else { return r }
+        let keySet = Set(keys)
         var seen = 0
         while let item = e.nextObject() as? URL {
             seen += 1
             if seen > limit { r.truncated = true; break }
             if seen % 512 == 0, isCancelled() { r.truncated = true; break }
-            guard let v = try? item.resourceValues(forKeys: Set(keys)) else { r.unreadable += 1; continue }
+            guard let v = try? item.resourceValues(forKeys: keySet) else { r.unreadable += 1; continue }
             if v.isSymbolicLink == true { r.files += 1; continue }
             if v.isDirectory == true { r.folders += 1; continue }
             r.files += 1

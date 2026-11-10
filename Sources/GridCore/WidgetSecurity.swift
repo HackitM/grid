@@ -91,7 +91,7 @@ public struct WidgetManifest: Codable, Equatable, Sendable {
         for s in settings ?? [] where s.type != "secret" {
             switch s.default {
             case .string(let v): d[s.key] = v
-            case .number(let n): d[s.key] = n == n.rounded() ? String(Int(n)) : String(n)
+            case .number(let n): d[s.key] = WidgetSettingSpec.format(n)
             case .bool(let b): d[s.key] = b ? "true" : "false"
             default: if s.type == "choice", let f = s.options?.first { d[s.key] = f }
             }
@@ -122,13 +122,20 @@ public struct WidgetSettingSpec: Codable, Equatable, Sendable {
         return e
     }
 
+    /// A number as the deck stores it: whole numbers without a fraction ("5", not "5.0").
+    /// Manifests are untrusted, so a default or bound like 1e300 must not reach `Int(_:)`,
+    /// which traps on values it can't represent.
+    static func format(_ n: Double) -> String {
+        guard n.isFinite else { return "0" }
+        return n == n.rounded() && abs(n) < 1e15 ? String(Int(n)) : String(n)
+    }
+
     /// Normalizes a user-entered value; nil if invalid.
     public func normalize(_ raw: String) -> String? {
         switch type {
         case "number":
             guard let n = Double(raw.trimmingCharacters(in: .whitespaces)), n.isFinite else { return nil }
-            let c = Swift.min(Swift.max(n, min ?? -1e12), max ?? 1e12)
-            return c == c.rounded() ? String(Int(c)) : String(c)
+            return Self.format(Swift.min(Swift.max(n, min ?? -1e12), max ?? 1e12))
         case "bool": return raw == "true" || raw == "1" ? "true" : "false"
         case "choice": return (options ?? []).contains(raw) ? raw : nil
         default: return String(raw.prefix(maxLength ?? 500))
@@ -522,12 +529,20 @@ public enum PathRule {
         return URL(fileURLWithPath: p).standardizedFileURL.resolvingSymlinksInPath().path
     }
 
+    /// The sensitive locations with symlinks resolved. Resolving ~70 paths touches the disk, so a
+    /// caller checking many paths in one go (a list's icons) computes this once and passes it to
+    /// `allows`. Don't keep it across calls: a location swapped for a link later would be missed.
+    public static func canonicalSensitiveRoots(home: String = NSHomeDirectory()) -> [String] {
+        sensitiveRoots(home: home).map { canonical($0, home: home) }
+    }
+
     /// Whether `path` may be read under the approved `patterns`.
-    public static func allows(_ path: String, patterns: [String], context: WidgetCallContext, home: String = NSHomeDirectory()) -> Bool {
+    public static func allows(_ path: String, patterns: [String], context: WidgetCallContext, home: String = NSHomeDirectory(),
+                              sensitiveRoots precomputed: [String]? = nil) -> Bool {
         guard path.hasPrefix("/") || path.hasPrefix("~") else { return false }
         let target = canonical(path, home: home)
         if target == "/dev" || target.hasPrefix("/dev/") { return false }
-        let sensitive = sensitiveRoots(home: home).map { canonical($0, home: home) }
+        let sensitive = precomputed ?? canonicalSensitiveRoots(home: home)
         let targetRoot = protectedRoot(target, home: home, listed: sensitive)
         func within(_ p: String, _ root: String) -> Bool { p == root || p.hasPrefix(root + "/") }
 
@@ -564,22 +579,26 @@ public enum PathRule {
         return false
     }
 
-
     /// Glob over path components: `*` within a component, `?` one character, `**` any depth.
+    ///
+    /// Patterns come from untrusted manifests, so matching fills a table over (pattern index,
+    /// path index) rather than backtracking: a pattern like `/**/**/**/**/x` costs
+    /// components × components, not exponential time on the thread doing the permission check.
     public static func globMatch(pattern: String, path: String) -> Bool {
-        let pc = pattern.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-        let tc = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-        return match(pc[...], tc[...])
-    }
-
-    private static func match(_ p: ArraySlice<String>, _ t: ArraySlice<String>) -> Bool {
-        guard let first = p.first else { return t.isEmpty }
-        if first == "**" {
-            if match(p.dropFirst(), t) { return true }
-            return !t.isEmpty && match(p, t.dropFirst())
+        let p = pattern.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        let t = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        var memo = [Bool?](repeating: nil, count: (p.count + 1) * (t.count + 1))
+        func match(_ i: Int, _ j: Int) -> Bool {
+            let slot = i * (t.count + 1) + j
+            if let known = memo[slot] { return known }
+            let result: Bool
+            if i == p.count { result = j == t.count }
+            else if p[i] == "**" { result = match(i + 1, j) || (j < t.count && match(i, j + 1)) }
+            else { result = j < t.count && componentMatch(p[i], t[j]) && match(i + 1, j + 1) }
+            memo[slot] = result
+            return result
         }
-        guard let head = t.first, componentMatch(first, head) else { return false }
-        return match(p.dropFirst(), t.dropFirst())
+        return match(0, 0)
     }
 
     static func componentMatch(_ pattern: String, _ s: String) -> Bool {
@@ -721,7 +740,28 @@ public indirect enum WidgetNode: Equatable, Sendable {
     case code(String, lines: Int?)
     case unsupported(String)
 
-    public static func == (a: WidgetNode, b: WidgetNode) -> Bool { String(describing: a) == String(describing: b) }
+    /// Written out because `.kv` holds tuples (so it can't be synthesized). Compared on the main
+    /// thread for every new tree a widget sends, so it must be cheap: no reflection, no strings.
+    public static func == (a: WidgetNode, b: WidgetNode) -> Bool {
+        switch (a, b) {
+        case let (.stack(a1, g1, c1), .stack(a2, g2, c2)): a1 == a2 && g1 == g2 && c1 == c2
+        case let (.text(s1, st1, t1, l1), .text(s2, st2, t2, l2)): s1 == s2 && st1 == st2 && t1 == t2 && l1 == l2
+        case let (.readout(l1, v1, d1), .readout(l2, v2, d2)): l1 == l2 && v1 == v2 && d1 == d2
+        case let (.bar(v1, w1, t1), .bar(v2, w2, t2)): v1 == v2 && w1 == w2 && t1 == t2
+        case let (.display(v1, d1, t1), .display(v2, d2, t2)): v1 == v2 && d1 == d2 && t1 == t2
+        case (.spacer, .spacer), (.divider, .divider): true
+        case let (.sparkline(v1, m1), .sparkline(v2, m2)): v1 == v2 && m1 == m2
+        case let (.kv(r1), .kv(r2)): r1.count == r2.count && zip(r1, r2).allSatisfy { $0 == $1 }
+        case let (.list(i1), .list(i2)): i1 == i2
+        case let (.tag(s1, t1), .tag(s2, t2)): s1 == s2 && t1 == t2
+        case let (.button(s1, a1, p1), .button(s2, a2, p2)): s1 == s2 && a1 == a2 && p1 == p2
+        case let (.progress(v1), .progress(v2)): v1 == v2
+        case let (.empty(t1, m1), .empty(t2, m2)): t1 == t2 && m1 == m2
+        case let (.code(s1, l1), .code(s2, l2)): s1 == s2 && l1 == l2
+        case let (.unsupported(s1), .unsupported(s2)): s1 == s2
+        default: false
+        }
+    }
 }
 
 public struct WidgetListItem: Equatable, Sendable {
