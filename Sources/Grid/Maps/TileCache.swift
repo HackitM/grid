@@ -21,14 +21,16 @@ actor TileCache {
         self.maxBytes = maxBytes
     }
 
-    private var dir: URL { MapStorage.tiles.appendingPathComponent(sourceKey, isDirectory: true) }
+    private nonisolated var dir: URL { MapStorage.tiles.appendingPathComponent(sourceKey, isDirectory: true) }
 
-    private func file(_ t: TileID) -> URL {
+    private nonisolated func file(_ t: TileID) -> URL {
         dir.appendingPathComponent("\(t.z)", isDirectory: true).appendingPathComponent("\(t.x)", isDirectory: true)
             .appendingPathComponent("\(t.y).pbf")
     }
 
-    func read(_ t: TileID) -> Data? {
+    /// Reads don't queue behind writes or a trim: files are written atomically, so a read sees a
+    /// whole tile or none.
+    nonisolated func read(_ t: TileID) -> Data? {
         guard t.isValid else { return nil }
         return MapStorage.read(file(t), maxBytes: Self.maxTileBytes)
     }
@@ -38,14 +40,20 @@ actor TileCache {
         do {
             try MapStorage.write(data, to: file(t))
             bytesSinceTrim += Int64(data.count)
-            if bytesSinceTrim > 16 << 20 { bytesSinceTrim = 0; trim() }
+            if bytesSinceTrim > 16 << 20 {
+                bytesSinceTrim = 0
+                let cap = maxBytes
+                Task.detached(priority: .utility) { Self.trim(maxBytes: cap) }
+            }
         } catch {
             // A full or read-only disk only costs a re-download later.
         }
     }
 
     /// Removes the oldest tiles until the cache is under 90% of its cap.
-    func trim() {
+    func trim() { Self.trim(maxBytes: maxBytes) }
+
+    nonisolated static func trim(maxBytes: Int64) {
         guard let e = FileManager.default.enumerator(at: MapStorage.tiles, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey]) else { return }
         var files: [(URL, Int64, Date)] = []
         var total: Int64 = 0

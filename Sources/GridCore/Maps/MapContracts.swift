@@ -58,7 +58,7 @@ public struct BBox: Hashable, Sendable, Codable {
 /// The map's view. `zoom` is fractional (tile zoom = floor), `bearing` is degrees clockwise from
 /// north (0 = north up), `pitch` is degrees from straight down (0…MapCamera.maxPitch).
 public struct MapCamera: Equatable, Sendable, Codable {
-    public static let maxPitch: Double = 45
+    public static let maxPitch: Double = 60
     public static let minZoom: Double = 0.6
     public static let maxZoom: Double = 18
     /// The map is a globe at or below `globeZoom`, flat at or above `flatZoom`, and morphs between
@@ -160,6 +160,8 @@ public enum RenderClass: UInt16, CaseIterable, Sendable {
     case water, waterway, landuse, park, building
     case path, rail, service, minor, tertiary, secondary, primary, trunk, motorway
     case boundary, aeroway
+    /// Terrain contour lines (minor, and every fifth "index" line).
+    case contour, contourIndex
 }
 
 /// One vertex of a tessellated line, matching the Metal `LineVertex` struct byte for byte
@@ -232,8 +234,11 @@ public struct LabelAnchor: Sendable, Equatable {
     public var pos: SIMD2<Float>
     /// Minimum camera zoom at which the label may show.
     public var minZoom: Float
-    public init(text: String, kind: LabelKind, priority: Int, pos: SIMD2<Float>, minZoom: Float) {
-        self.text = text; self.kind = kind; self.priority = priority; self.pos = pos; self.minZoom = minZoom
+    /// Tile-local direction of the line the label runs along (road names, contour heights);
+    /// zero for labels drawn level.
+    public var dir: SIMD2<Float>
+    public init(text: String, kind: LabelKind, priority: Int, pos: SIMD2<Float>, minZoom: Float, dir: SIMD2<Float> = .zero) {
+        self.text = text; self.kind = kind; self.priority = priority; self.pos = pos; self.minZoom = minZoom; self.dir = dir
     }
 }
 
@@ -246,8 +251,12 @@ public struct TileGeometry: Sendable, Equatable {
     public var labels: [LabelAnchor]
     /// Approximate memory held (for LRU accounting).
     public var byteCount: Int
-    public init(id: TileID, fills: [FillBatch], lines: [LineBatch], extrusion: ExtrusionBatch?, labels: [LabelAnchor], byteCount: Int) {
+    /// Bumped when the geometry of the same tile changes (e.g. terrain contours added); the
+    /// renderer re-uploads a tile whose revision differs from the one it holds.
+    public var revision: Int
+    public init(id: TileID, fills: [FillBatch], lines: [LineBatch], extrusion: ExtrusionBatch?, labels: [LabelAnchor], byteCount: Int, revision: Int = 0) {
         self.id = id; self.fills = fills; self.lines = lines; self.extrusion = extrusion; self.labels = labels; self.byteCount = byteCount
+        self.revision = revision
     }
 }
 
@@ -345,5 +354,34 @@ public struct CameraCluster: Sendable, Equatable {
     public var representative: Int
     public init(count: Int, center: LonLat, representative: Int) {
         self.count = count; self.center = center; self.representative = representative
+    }
+}
+
+// MARK: - Terrain
+
+/// Elevation for one map tile: `size × size` samples in metres, row-major from the north-west
+/// corner, sample (i, j) at tile-local (i / (size-1), j / (size-1)). Neighbouring tiles sample
+/// the same source at their shared edge.
+public struct TerrainGrid: Sendable, Equatable {
+    public static let size = 65
+    public let id: TileID
+    public let heights: [Float]
+    public let minHeight: Float
+    public let maxHeight: Float
+    public init(id: TileID, heights: [Float]) {
+        self.id = id; self.heights = heights
+        minHeight = heights.min() ?? 0; maxHeight = heights.max() ?? 0
+    }
+    /// Bilinear elevation at tile-local (u, v) in 0…1.
+    public func height(u: Double, v: Double) -> Double {
+        let n = Self.size
+        guard heights.count == n * n else { return 0 }
+        let x = min(max(u, 0), 1) * Double(n - 1), y = min(max(v, 0), 1) * Double(n - 1)
+        let x0 = min(Int(x), n - 2), y0 = min(Int(y), n - 2)
+        let fx = x - Double(x0), fy = y - Double(y0)
+        func h(_ i: Int, _ j: Int) -> Double { Double(heights[j * n + i]) }
+        let top = h(x0, y0) * (1 - fx) + h(x0 + 1, y0) * fx
+        let bottom = h(x0, y0 + 1) * (1 - fx) + h(x0 + 1, y0 + 1) * fx
+        return top * (1 - fy) + bottom * fy
     }
 }

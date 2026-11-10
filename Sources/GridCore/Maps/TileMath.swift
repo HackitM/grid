@@ -68,24 +68,69 @@ public enum TileMath {
         guard cam.zoom.isFinite, cam.center.x.isFinite, cam.center.y.isFinite else { return [] }
         let z = max(0, min(min(maxZoom, 24), Int(max(0, min(24, (cam.zoom + 0.3).rounded(.down))))))
         let proj = MapProjection(camera: cam, viewport: viewport)
-        // Ground points under the viewport corners (and edge midpoints, for pitch).
-        var pts: [Mercator] = []
-        for sx in [0.0, 0.5, 1.0] { for sy in [0.0, 0.5, 1.0] {
-            if let p = proj.groundPoint(screen: SIMD2(sx * viewport.x, sy * viewport.y)) { pts.append(p) }
-        } }
-        guard !pts.isEmpty else { return [] }
-        let n = Double(1 << z)
-        let count = 1 << z
-        let minX = cell(pts.map(\.x).min()! * n, count: count), maxX = cell(pts.map(\.x).max()! * n, count: count)
-        let minY = cell(pts.map(\.y).min()! * n, count: count), maxY = cell(pts.map(\.y).max()! * n, count: count)
-        guard minX <= maxX, minY <= maxY else { return [] }
-        let cx = cam.center.x * n, cy = cam.center.y * n
+        // The visible ground: points along the screen border, as a polygon in world units.
+        var ring: [Mercator] = []
+        let steps = 8
+        for k in 0..<steps { if let p = proj.groundPoint(screen: SIMD2(viewport.x * Double(k) / Double(steps), 0)) { ring.append(p) } }
+        for k in 0..<steps { if let p = proj.groundPoint(screen: SIMD2(viewport.x, viewport.y * Double(k) / Double(steps))) { ring.append(p) } }
+        for k in 0..<steps { if let p = proj.groundPoint(screen: SIMD2(viewport.x * Double(steps - k) / Double(steps), viewport.y)) { ring.append(p) } }
+        for k in 0..<steps { if let p = proj.groundPoint(screen: SIMD2(0, viewport.y * Double(steps - k) / Double(steps))) { ring.append(p) } }
+        guard ring.count >= 3 else { return [] }
+        let minX = ring.map(\.x).min()!, maxX = ring.map(\.x).max()!, minY = ring.map(\.y).min()!, maxY = ring.map(\.y).max()!
+
+        func contains(_ p: Mercator) -> Bool {
+            var inside = false
+            var j = ring.count - 1
+            for i in 0..<ring.count {
+                let a = ring[i], b = ring[j]
+                if (a.y > p.y) != (b.y > p.y), p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x { inside.toggle() }
+                j = i
+            }
+            return inside
+        }
+        func segmentsCross(_ p1: Mercator, _ p2: Mercator, _ q1: Mercator, _ q2: Mercator) -> Bool {
+            func o(_ a: Mercator, _ b: Mercator, _ c: Mercator) -> Double { (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) }
+            return (o(p1, p2, q1) > 0) != (o(p1, p2, q2) > 0) && (o(q1, q2, p1) > 0) != (o(q1, q2, p2) > 0)
+        }
+        /// Tile overlaps the visible ground polygon.
+        func visible(_ t: TileID) -> Bool {
+            let (nw, se) = bounds(t)
+            guard se.x >= minX, nw.x <= maxX, se.y >= minY, nw.y <= maxY else { return false }
+            let corners = [nw, Mercator(x: se.x, y: nw.y), se, Mercator(x: nw.x, y: se.y)]
+            if corners.contains(where: contains) { return true }
+            if ring.contains(where: { $0.x >= nw.x && $0.x <= se.x && $0.y >= nw.y && $0.y <= se.y }) { return true }
+            for i in 0..<4 {
+                let a = corners[i], b = corners[(i + 1) % 4]
+                var j = ring.count - 1
+                for k in 0..<ring.count { if segmentsCross(a, b, ring[j], ring[k]) { return true }; j = k }
+            }
+            return false
+        }
+        /// Largest on-screen extent of a tile in points (∞ if part of it is behind the camera).
+        func screenSize(_ t: TileID) -> Double {
+            let (nw, se) = bounds(t)
+            let pts = [nw, Mercator(x: se.x, y: nw.y), se, Mercator(x: nw.x, y: se.y)].map { proj.screen($0) }
+            guard pts.allSatisfy({ $0 != nil }) else { return .infinity }
+            let q = pts.map { $0! }
+            return max(simd_length(q[0] - q[2]), simd_length(q[1] - q[3]))
+        }
+
+        // Quadtree walk: stop at the target zoom, or earlier where tiles already look small (far
+        // away when tilted), so the distance gets coarser tiles instead of gaps.
+        // Only when tilted: a flat map keeps one level of detail everywhere.
+        let lodPx = cam.pitch > 8 ? 520.0 : 0
         var out: [(TileID, Double)] = []
-        out.reserveCapacity((maxX - minX + 1) * (maxY - minY + 1))
-        for x in minX...maxX { for y in minY...maxY {
-            let dx = Double(x) + 0.5 - cx, dy = Double(y) + 0.5 - cy
-            out.append((TileID(z: z, x: x, y: y), dx * dx + dy * dy))
-        } }
+        func walk(_ t: TileID) {
+            guard out.count < 4 * max(1, limit), visible(t) else { return }
+            if Int(t.z) >= z || (lodPx > 0 && Int(t.z) >= z - 5 && screenSize(t) <= lodPx) {
+                let (nw, se) = bounds(t)
+                let dx = (nw.x + se.x) / 2 - cam.center.x, dy = (nw.y + se.y) / 2 - cam.center.y
+                out.append((t, dx * dx + dy * dy))
+                return
+            }
+            for c in children(t) { walk(c) }
+        }
+        walk(TileID(z: 0, x: 0, y: 0))
         return out.sorted { $0.1 < $1.1 }.prefix(max(0, limit)).map(\.0)
     }
 }
@@ -389,7 +434,7 @@ public struct GlobeProjection: MapScreenProjection {
 // MARK: - Gestures
 
 /// Camera changes for pan, zoom and rotate, shared by the model and the map view so both apply a
-/// gesture identically (the view shows it at once; the model follows at ≤ 30 Hz).
+/// gesture identically (the view shows it at once; the model applies the same gesture to its own camera).
 public enum MapGestureMath {
     public static func clamp(_ c: MapCamera) -> MapCamera {
         var c = c

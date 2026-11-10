@@ -59,8 +59,10 @@ public enum TileGeometryBuilder {
     }
 
     public static func build(_ tile: MVTTile, id: TileID) -> TileGeometry {
-        // Tiles shown on the globe (z ≤ 4) get densified lines: ≤ 1/64 tile per segment.
-        let globeSegment: Float? = id.z <= 4 ? 1.0 / 64 : nil
+        // Long segments and big triangles are split so they can follow the globe (z ≤ 4) and the
+        // terrain: ≤ 1/64 (globe) or 1/32 tile per line segment, ≤ 1/32 or 1/16 tile per fill edge.
+        let globeSegment: Float? = id.z <= 4 ? 1.0 / 64 : 1.0 / 32
+        let fillEdge: Float = id.z <= 4 ? 1.0 / 32 : 1.0 / 16
         let maxVerts = MVTLimits().maxVerticesPerFeature
         var fillPos = [[SIMD2<Float>]](repeating: [], count: RenderClass.allCases.count)
         var fillIdx = [[UInt32]](repeating: [], count: RenderClass.allCases.count)
@@ -93,10 +95,11 @@ public enum TileGeometryBuilder {
                             appendBuilding(rings, tris, height: height, minHeight: minH, vertices: &extVerts, indices: &extIdx)
                         } else {
                             let c = Int(cls.rawValue)
+                            let (pos, idx) = subdivide(rings.flatMap { $0 }, tris, maxEdge: fillEdge)
                             let base = UInt32(fillPos[c].count)
-                            for r in rings { fillPos[c].append(contentsOf: r) }
-                            fillIdx[c].reserveCapacity(fillIdx[c].count + tris.count)
-                            for t in tris { fillIdx[c].append(base + t) }
+                            fillPos[c].append(contentsOf: pos)
+                            fillIdx[c].reserveCapacity(fillIdx[c].count + idx.count)
+                            for t in idx { fillIdx[c].append(base + t) }
                             if cls == .water { appendShoreline(rings, maxSegment: globeSegment, vertices: &lineVerts[c], indices: &lineIdx[c]) }
                         }
                     }
@@ -110,10 +113,10 @@ public enum TileGeometryBuilder {
                     }
                     if layer.name == "transportation_name", labels.count < maxLabelsPerTile,
                        let info = OpenMapTilesSchema.label(layer: layer.name, tags: f.tags),
-                       let mid = longestSegmentMidpoint(lines) {
+                       let (mid, dir) = longestSegment(lines) {
                         let pos = norm(mid)
                         if inTile(pos) {
-                            labels.append(LabelAnchor(text: info.text, kind: info.kind, priority: info.priority, pos: pos, minZoom: info.minZoom))
+                            labels.append(LabelAnchor(text: info.text, kind: info.kind, priority: info.priority, pos: pos, minZoom: info.minZoom, dir: dir))
                         }
                     }
                 case .points(let pts):
@@ -153,9 +156,11 @@ public enum TileGeometryBuilder {
 
     @inline(__always) private static func inTile(_ p: SIMD2<Float>) -> Bool { p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1 }
 
-    private static func longestSegmentMidpoint(_ lines: [[SIMD2<Int32>]]) -> SIMD2<Int32>? {
+    /// Midpoint and unit direction of the longest segment (road names run along it).
+    private static func longestSegment(_ lines: [[SIMD2<Int32>]]) -> (SIMD2<Int32>, SIMD2<Float>)? {
         var best: Int64 = -1
         var mid: SIMD2<Int32>?
+        var dir = SIMD2<Float>(1, 0)
         for l in lines where l.count >= 2 {
             for i in 0..<(l.count - 1) {
                 let dx = Int64(l[i + 1].x) - Int64(l[i].x), dy = Int64(l[i + 1].y) - Int64(l[i].y)
@@ -164,10 +169,61 @@ public enum TileGeometryBuilder {
                     best = d
                     mid = SIMD2(Int32(truncatingIfNeeded: (Int64(l[i].x) + Int64(l[i + 1].x)) / 2),
                                 Int32(truncatingIfNeeded: (Int64(l[i].y) + Int64(l[i + 1].y)) / 2))
+                    let len = Float(Double(d).squareRoot())
+                    if len > 0 { dir = SIMD2(Float(dx) / len, Float(dy) / len) }
                 }
             }
         }
-        return mid
+        return mid.map { ($0, dir) }
+    }
+
+    /// Splits triangles until every edge is ≤ `maxEdge`. Whether an edge splits depends only on
+    /// the edge, and shared edges reuse one midpoint, so neighbouring triangles stay watertight
+    /// (no cracks when the surface is bent onto the globe or the terrain).
+    static func subdivide(_ positions: [SIMD2<Float>], _ indices: [UInt32], maxEdge: Float) -> ([SIMD2<Float>], [UInt32]) {
+        var pos = positions
+        var out: [UInt32] = []
+        out.reserveCapacity(indices.count)
+        var mids: [UInt64: UInt32] = [:]
+        let limit2 = maxEdge * maxEdge
+        func long(_ a: UInt32, _ b: UInt32) -> Bool { simd_length_squared(pos[Int(a)] - pos[Int(b)]) > limit2 }
+        func mid(_ a: UInt32, _ b: UInt32) -> UInt32 {
+            let key = UInt64(min(a, b)) << 32 | UInt64(max(a, b))
+            if let m = mids[key] { return m }
+            let m = UInt32(pos.count)
+            pos.append((pos[Int(a)] + pos[Int(b)]) * 0.5)
+            mids[key] = m
+            return m
+        }
+        func tri(_ a: UInt32, _ b: UInt32, _ c: UInt32, _ depth: Int) {
+            guard depth < 8, pos.count < 400_000 else { out += [a, b, c]; return }
+            let sab = long(a, b), sbc = long(b, c), sca = long(c, a)
+            switch (sab, sbc, sca) {
+            case (false, false, false): out += [a, b, c]
+            case (true, false, false): let m = mid(a, b); tri(a, m, c, depth + 1); tri(m, b, c, depth + 1)
+            case (false, true, false): let m = mid(b, c); tri(a, b, m, depth + 1); tri(a, m, c, depth + 1)
+            case (false, false, true): let m = mid(c, a); tri(a, b, m, depth + 1); tri(m, b, c, depth + 1)
+            case (true, true, false):
+                let m1 = mid(a, b), m2 = mid(b, c)
+                tri(a, m1, m2, depth + 1); tri(m1, b, m2, depth + 1); tri(a, m2, c, depth + 1)
+            case (false, true, true):
+                let m1 = mid(b, c), m2 = mid(c, a)
+                tri(a, b, m1, depth + 1); tri(a, m1, m2, depth + 1); tri(m2, m1, c, depth + 1)
+            case (true, false, true):
+                let m1 = mid(a, b), m2 = mid(c, a)
+                tri(a, m1, m2, depth + 1); tri(m1, b, c, depth + 1); tri(m2, m1, c, depth + 1)
+            case (true, true, true):
+                let m1 = mid(a, b), m2 = mid(b, c), m3 = mid(c, a)
+                tri(a, m1, m3, depth + 1); tri(m1, b, m2, depth + 1); tri(m3, m2, c, depth + 1); tri(m1, m2, m3, depth + 1)
+            }
+        }
+        var i = 0
+        while i + 2 < indices.count {
+            let a = indices[i], b = indices[i + 1], c = indices[i + 2]
+            if Int(max(a, b, c)) < positions.count { tri(a, b, c, 0) }
+            i += 3
+        }
+        return (pos, out)
     }
 
     /// Roof (earcut at `height`) plus two triangles per ring edge for the walls. Wall-top vertices

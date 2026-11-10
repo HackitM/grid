@@ -21,6 +21,7 @@ struct MapSideColumn: View {
                         layerToggle("Region outlines", model.showRegions, count: model.alpr.regions.count) { model.showRegions = $0 }
                         layerToggle("3D buildings (when tilted)", model.showBuildings) { model.showBuildings = $0 }
                         layerToggle("Grid floor", model.showGrid) { model.showGrid = $0 }
+                        layerToggle("Terrain (relief, contours, 3D)", model.showTerrain) { model.showTerrain = $0 }
                     }
                     if let cam = model.selectedCamera { CameraInspector(model: model, camera: cam) }
                     RegionsSection(model: model, showPicker: $showPicker)

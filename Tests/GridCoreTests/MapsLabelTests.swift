@@ -65,3 +65,40 @@ final class MapsLabelTests: XCTestCase {
 private extension LabelCandidate {
     func withText(_ t: String) -> LabelCandidate { var c = self; c.text = t; return c }
 }
+
+final class MapsLabelBoxTests: XCTestCase {
+    private let vp = SIMD2<Double>(800, 600)
+    private func b(_ prio: Int, _ x: Double, _ y: Double, w: Double = 60, keep: Bool = false) -> LabelBox {
+        LabelBox(center: SIMD2(x, y), size: SIMD2(w, 12), priority: prio, keep: keep)
+    }
+
+    func testIndicesInPlacementOrder() {
+        // 1 beats 0 on priority and blocks it; 2 is clear of both.
+        XCTAssertEqual(LabelPlacer.place(boxes: [b(5, 100, 100), b(1, 120, 105), b(9, 400, 300)], viewport: vp), [1, 2])
+    }
+
+    func testKeptBoxGoesFirstAndTiesKeepInputOrder() {
+        XCTAssertEqual(LabelPlacer.place(boxes: [b(1, 100, 100), b(50, 110, 100, keep: true)], viewport: vp), [1])
+        XCTAssertEqual(LabelPlacer.place(boxes: [b(3, 100, 100), b(3, 110, 100)], viewport: vp), [0])
+    }
+
+    func testInvalidOffscreenAndMax() {
+        let boxes = [b(1, -500, 100), b(2, .nan, 10), b(3, 200, 200, w: 0), b(4, 5, 100), b(5, 300, 300), b(6, 500, 500)]
+        XCTAssertEqual(LabelPlacer.place(boxes: boxes, viewport: vp), [3, 4, 5])
+        XCTAssertEqual(LabelPlacer.place(boxes: boxes, viewport: vp, max: 2), [3, 4])
+        XCTAssertTrue(LabelPlacer.place(boxes: boxes, viewport: vp, max: 0).isEmpty)
+    }
+
+    func testMatchesTheStringPlacement() {
+        var rng = SplitMix64(seed: 5)
+        let cands = (0..<300).map { i in
+            LabelCandidate(text: "t\(i)", kind: .road, priority: Int.random(in: 0..<50, using: &rng),
+                           center: SIMD2(Double.random(in: 0...800, using: &rng), Double.random(in: 0...600, using: &rng)),
+                           size: SIMD2(Double.random(in: 20...120, using: &rng), 12))
+        }
+        let keep: Set<String> = ["t4", "t17", "t200"]
+        let boxes = cands.map { LabelBox(center: $0.center, size: $0.size, priority: $0.priority, keep: keep.contains($0.text)) }
+        XCTAssertEqual(LabelPlacer.place(boxes: boxes, viewport: vp, max: 60).map { cands[$0].text },
+                       LabelPlacer.place(cands, viewport: vp, keep: keep, max: 60).map(\.text))
+    }
+}

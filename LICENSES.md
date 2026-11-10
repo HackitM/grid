@@ -24,6 +24,10 @@ Application Support:
   contributors, ODbL 1.0).
 - **ALPR cameras:** OpenStreetMap data (ODbL 1.0), as published by DeFlock / FlockHopper, or
   queried from an Overpass server.
+- **Terrain:** AWS Terrain Tiles (Terrarium encoding), a Mapzen / Linux Foundation dataset hosted
+  on the AWS Open Data registry, built from SRTM, GMTED2010, ETOPO1, USGS 3DEP, Canadian CDEM and
+  other public sources. See the
+  [source attribution](https://github.com/tilezen/joerd/blob/master/docs/attribution.md).
 
 The map always shows the attribution. GRID's earcut triangulation is a port of
 [mapbox/earcut](https://github.com/mapbox/earcut) (ISC, © Mapbox); the notice is kept in

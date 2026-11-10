@@ -16,11 +16,22 @@ struct MapSettingsSection: View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 6) {
                 toggle("Map data (tiles, region list, camera downloads)", m.enabled) { m.enabled = $0 }
-                Text("Off means the Map page makes no network requests at all. Hosts: tiles.openfreemap.org, download.geofabrik.de, deflock.dontgetflocked.com, and your Overpass server (only for regions outside the US and Canada).")
+                Text("Off means the Map page makes no network requests at all. Hosts: tiles.openfreemap.org, elevation-tiles-prod.s3.amazonaws.com (terrain, while the Terrain layer is on), download.geofabrik.de, deflock.dontgetflocked.com, and your Overpass server (only for regions outside the US and Canada).")
                     .font(GridFont.small).foregroundStyle(theme.textMute).fixedSize(horizontal: false, vertical: true)
                 toggle("Remember the last map view", m.rememberView) { m.rememberView = $0 }
                 toggle("3D buildings when the map is tilted", m.showBuildings) { m.showBuildings = $0 }
+                toggle("Terrain: shaded relief, contour lines, and 3D ground when tilted", m.showTerrain) { m.showTerrain = $0 }
             }
+            HStack(spacing: 12) {
+                Text("Terrain height").font(GridFont.body).foregroundStyle(theme.textDim).frame(width: 150, alignment: .leading)
+                ForEach([1.0, 1.5, 2.0, 3.0], id: \.self) { x in
+                    Button(String(format: "%g×", x)) { m.terrainExaggeration = x }
+                        .buttonStyle(GridButtonStyle(prominent: m.terrainExaggeration == x, compact: true))
+                }
+            }
+            .disabled(!m.showTerrain)
+            Text("Elevation comes from the public AWS Terrain Tiles dataset (about 30 m detail in most places) and is cached on this Mac, up to 150 MB. Contours are in \(Locale.current.measurementSystem == .us ? "feet" : "metres"), following your region settings.")
+                .font(GridFont.small).foregroundStyle(theme.textMute).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 12) {
                 Text("Overpass server").font(GridFont.body).foregroundStyle(theme.textDim).frame(width: 150, alignment: .leading)
                 GridField(placeholder: ALPRStore.defaultOverpass, text: $endpoint, focus: $focused) { saveEndpoint() }

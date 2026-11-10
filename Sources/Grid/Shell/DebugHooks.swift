@@ -670,7 +670,8 @@ enum DebugHooks {
                             "catalog": m.alpr.catalog?.regions.count ?? 0, "catalogState": m.alpr.catalogState ?? "",
                             "regions": m.alpr.regions.map { ["id": $0.id, "name": $0.meta.descriptor.name, "count": $0.meta.cameraCount,
                                                              "status": "\($0.status)", "sources": $0.meta.sources.map(\.rawValue), "requests": $0.meta.requests] },
-                            "location": Self.locationCase(m.location.state), "inView": m.camerasInViewCount()]
+                            "location": Self.locationCase(m.location.state), "inView": m.camerasInViewCount(),
+                            "loader": m.tiles.debugStats]
                 } ?? [:],
                 "updates": ["current": app.updates.current.description, "latest": app.updates.latest?.tagName ?? "",
                             "available": app.updates.available?.tagName ?? "", "notice": app.updates.showsNotice,
@@ -737,9 +738,54 @@ enum DebugHooks {
             case "catalog": Task { await m.alpr.loadCatalog() }
             case "check": Task { await m.alpr.checkFreshness(manual: true) }
             case "locate": m.locate()
+            case "gesture":
+                // {"op":"gesture","seconds":4,"pan":[vx,vy],"zoom":dz/s,"rotate":deg/s,"pitch":deg/s,"fling":bool,"hz":120,
+                //  "settle":8,"path":"<json out>"}: the deltas go through the map view's own gesture path
+                // (view-local camera, renderer, model) at `hz`; the result has frame times, label lag
+                // and tile coverage while moving and after the stop.
+                guard let v = MapContainerView.debugCurrent, v.debugProbe == nil, let path = c["path"] as? String else { break }
+                var spec = MapGestureProbe.Spec()
+                if let s = c["seconds"] as? Double { spec.seconds = s }
+                if let h = c["hz"] as? Double { spec.hz = h }
+                if let p = c["pan"] as? [Double], p.count == 2 { spec.pan = SIMD2(p[0], p[1]) }
+                if let z = c["zoom"] as? Double { spec.zoom = z }
+                if let r = c["rotate"] as? Double { spec.rotate = r }
+                if let p = c["pitch"] as? Double { spec.pitch = p }
+                if let f = c["fling"] as? Bool { spec.fling = f }
+                if let s = c["settle"] as? Double { spec.settle = s }
+                let probe = MapGestureProbe(spec, view: v)
+                let uploads0 = v.renderer.debugUploads, uploadMs0 = v.renderer.debugUploadMs
+                probe.coverage = { [weak v] cam in
+                    let cover = TileMath.cover(cam, viewport: m.viewport, maxZoom: m.tiles.source?.maxZoom ?? 14, limit: 48)
+                    let (missing, holes) = m.tiles.debugCoverage(cover)
+                    let drawn = v?.renderer.debugFrameTiles ?? []
+                    var drawnMissing = 0, drawnHoles = 0
+                    for t in cover where !drawn.contains(t) {
+                        drawnMissing += 1
+                        var p = TileMath.parent(t), steps = 0, found = false
+                        while let q = p, steps < 8 { if drawn.contains(q) { found = true; break }; p = TileMath.parent(q); steps += 1 }
+                        if !found { drawnHoles += 1 }
+                    }
+                    return ["cover": cover.count, "missing": missing, "holes": holes, "drawnMissing": drawnMissing, "drawnHoles": drawnHoles]
+                }
+                probe.done = { [weak v] result in
+                    var r = result
+                    r["gpuUploads"] = (v?.renderer.debugUploads ?? 0) - uploads0
+                    r["gpuUploadMs"] = (v?.renderer.debugUploadMs ?? 0) - uploadMs0
+                    r["loader"] = m.tiles.debugStats
+                    if let data = try? JSONSerialization.data(withJSONObject: r, options: [.prettyPrinted, .sortedKeys]) {
+                        try? data.write(to: URL(fileURLWithPath: path))
+                    }
+                }
+                v.debugProbe = probe
+                probe.begin()
+            case "exaggeration": if let x = c["value"] as? Double { m.terrainExaggeration = x }
+            case "context":
+                // Right-click menu at a view point (QA of the menu and terrain picking).
+                if let x = c["x"] as? Double, let y = c["y"] as? Double { m.handle(.contextMenu(SIMD2(x, y), screen: SIMD2(400, 400))) }
             case "layer":
                 if let k = c["key"] as? String, let on = c["value"] as? Bool {
-                    switch k { case "cameras": m.showCameras = on; case "regions": m.showRegions = on; case "buildings": m.showBuildings = on; case "grid": m.showGrid = on; default: break }
+                    switch k { case "cameras": m.showCameras = on; case "regions": m.showRegions = on; case "buildings": m.showBuildings = on; case "grid": m.showGrid = on; case "terrain": m.showTerrain = on; default: break }
                 }
             default: break
             }

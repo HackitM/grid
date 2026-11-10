@@ -209,7 +209,7 @@ struct MapMetalView: NSViewRepresentable {
 }
 ```
 `MapMetalView` places labels itself (GridCore `LabelPlacer` + `MapProjection` + a CTLine width
-cache) and draws them in `MapLabelLayer` (pooled `CATextLayer`s).
+cache) and draws them in the render pass from a string atlas (see the addendum at the end).
 
 ## 4. Tasks, ownership and order
 
@@ -241,7 +241,8 @@ cache) and draws them in `MapLabelLayer` (pooled `CATextLayer`s).
 - **URLs:**
   - https only; no userinfo or ports.
   - Hosts are pinned per source: `tiles.openfreemap.org` (or a user tile URL after re-consent),
-    `*.dontgetflocked.com`, `download.geofabrik.de`, and the user-chosen Overpass endpoint.
+    `*.dontgetflocked.com`, `download.geofabrik.de`, `elevation-tiles-prod.s3.amazonaws.com`
+    (terrain, only while the Terrain layer is on), and the user-chosen Overpass endpoint.
   - Tile URLs come only from validated templates with `{z}/{x}/{y}` substitution.
   - Redirects are followed only within the same host.
   - Inspector links are built from numeric OSM ids only.
@@ -576,3 +577,54 @@ cache) and draws them in `MapLabelLayer` (pooled `CATextLayer`s).
 10. **Escalate:** any contract change (e.g. `MapFrame` fields), needing a new framework, or a
     performance target unreachable.
 11. **Handoff:** as Brief A, plus screenshots or notes on the look and measured GPU times.
+
+## Addendum — terrain (0.8)
+
+- **Source:** AWS Terrain Tiles, Terrarium PNGs (`(R·256 + G + B/256) − 32768` m), 256 px, z0–12.
+  A map tile reads the elevation tile two levels up (its 64 px are exactly what the 65×65 grid
+  samples, so one download serves 16 map tiles), capped at z12. Until it arrives the tile borrows
+  a coarser elevation tile already in memory (no contours), and with none it draws at the
+  camera's ground level. Fetched by `TerrainStore` only while map data is
+  enabled and the Terrain layer is on, cached under `Maps/terrain/z/x/y.png` (written only after
+  a successful decode; trimmed to 150 MB). ImageIO decodes; the raw pixel bytes are read without
+  colour management, because the channels are data.
+- **Per tile:** `Terrarium.grid` resamples to a 65×65 `TerrainGrid` (shared edges); `Contours`
+  traces marching squares (saddles by centre value) into stitched polylines with zoom-based
+  intervals in feet or metres (from the locale), index lines every fifth level, and up to 24
+  elevation labels. Contours join the tile's geometry (`TileGeometry.revision` 1 → re-upload).
+- **Drawing:** `TerrainLift` (GridCore) is the single height rule shared by the GPU and CPU:
+  sea-level clamp (Terrarium holds ocean depths), heights relative to the ground under the
+  camera centre, and a soft ceiling at 92% of the camera's height. Its scale eases in from 4° to
+  20° of tilt, so the top-down map stays planimetric. The renderer uploads each grid as an
+  R32Float texture and displaces fills, lines, buildings and a 65×65 skirted terrain mesh in the
+  vertex shaders. The mesh writes depth pushed back by 0.6% of the view distance, so draped
+  geometry never fights it but ridges still hide what's behind. Shaded relief (light from the
+  north-west) and the draped lattice are a blended pass per level, kept off water by the stencil;
+  contours also stay off water. Markers and labels use `MapFrame.elevation(at:)`; clicks refine
+  the ground hit by the lift's screen offset.
+
+## Addendum: gestures, labels and tile loading (supersedes the label and LRU notes above)
+
+- **Camera.** The map view draws gestures from its own camera at display rate. `MapModel.camera`
+  takes every gesture at once but is not what SwiftUI observes per event: views that read it are
+  told about ten times a second, and `MapModel.frame` is rebuilt only when what it draws changes
+  (the tile set, a loaded tile, markers, layers), not for every camera step. The frame carries
+  the model's camera from build time; the view treats one that matches its recent cameras as an
+  echo. The terrain lift is worked out by the renderer for the camera it draws
+  (`MapFrame.lift(for:viewport:)`), not stored per frame.
+- **Labels** are drawn by the renderer in the map's own render pass (`MapLabels.swift`):
+  `MapLabelPlanner` places them every frame for the projection being drawn (interned strings,
+  per-tile prepared anchors, `LabelPlacer.place(boxes:)`), and `MapLabelAtlas` holds each string
+  rasterised once with CoreText in an R8 texture. There is no label view and no throttle, so a
+  label cannot trail the map. Look unchanged: SF Mono 9.5, places uppercase, rotated line labels.
+- **Tile plan** (`MapModel.plan`, ≤ 30 Hz during gestures plus one pass after they stop):
+  the cover; a *backdrop* of its ancestors two and four levels up (loaded first, so ground that
+  scrolls or zooms in is never empty); a *ring* around the view at rest, or the covers 0.3 s and
+  0.6 s ahead of the gesture while moving. Ring tiles at the cover's level or coarser are part
+  of the frame (the renderer skips tiles that are off screen), deeper ones are only loaded.
+- **Loading.** `TileStore` runs up to 10 loads for tiles still asked for (20 in all; loads the
+  view moved away from finish without blocking the queue), reads the disk cache without queueing
+  behind writes or trims, and evicts least-recently-drawn tiles that nobody asks for first.
+  The renderer keeps up to 160 tiles / 320 MB on the GPU and spreads uploads over frames.
+- **QA.** `{"cmd":"map","op":"gesture",…}` drives pan/zoom/rotate through the view's gesture
+  path at display rate and writes frame times, label lag and tile coverage (DebugHooks.swift).
