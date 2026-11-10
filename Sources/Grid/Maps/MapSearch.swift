@@ -26,6 +26,8 @@ final class MapSearch {
     @ObservationIgnored weak var model: MapModel?
     @ObservationIgnored private var localTask: Task<Void, Never>?
     @ObservationIgnored private var onlineTask: Task<Void, Never>?
+    /// The cache key of the online request under way (nil when none is).
+    @ObservationIgnored private var onlineKeyInFlight: String?
     /// Search entries per decoded tile (tile revision), built off the main thread on first use.
     @ObservationIgnored private var index: [TileID: (rev: Int, entries: [SearchEntry])] = [:]
     @ObservationIgnored private var spacer = RequestSpacer(interval: 1.05)
@@ -52,35 +54,38 @@ final class MapSearch {
     // MARK: Local
 
     private func queryChanged() {
+        let q = LocalSearch.clean(query)
         highlight = 0
-        listOpen = !LocalSearch.clean(query).isEmpty
-        if LocalSearch.fold(LocalSearch.clean(query)) != LocalSearch.fold(onlineQuery) {
+        listOpen = !q.isEmpty
+        if LocalSearch.fold(q) != LocalSearch.fold(onlineQuery) {
+            // The online answer belongs to another query: drop it (and a request still under way).
             onlineTask?.cancel(); online = []; onlineState = .idle
         }
         localTask?.cancel()
-        let q = LocalSearch.clean(query)
         guard !q.isEmpty, let model else { local = []; return }
         let near = model.camera.center
-        let tiles = model.tiles.allGeometry()
         // Reuse entries for tiles already indexed; build the rest off the main thread.
-        var have: [[SearchEntry]] = []
-        var todo: [TileGeometry] = []
+        var indexed: [[SearchEntry]] = []
+        var unindexed: [TileGeometry] = []
         var live = Set<TileID>()
-        for g in tiles {
+        for g in model.tiles.allGeometry() {
             live.insert(g.id)
-            if let c = index[g.id], c.rev == g.revision { have.append(c.entries) } else { todo.append(g) }
+            if let known = index[g.id], known.rev == g.revision { indexed.append(known.entries) } else { unindexed.append(g) }
         }
         if index.count > live.count + 64 { index = index.filter { live.contains($0.key) } }
         localTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(90))      // let fast typing settle
             guard !Task.isCancelled else { return }
             let (built, found) = await Task.detached(priority: .userInitiated) { () -> ([(TileID, Int, [SearchEntry])], [PlaceResult]) in
-                let built = todo.map { ($0.id, $0.revision, LocalSearch.entries(for: $0)) }
-                let all = have.flatMap { $0 } + built.flatMap(\.2)
+                let built = unindexed.map { ($0.id, $0.revision, LocalSearch.entries(for: $0)) }
+                let all = indexed.flatMap { $0 } + built.flatMap(\.2)
                 return (built, LocalSearch.search(q, in: all, near: near, limit: 12))
             }.value
-            guard let self, !Task.isCancelled else { return }
-            for (id, rev, e) in built { self.index[id] = (rev, e) }
+            guard let self else { return }
+            // The entries are good whatever was typed since: keep them, so the next keystroke
+            // doesn't index the same tiles again.
+            for (id, rev, entries) in built { self.index[id] = (rev, entries) }
+            guard !Task.isCancelled else { return }
             self.local = found
         }
     }
@@ -112,14 +117,19 @@ final class MapSearch {
         let near = model.camera.center
         let key = [endpoint.absoluteString, LocalSearch.fold(q),
                    box.map { String(format: "%.1f,%.1f,%.1f,%.1f", $0.west, $0.south, $0.east, $0.north) } ?? "", lang ?? ""].joined(separator: "|")
+        // Pressing Return again while the same search is on its way must not send it twice.
+        if onlineState == .searching, key == onlineKeyInFlight { return }
+        // Whatever was under way is for an older query or view: its answer must not land on top of this one.
+        onlineTask?.cancel()
+        onlineKeyInFlight = nil
         onlineQuery = q
         if let hit = cache.value(key, now: Date()) {
             online = hit.map { var r = $0; r.distance = LocalSearch.meters(near, TileMath.project(r.coordinate)); return r }
             onlineState = .done
             return
         }
-        onlineTask?.cancel()
         onlineState = .searching
+        onlineKeyInFlight = key
         let wait = spacer.reserve(now: Date())
         let host = endpoint.host ?? ""
         onlineTask = Task { [weak self] in
@@ -134,7 +144,10 @@ final class MapSearch {
                         : "The search server answered \(r.status).")
                     return
                 }
-                let found = try Nominatim.parse(r.data, near: near)
+                // The answer is untrusted JSON of up to half a megabyte: checked and parsed off the main thread.
+                let body = r.data
+                let found = try await Task.detached(priority: .userInitiated) { try Nominatim.parse(body, near: near) }.value
+                guard !Task.isCancelled else { return }
                 self.cache.set(key, found, now: Date())
                 self.online = found
                 self.onlineState = .done
@@ -179,7 +192,8 @@ final class MapSearch {
 
     /// Settings › Map turned online search off, or Clear Map Data: drop remembered answers.
     func forgetOnline() {
-        cache.removeAll(); onlineTask?.cancel(); online = []; onlineState = .idle
+        cache.removeAll(); onlineTask?.cancel(); onlineKeyInFlight = nil
+        online = []; onlineState = .idle
     }
 
     #if DEBUG
