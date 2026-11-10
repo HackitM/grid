@@ -377,7 +377,7 @@ public struct TerrainGrid: Sendable, Equatable {
     /// Bilinear elevation at tile-local (u, v) in 0…1.
     public func height(u: Double, v: Double) -> Double {
         let n = Self.size
-        guard heights.count == n * n else { return 0 }
+        guard heights.count == n * n, u.isFinite, v.isFinite else { return 0 }
         let x = min(max(u, 0), 1) * Double(n - 1), y = min(max(v, 0), 1) * Double(n - 1)
         let x0 = min(Int(x), n - 2), y0 = min(Int(y), n - 2)
         let fx = x - Double(x0), fy = y - Double(y0)

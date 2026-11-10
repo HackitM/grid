@@ -105,4 +105,56 @@ final class MapsContourSeaLevelTests: XCTestCase {
         XCTAssertFalse(lines.isEmpty)
         XCTAssertTrue(lines.allSatisfy { $0.level > 0 })
     }
+
+    func testNonFiniteHeightsNeverTrap() {
+        let n = TerrainGrid.size
+        for bad in [Float.nan, .infinity, -.infinity, .greatestFiniteMagnitude] {
+            var h = [Float](repeating: 100, count: n * n)
+            h[n * 20 + 20] = bad
+            let grid = TerrainGrid(id: TileID(z: 14, x: 1, y: 1), heights: h)
+            _ = Contours.geometry(grid, feet: false)
+            _ = Contours.geometry(grid, feet: true)
+            _ = Contours.lines(grid, step: 10, indexStep: 50)
+            _ = grid.height(u: 0.3, v: 0.3)
+        }
+        let flat = TerrainGrid(id: TileID(z: 14, x: 1, y: 1), heights: [Float](repeating: 100, count: n * n))
+        XCTAssertEqual(flat.height(u: .nan, v: 0.5), 0)
+        XCTAssertEqual(flat.height(u: 0.5, v: .infinity), 0)
+        XCTAssertEqual(flat.height(u: 2, v: -1), 100)
+        XCTAssertTrue(Contours.lines(flat, step: .nan, indexStep: 50).isEmpty)
+        XCTAssertTrue(Contours.lines(flat, step: 10, indexStep: 50, scale: .infinity).isEmpty)
+    }
+
+    func testContourLinesJoinEndToEnd() {
+        // Ridges and bowls: open lines that leave the tile and closed rings, at many levels.
+        let n = TerrainGrid.size
+        var h = [Float](repeating: 0, count: n * n)
+        for j in 0..<n { for i in 0..<n {
+            let x = Float(i) / 64, y = Float(j) / 64
+            h[j * n + i] = 500 + 200 * sin(x * 9) * cos(y * 7) + 90 * sin(x * 23 + y * 17)
+        } }
+        let lines = Contours.lines(TerrainGrid(id: TileID(z: 14, x: 1, y: 1), heights: h), step: 10, indexStep: 50)
+        XCTAssertGreaterThan(lines.count, 50)
+        XCTAssertTrue(lines.contains { $0.closed })
+        XCTAssertTrue(lines.contains { !$0.closed })
+        let cell = Float(1) / 64
+        for line in lines {
+            XCTAssertGreaterThanOrEqual(line.points.count, 2)
+            // Consecutive points are the two ends of one marching-squares segment: within a cell.
+            for (a, b) in zip(line.points, line.points.dropFirst()) {
+                XCTAssertLessThanOrEqual(abs(a.x - b.x), cell * 1.001)
+                XCTAssertLessThanOrEqual(abs(a.y - b.y), cell * 1.001)
+            }
+            if !line.closed {
+                // An open line ends on the tile's border.
+                for p in [line.points.first!, line.points.last!] {
+                    XCTAssertTrue(min(p.x, p.y) < 1e-4 || max(p.x, p.y) > 1 - 1e-4, "\(p)")
+                }
+            }
+        }
+        // Every crossing is used exactly once: as many points as segments, give or take the joins.
+        var segments = 0
+        for level in Set(lines.map(\.level)) { segments += Contours.trace(h, n: n, level: level).reduce(0) { $0 + $1.0.count - ($1.1 ? 0 : 1) } }
+        XCTAssertEqual(segments, lines.reduce(0) { $0 + $1.points.count - ($1.closed ? 0 : 1) })
+    }
 }

@@ -20,9 +20,9 @@ public enum Terrarium {
     /// Elevations in metres from Terrarium pixels: (R·256 + G + B/256) − 32768.
     /// `bytes` is `width × height` pixels of `bytesPerPixel` (3 or 4, RGB first), row-major.
     public static func decode(_ bytes: [UInt8], width: Int, height: Int, bytesPerPixel: Int, bytesPerRow: Int? = nil) -> [Float]? {
-        guard width > 0, height > 0, width <= 1024, height <= 1024, bytesPerPixel >= 3 else { return nil }
+        guard width > 0, height > 0, width <= 1024, height <= 1024, bytesPerPixel >= 3, bytesPerPixel <= 16 else { return nil }
         let row = bytesPerRow ?? width * bytesPerPixel
-        guard row >= width * bytesPerPixel, bytes.count >= row * (height - 1) + width * bytesPerPixel else { return nil }
+        guard row >= width * bytesPerPixel, row <= 1 << 20, bytes.count >= row * (height - 1) + width * bytesPerPixel else { return nil }
         var out = [Float](repeating: 0, count: width * height)
         for y in 0..<height {
             for x in 0..<width {
@@ -106,12 +106,13 @@ public enum Contours {
     /// Contours of `grid` every `step` (display units); `scale` converts metres to display units.
     public static func lines(_ grid: TerrainGrid, step: Float, indexStep: Float, scale: Float = 1, maxLevels: Int = 120) -> [Line] {
         let n = TerrainGrid.size
-        guard grid.heights.count == n * n, step > 0 else { return [] }
+        guard grid.heights.count == n * n, step > 0, step.isFinite, scale.isFinite,
+              grid.minHeight.isFinite, grid.maxHeight.isFinite else { return [] }
         let h = grid.heights.map { $0 * scale }
         // Levels strictly inside (min, max): a level equal to the summit would be a dot. Nothing at
         // or below sea level: Terrarium holds ocean depths, and the zero line is just the coast.
         let lo = max(1, (grid.minHeight * scale / step).rounded(.down) + 1), hi = (grid.maxHeight * scale / step).rounded(.up) - 1
-        guard hi >= lo, Int(hi - lo) < maxLevels else { return [] }
+        guard hi >= lo, hi - lo < Float(maxLevels) else { return [] }
         var out: [Line] = []
         var level = lo
         while level <= hi {
@@ -170,28 +171,43 @@ public enum Contours {
             }
         }
         guard !segs.isEmpty else { return [] }
-        // Join segments sharing edge points.
-        var byEdge: [Int: [Int]] = [:]
-        for (k, s) in segs.enumerated() { byEdge[s.0, default: []].append(k); byEdge[s.1, default: []].append(k) }
+        // Join segments sharing edge points. A grid edge is crossed by at most two segments (one
+        // from the cell on each side), so "which segments end on this edge" is two slots per edge.
+        var segmentsAt = [Int32](repeating: -1, count: 2 * 2 * H)
+        for (k, s) in segs.enumerated() {
+            for e in [s.0, s.1] {
+                if segmentsAt[2 * e] < 0 { segmentsAt[2 * e] = Int32(k) } else { segmentsAt[2 * e + 1] = Int32(k) }
+            }
+        }
         var used = [Bool](repeating: false, count: segs.count)
+        /// The unused segment (other than `k`) that ends on grid edge `e`.
+        func next(from e: Int, excluding k: Int) -> Int? {
+            for slot in 0..<2 {
+                let other = Int(segmentsAt[2 * e + slot])
+                if other >= 0, other != k, !used[other] { return other }
+            }
+            return nil
+        }
+        /// Follows the line on from grid edge `end`, having arrived by segment `start`.
+        func extend(from end: Int, after start: Int) -> [Int] {
+            var out: [Int] = []
+            var tip = end, current = start
+            while let k = next(from: tip, excluding: current) {
+                used[k] = true; current = k
+                tip = segs[k].0 == tip ? segs[k].1 : segs[k].0
+                out.append(tip)
+            }
+            return out
+        }
         var out: [([SIMD2<Float>], Bool)] = []
-        func next(from e: Int, excluding k: Int) -> Int? { byEdge[e]?.first { $0 != k && !used[$0] } }
         for start in segs.indices where !used[start] {
             used[start] = true
-            var chain = [segs[start].0, segs[start].1]
-            // Extend forward, then backward.
-            var cur = start
-            while let k = next(from: chain.last!, excluding: cur) {
-                used[k] = true; cur = k
-                let s = segs[k]
-                chain.append(s.0 == chain.last! ? s.1 : s.0)
-            }
-            cur = start
-            while let k = next(from: chain.first!, excluding: cur) {
-                used[k] = true; cur = k
-                let s = segs[k]
-                chain.insert(s.0 == chain.first! ? s.1 : s.0, at: 0)
-            }
+            // Forward from the segment's second end, then backward from its first.
+            let forward = extend(from: segs[start].1, after: start)
+            let backward = extend(from: segs[start].0, after: start)
+            var chain = Array(backward.reversed())
+            chain.append(segs[start].0); chain.append(segs[start].1)
+            chain.append(contentsOf: forward)
             let closed = chain.count > 3 && chain.first == chain.last
             if closed { chain.removeLast() }
             out.append((chain.map(point), closed))
