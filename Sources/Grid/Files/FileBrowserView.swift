@@ -330,7 +330,7 @@ private struct FileList: View {
             .focused(listFocused)
             .onChange(of: m.selectionID) { _, id in
                 if let id { withAnimation(nil) { proxy.scrollTo(id) } }
-                QuickLook.shared.update(m.selectedEntries.map(\.url))
+                if QuickLook.shared.isVisible { QuickLook.shared.update(m.selectedEntries.map(\.url)) }
             }
             .onKeyPress(phases: .down) { press in handleFileKey(press, m, app, gridColumns: nil) }
             .onCopyCommand { m.selectedEntries.map { NSItemProvider(object: $0.url as NSURL) } }
@@ -463,7 +463,7 @@ private struct FileGrid: View {
                 .onChange(of: cols) { _, c in columns = c }
                 .onChange(of: m.selectionID) { _, id in
                     if let id { withAnimation(nil) { proxy.scrollTo(id) } }
-                    QuickLook.shared.update(m.selectedEntries.map(\.url))
+                    if QuickLook.shared.isVisible { QuickLook.shared.update(m.selectedEntries.map(\.url)) }
                 }
                 .onKeyPress(phases: .down) { press in handleFileKey(press, m, app, gridColumns: columns) }
                 .onCopyCommand { m.selectedEntries.map { NSItemProvider(object: $0.url as NSURL) } }
@@ -903,8 +903,16 @@ private struct StatusLine: View {
 }
 
 enum Formatters {
+    /// One shared formatter: the class method builds a new one per call, and the list formats a
+    /// size for every row it draws. Main thread and the inspector's detail read only.
+    private static let sizeFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.countStyle = .file
+        return f
+    }()
+    private static let sizeLock = NSLock()
     static func size(_ bytes: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        sizeLock.withLock { sizeFormatter.string(fromByteCount: bytes) }
     }
     static let dateFormatter: DateFormatter = {
         let f = DateFormatter()

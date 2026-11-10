@@ -97,9 +97,12 @@ final class TerminalManager {
 
     init(settings: Settings) {
         self.settings = settings
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        let t = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
+        // The status poll doesn't need to be punctual; tolerance lets macOS batch the wake-ups.
+        t.tolerance = 0.25
+        timer = t
     }
 
     /// Every session across all tabs, in tab order.
@@ -115,7 +118,7 @@ final class TerminalManager {
         counter += 1
         let shell = ShellEnvironment.resolveShell(override: settings.shellOverride)
         let s = TerminalSession(number: counter, shell: shell, directory: directory,
-                                scrollback: settings.scrollback, font: settings.terminalFont)
+                                scrollback: Self.boundedScrollback(settings.scrollback), font: settings.terminalFont)
         s.view.apply(theme: settings.themeValue, font: settings.terminalFont, optionAsMeta: settings.optionAsMeta)
         s.onExit = { [weak self] session in self?.sessionExited(session) }
         // Clicking into a pane makes it the tab's focused pane.
@@ -126,6 +129,10 @@ final class TerminalManager {
         }
         return s
     }
+
+    /// Scrollback lines for a new session. The stored preference is clamped because every line
+    /// costs memory in every pane: a damaged or hand-edited value must not ask for millions.
+    static func boundedScrollback(_ lines: Int) -> Int { min(max(lines, 0), 200_000) }
 
     /// New tab with one pane.
     @discardableResult

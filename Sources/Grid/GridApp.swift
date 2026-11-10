@@ -276,8 +276,12 @@ struct GridCommands: Commands {
             Button("Zoom Out") { app.browser.active?.zoom(-0.1) }.keyboardShortcut("-", modifiers: .command).disabled(!web)
             Button("Actual Size") { app.browser.active?.zoom(nil) }.keyboardShortcut("0", modifiers: .command).disabled(!web)
             Divider()
-            Button("Open Page in Default Browser") { if let u = app.browser.active?.url { NSWorkspace.shared.open(u) } }
-                .disabled(app.browser.active?.url == nil)
+            // http(s) only: a page URL is remote data, and handing any other scheme (file:, a
+            // custom app scheme) to LaunchServices could open or run something else entirely.
+            Button("Open Page in Default Browser") {
+                if let u = app.browser.active?.url, WebAddress.normalize(u.absoluteString) != nil { NSWorkspace.shared.open(u) }
+            }
+            .disabled(app.browser.active?.url == nil)
         }
         CommandMenu("Session") {
             Button("Split Right") { app.split(.horizontal) }.keyboardShortcut(key(.splitRight))

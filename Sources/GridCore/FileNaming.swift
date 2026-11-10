@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public enum FileNaming {
@@ -33,6 +34,20 @@ public enum FileNaming {
         }
         if name.utf8.count > 255 { return "Name is too long (max 255 bytes)." }
         return nil
+    }
+
+    /// Whether anything occupies `path`, without following a final symlink. A dangling link
+    /// still takes up its name, which `FileManager.fileExists` (it follows links) reports as free.
+    public static func itemExists(atPath path: String) -> Bool {
+        var st = stat()
+        return lstat(path, &st) == 0
+    }
+
+    /// True for a real directory; false for files and for symlinks, even ones that point at a
+    /// directory (moving or copying a link never descends into its target).
+    public static func isRealDirectory(atPath path: String) -> Bool {
+        var st = stat()
+        return lstat(path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR
     }
 
     /// True if `child` is `ancestor` or lies inside it (path-component aware).

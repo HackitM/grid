@@ -130,10 +130,13 @@ final class ShortcutStore {
         return nil
     }
 
-    func unassign(_ c: GridCommand) { overrides[c] = .none }
+    // `Override.none` is spelled out below on purpose: assigned through the dictionary subscript,
+    // a bare `.none` means Optional.none, which removes the override and so restores the
+    // command's default shortcut instead of leaving it unassigned.
+    func unassign(_ c: GridCommand) { overrides[c] = Override.none }
     func reset(_ c: GridCommand) {
         // Restoring a default must not create a duplicate.
-        if let d = c.defaultBinding, let other = owner(of: d, excluding: c) { overrides[other] = .none }
+        if let d = c.defaultBinding, let other = owner(of: d, excluding: c) { overrides[other] = Override.none }
         overrides[c] = nil
     }
     func resetAll() { overrides = [:] }

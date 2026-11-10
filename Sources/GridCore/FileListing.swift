@@ -71,10 +71,13 @@ public enum ListingError: Error, Equatable, Sendable {
 }
 
 public enum FileListing {
+    /// Only what a row shows. (Allocated size was fetched here too but never used; it costs an
+    /// extra lookup per file, which adds up in folders with tens of thousands of items.)
     static let keys: [URLResourceKey] = [
         .isDirectoryKey, .isPackageKey, .isSymbolicLinkKey, .isHiddenKey, .fileSizeKey,
-        .totalFileAllocatedSizeKey, .contentModificationDateKey, .contentTypeKey, .localizedTypeDescriptionKey, .fileResourceTypeKey,
+        .contentModificationDateKey, .contentTypeKey, .localizedTypeDescriptionKey, .fileResourceTypeKey,
     ]
+    private static let keySet = Set(keys)
 
     /// Lists one directory level. Throws `ListingError`.
     public static func list(_ dir: URL, showHidden: Bool) throws -> [FileEntry] {
@@ -95,7 +98,7 @@ public enum FileListing {
     }
 
     public static func entry(for url: URL, displayURL: URL? = nil) -> FileEntry {
-        let v = try? url.resourceValues(forKeys: Set(keys))
+        let v = try? url.resourceValues(forKeys: keySet)
         let isLink = v?.isSymbolicLink ?? false
         var isDir = v?.isDirectory ?? false
         var isPackage = v?.isPackage ?? false
@@ -109,7 +112,7 @@ public enum FileListing {
             // target is missing, so it cannot be used to detect a dangling link.
             let target = url.resolvingSymlinksInPath()
             if FileManager.default.fileExists(atPath: url.path),
-               let tv = try? target.resourceValues(forKeys: Set(keys)) {
+               let tv = try? target.resourceValues(forKeys: keySet) {
                 isDir = tv.isDirectory ?? false
                 isPackage = tv.isPackage ?? false
                 type = tv.contentType ?? type
@@ -130,23 +133,26 @@ public enum FileListing {
     }
 
     /// Folders first, then by key. Name comparison matches Finder (numeric-aware, localized).
+    ///
+    /// The localized name comparison is by far the most expensive part, so it only runs when it
+    /// decides the order (sorting by name, or as the tie-break for equal kinds, sizes or dates).
     public static func sorted(_ entries: [FileEntry], by key: FileSortKey, ascending: Bool, foldersFirst: Bool = true) -> [FileEntry] {
         entries.sorted { a, b in
             if foldersFirst, a.isNavigableFolder != b.isNavigableFolder { return a.isNavigableFolder }
-            let byName = a.name.localizedStandardCompare(b.name)
-            let primary: ComparisonResult
+            var primary: ComparisonResult
             switch key {
-            case .name: primary = byName
+            case .name:
+                primary = .orderedSame
             case .kind:
-                let k = a.kind.localizedStandardCompare(b.kind)
-                primary = k == .orderedSame ? byName : k
+                primary = a.kind == b.kind ? .orderedSame : a.kind.localizedStandardCompare(b.kind)
             case .size:
                 let sa = a.size ?? -1, sb = b.size ?? -1
-                primary = sa == sb ? byName : (sa < sb ? .orderedAscending : .orderedDescending)
+                primary = sa == sb ? .orderedSame : (sa < sb ? .orderedAscending : .orderedDescending)
             case .modified:
                 let da = a.modified ?? .distantPast, db = b.modified ?? .distantPast
-                primary = da == db ? byName : (da < db ? .orderedAscending : .orderedDescending)
+                primary = da == db ? .orderedSame : (da < db ? .orderedAscending : .orderedDescending)
             }
+            if primary == .orderedSame { primary = a.name.localizedStandardCompare(b.name) }
             if primary == .orderedSame { return false }
             return ascending ? primary == .orderedAscending : primary == .orderedDescending
         }

@@ -137,7 +137,10 @@ final class UpdateChecker {
     func check(manual: Bool) async {
         guard status != .checking else { return }
         status = .checking
-        var url = policy.includePrereleases ? feed.listURL : feed.latestURL
+        // The endpoint depends on this preference; if it is flipped while the request is in
+        // flight, the answer belongs to the other endpoint and is thrown away (see below).
+        let prereleases = policy.includePrereleases
+        var url = prereleases ? feed.listURL : feed.latestURL
         #if DEBUG
         if let f = debugFeed { url = f }
         #endif
@@ -150,6 +153,11 @@ final class UpdateChecker {
         }
         do {
             let (data, response) = try await session.data(for: req)
+            guard prereleases == policy.includePrereleases else {
+                status = .idle
+                await check(manual: manual)
+                return
+            }
             let code = (response as? HTTPURLResponse)?.statusCode ?? 200   // file:// fixtures have no status
             let body: Data
             switch code {
@@ -168,7 +176,7 @@ final class UpdateChecker {
             default:
                 throw UpdateError("GitHub answered \(code)")
             }
-            latest = try feed.newest(from: body, includePrereleases: policy.includePrereleases)
+            latest = try feed.newest(from: body, includePrereleases: prereleases)
             policy.lastCheck = Date()
             status = available == nil ? .upToDate : .idle
         } catch let e as UpdateError {

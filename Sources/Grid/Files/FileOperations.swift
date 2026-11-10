@@ -36,7 +36,7 @@ final class FileOperations {
     func newFolder() {
         let dir = files.currentURL
         let name = FileNaming.uniqueName(for: "untitled folder", isDirectory: true) {
-            FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path)
+            FileNaming.itemExists(atPath: dir.appendingPathComponent($0).path)
         }
         let url = dir.appendingPathComponent(name)
         do {
@@ -57,7 +57,7 @@ final class FileOperations {
         let dest = entry.url.deletingLastPathComponent().appendingPathComponent(newName)
         // Case-only renames on case-insensitive volumes report the destination as existing.
         let caseOnly = newName.lowercased() == entry.name.lowercased()
-        if !caseOnly && FileManager.default.fileExists(atPath: dest.path) {
+        if !caseOnly && FileNaming.itemExists(atPath: dest.path) {
             return "“\(newName)” already exists here."
         }
         do {
@@ -132,26 +132,34 @@ final class FileOperations {
     }
 
     /// Copies or moves `sources` into `dir`, asking once how to handle name conflicts.
+    ///
+    /// Paths are compared with symlinks resolved, so a folder reached through a link (`/tmp` and
+    /// `/private/tmp`) is recognised as the same place: otherwise "Replace" would move the source
+    /// itself to the Trash before trying to copy it.
     func transfer(_ sources: [URL], into dir: URL, move: Bool) {
-        let fm = FileManager.default
+        let verb = move ? "move" : "copy"
+        let here = Self.resolvedPath(dir)
         var plain: [(URL, URL)] = []
         var conflicts: [(URL, URL)] = []
         var autoKeepBoth: [URL] = []
         for src in sources {
-            let srcDir = src.deletingLastPathComponent().standardizedFileURL
-            if move && srcDir.path == dir.standardizedFileURL.path { continue }          // already here
-            var isDir: ObjCBool = false
-            fm.fileExists(atPath: src.path, isDirectory: &isDir)
-            if isDir.boolValue && FileNaming.isSameOrInside(dir, src) {
-                app?.flash(.error, "Can't \(move ? "move" : "copy") “\(src.lastPathComponent)” into itself.")
+            let sameFolder = Self.resolvedPath(src.deletingLastPathComponent()) == here
+            if move && sameFolder { continue }                                           // already here
+            // A link to a folder is moved or copied as a link, so only a real folder can contain `dir`.
+            if FileNaming.isRealDirectory(atPath: src.path) && FileNaming.isSameOrInside(dir, src) {
+                app?.flash(.error, "Can't \(verb) “\(src.lastPathComponent)” into itself.")
                 return
             }
             let dst = dir.appendingPathComponent(src.lastPathComponent)
-            if fm.fileExists(atPath: dst.path) {
-                if !move && srcDir.path == dir.standardizedFileURL.path { autoKeepBoth.append(src) } // duplicate
-                else { conflicts.append((src, dst)) }
+            guard FileNaming.itemExists(atPath: dst.path) else { plain.append((src, dst)); continue }
+            if sameFolder {
+                autoKeepBoth.append(src)                                                 // duplicate
+            } else if FileNaming.isRealDirectory(atPath: dst.path) && FileNaming.isSameOrInside(src, dst) {
+                // Replacing `dst` would trash the folder that holds `src`.
+                app?.flash(.error, "Can't \(verb) “\(src.lastPathComponent)” over the folder that contains it.")
+                return
             } else {
-                plain.append((src, dst))
+                conflicts.append((src, dst))
             }
         }
         let go: (_ replace: Bool, _ keepBoth: Bool) -> Void = { [weak self] replace, keepBoth in
@@ -177,11 +185,16 @@ final class FileOperations {
             cancelLabel: plain.isEmpty && autoKeepBoth.isEmpty ? "Cancel" : "Skip These"))
     }
 
+    /// The folder's real location, for comparing two ways of naming the same place.
+    nonisolated private static func resolvedPath(_ url: URL) -> String {
+        url.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
     nonisolated static func uniqueDestination(for src: URL, in dir: URL) -> URL {
         var isDir: ObjCBool = false
         FileManager.default.fileExists(atPath: src.path, isDirectory: &isDir)
         let name = FileNaming.uniqueName(for: src.lastPathComponent, isDirectory: isDir.boolValue) {
-            FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path)
+            FileNaming.itemExists(atPath: dir.appendingPathComponent($0).path)
         }
         return dir.appendingPathComponent(name)
     }

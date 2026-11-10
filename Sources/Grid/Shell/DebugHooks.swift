@@ -15,6 +15,9 @@ import GridCore
 ///   (A distributed notification was used before; any app in the session can post those.)
 ///
 /// Protocol: connect, write one JSON object, close. E.g. {"cmd":"snapshot","path":"/tmp/a.png"}.
+/// Results are written to the `path` the command names (never sent back over the socket). The
+/// `state` command includes the visible terminal text, which is why none of this exists outside
+/// a `--qa` debug run.
 @MainActor
 enum DebugHooks {
     static var enabled: Bool { CommandLine.arguments.contains("--qa") }
@@ -54,7 +57,7 @@ enum DebugHooks {
         }
     }
 
-    /// The location state's name only: QA output never contains coordinates.
+    /// Route summary for the state dump: distances, counts and turn texts.
     static func routingState(_ m: MapModel) -> [String: Any] {
         let r = m.routing
         func leg(_ l: RouteService.Leg?) -> [String: Any] {
@@ -67,6 +70,7 @@ enum DebugHooks {
                 "snap": [r.outcome?.snapFrom ?? -1, r.outcome?.snapTo ?? -1]]
     }
 
+    /// The location state's name only: QA output never contains the user's coordinates.
     static func locationCase(_ s: LocationProvider.State) -> String {
         switch s {
         case .idle: "idle"; case .explaining: "explaining"; case .asking: "asking"; case .locating: "locating"
@@ -123,7 +127,25 @@ enum DebugHooks {
         NSApp.windows.first { $0.isVisible && $0.canBecomeMain }
     }
 
+    /// Runs one QA command. Commands are grouped by area; each group has its own handler below.
     static func handle(_ c: [String: Any], _ app: AppState) {
+        guard let cmd = c["cmd"] as? String else { return }
+        switch cmd {
+        case "snapshot", "screen", "windows", "snapshotTerm", "floatShot": handleCapture(c, app)
+        case "shortcut", "pressKeyEquiv", "menuKeys", "keyEquiv": handleKeys(c, app)
+        case "resize", "split", "workspace", "dockDrag", "dockEnd", "movePane", "resizePane", "closeTab", "deck", "sidebar": handleLayout(c, app)
+        case "click", "fileop", "files", "openFile", "revealCwd": handleFiles(c, app)
+        case "menu": handleMenu(c, app)
+        case "browser": handleBrowser(c, app)
+        case "addWidget", "widget", "addCustom", "approveWidget", "approvePending", "reviewWidget", "widgetReload", "widgetPerform", "widgets", "nowPlaying": handleWidgets(c, app)
+        case "state": writeState(c, app)
+        case "map": handleMap(c, app)
+        default: handleApp(c, app)
+        }
+    }
+
+    /// Screenshots of GRID's own windows and views (never other apps; no Screen Recording permission).
+    private static func handleCapture(_ c: [String: Any], _ app: AppState) {
         let path = c["path"] as? String
         switch c["cmd"] as? String {
         case "snapshot":
@@ -184,68 +206,18 @@ enum DebugHooks {
                   let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
             v.cacheDisplay(in: v.bounds, to: rep)
             try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
-        case "panel":
-            if let p = PanelID(rawValue: c["value"] as? String ?? "") { app.show(p) }
-        case "palette":
-            app.paletteOpen = (c["open"] as? Bool) ?? !app.paletteOpen
-        case "type":
-            if let t = c["text"] as? String { app.terminals.active?.view.send(txt: t) }
-        case "drop":
-            if let paths = c["paths"] as? [String] { app.terminals.active?.view.insertPaths(paths) }
-        case "resize":
-            if let w = window, let width = c["w"] as? Double, let height = c["h"] as? Double {
-                var f = w.frame
-                f.size = NSSize(width: width, height: height)
-                w.setFrame(f, display: true)
-            }
-        case "newSession":
-            app.newTerminal(at: c["dir"] as? String)
-        case "closeSession":
-            if let id = app.terminals.activeID { app.requestCloseTerminal(id) }
-        case "confirm":
-            if let conf = app.confirmation { app.confirmation = nil; conf.onConfirm() }
-        case "setting":
-            let on = (c["value"] as? Bool) ?? false
-            switch c["key"] as? String {
-            case "grid": app.settings.gridBackdrop = on
-            case "glow": app.settings.glow = on
-            case "motion": app.settings.motion = on
-            case "systemMenus": app.settings.systemMenus = on
-            case "globeActive": GlobeView.debugForceActive = on
-            case "globeNoLabels": GlobeRenderer.debugNoLabels = on
-            case "mapActive": MapRenderer.debugForceActive = on
-            case "filesGrid": app.settings.filesGrid = on; CascadeClock.shared.start()
-            case "startup": app.settings.startupAnimation = on
-            default: break
-            }
-        case "click":
-            if let id = c["id"] as? String { app.files.click(id, command: (c["command"] as? Bool) ?? false, shift: (c["shift"] as? Bool) ?? false) }
-        case "fileop":
-            let ops = app.fileOps
-            let urls = app.files.selectedEntries.map(\.url)
-            switch c["op"] as? String {
-            case "newFolder": ops.newFolder()
-            case "rename":
-                if let e = app.files.selectedEntry, let name = c["name"] as? String {
-                    let err = ops.rename(e, to: name)
-                    app.flash(err == nil ? .info : .error, err ?? "renamed")
-                    app.files.renamingID = nil
-                }
-            case "trash": ops.trash(urls)
-            case "duplicate": ops.duplicate(urls)
-            case "copy": ops.copyToPasteboard(urls)
-            case "paste": ops.pasteFromPasteboard(into: app.files.currentURL, move: (c["move"] as? Bool) ?? false)
-            case "transfer":
-                if let paths = c["paths"] as? [String], let dir = c["dir"] as? String {
-                    ops.transfer(paths.map { URL(fileURLWithPath: $0) }, into: URL(fileURLWithPath: dir), move: (c["move"] as? Bool) ?? false)
-                }
-            case "undo": ops.undo()
-            case "alternate":
-                if let conf = app.confirmation { app.confirmation = nil; conf.onAlternate() }
-            default: break
-            }
-        case "split":
-            app.split((c["axis"] as? String) == "down" ? .vertical : .horizontal)
+        case "floatShot":
+            // {"cmd":"floatShot","path":"<dir>"}: one PNG per floating widget window (rendered layer tree).
+            if let dir = c["path"] as? String { app.floatingWidgets.debugSnapshot(dir: dir) }
+        default:
+            break
+        }
+    }
+
+    /// Keyboard shortcuts: assigning them, and sending key equivalents the way a real keypress travels.
+    private static func handleKeys(_ c: [String: Any], _ app: AppState) {
+        let path = c["path"] as? String
+        switch c["cmd"] as? String {
         case "shortcut":
             // {"cmd":"shortcut","command":"splitRight","key":"e","mods":["command","option"]} | "reset":true | "resetAll":true
             if (c["resetAll"] as? Bool) == true { app.shortcuts.resetAll(); app.flash(.info, "reset all"); break }
@@ -324,6 +296,22 @@ enum DebugHooks {
             // Dispatch like a real keypress (window → menus), not by calling the menu directly.
             if let ev { NSApp.sendEvent(ev) }
             try? "sent".write(toFile: path, atomically: true, encoding: .utf8)
+        default:
+            break
+        }
+    }
+
+    /// Window size, workspace panels, terminal splits and GRID drags.
+    private static func handleLayout(_ c: [String: Any], _ app: AppState) {
+        switch c["cmd"] as? String {
+        case "resize":
+            if let w = window, let width = c["w"] as? Double, let height = c["h"] as? Double {
+                var f = w.frame
+                f.size = NSSize(width: width, height: height)
+                w.setFrame(f, display: true)
+            }
+        case "split":
+            app.split((c["axis"] as? String) == "down" ? .vertical : .horizontal)
         case "workspace":
             // {"cmd":"workspace","op":"move","panel":"deck","target":"files","edge":"left"} | "hide"/"show" panel | "reset"
             let ws = app.workspace
@@ -344,7 +332,7 @@ enum DebugHooks {
             //   picks a point inside the target's registered frame near that edge.
             // or {"cmd":"dockDrag","payload":"...","points":[[x,y],...],"commit":true} in window coordinates.
             guard let p = DragPayload(c["payload"] as? String ?? "") else { break }
-            var pts: [CGPoint] = ((c["points"] as? [[Double]]) ?? []).map { CGPoint(x: $0[0], y: $0[1]) }
+            var pts: [CGPoint] = ((c["points"] as? [[Double]]) ?? []).filter { $0.count == 2 }.map { CGPoint(x: $0[0], y: $0[1]) }
             if pts.isEmpty, let to = c["to"] as? String, let t = DebugHooks.target(to, app), let r = DockDrag.shared.frame(of: t) {
                 let e = DropEdge(rawValue: c["edge"] as? String ?? "")
                 var pt = CGPoint(x: r.midX, y: r.midY)
@@ -362,20 +350,6 @@ enum DebugHooks {
                let a = t.panes.first(where: { $0.number == f }), let b = t.panes.first(where: { $0.number == to }) {
                 t.movePane(a.id, to: b.id, edge: e)
             }
-        case "find":
-            // {"cmd":"find","query":"x","regex":false,"case":false} ; {"cmd":"find","op":"next"|"prev"|"close"}
-            guard let s = app.terminals.active else { break }
-            switch c["op"] as? String {
-            case "next": s.find.next(s.view)
-            case "prev": s.find.previous(s.view)
-            case "close": s.find.close(s.view)
-            default:
-                s.find.open()
-                s.find.regex = (c["regex"] as? Bool) ?? false
-                s.find.caseSensitive = (c["case"] as? Bool) ?? false
-                s.find.query = (c["query"] as? String) ?? ""
-                s.find.update(s.view)
-            }
         case "resizePane":
             // {"cmd":"resizePane","delta":0.2}: moves the first divider of the active tab's root split
             if let t = app.terminals.activeTab, case .split(let sid, _, _, _) = t.layout {
@@ -385,23 +359,70 @@ enum DebugHooks {
             if let id = app.terminals.activeTabID { app.requestCloseTab(id) }
         case "deck":
             app.deckVisible = (c["value"] as? Bool) ?? !app.deckVisible
-        case "addWidget":
-            if let k = WidgetKind(rawValue: c["kind"] as? String ?? "") { _ = app.widgets.add(k) }
-        case "widget":
-            // {"cmd":"widget","index":0,"op":"remove"|"expand"|"collapse"|"moveToEnd"|"set","key":..,"value":..}
-            let idx = (c["index"] as? Int) ?? 0
-            guard app.widgets.widgets.indices.contains(idx) else { break }
-            let w = app.widgets.widgets[idx]
+        case "sidebar":
+            app.filesSidebar = (c["value"] as? Bool) ?? !app.filesSidebar
+        default:
+            break
+        }
+    }
+
+    /// The Files browser and file operations.
+    private static func handleFiles(_ c: [String: Any], _ app: AppState) {
+        switch c["cmd"] as? String {
+        case "click":
+            if let id = c["id"] as? String { app.files.click(id, command: (c["command"] as? Bool) ?? false, shift: (c["shift"] as? Bool) ?? false) }
+        case "fileop":
+            let ops = app.fileOps
+            let urls = app.files.selectedEntries.map(\.url)
             switch c["op"] as? String {
-            case "remove": app.widgets.remove(w.id)
-            case "expand": app.widgets.update(w.id) { $0.expanded.toggle() }
-            case "collapse": app.widgets.update(w.id) { $0.collapsed.toggle() }
-            case "moveToEnd": app.widgets.place(w.id, at: nil, edge: nil)
-            case "sideBySide": app.widgets.arrangeSideBySide()
-            case "stack": app.widgets.arrangeStacked()
-            case "set": app.widgets.set(w.id, c["key"] as? String ?? "", c["value"] as? String)
+            case "newFolder": ops.newFolder()
+            case "rename":
+                if let e = app.files.selectedEntry, let name = c["name"] as? String {
+                    let err = ops.rename(e, to: name)
+                    app.flash(err == nil ? .info : .error, err ?? "renamed")
+                    app.files.renamingID = nil
+                }
+            case "trash": ops.trash(urls)
+            case "duplicate": ops.duplicate(urls)
+            case "copy": ops.copyToPasteboard(urls)
+            case "paste": ops.pasteFromPasteboard(into: app.files.currentURL, move: (c["move"] as? Bool) ?? false)
+            case "transfer":
+                if let paths = c["paths"] as? [String], let dir = c["dir"] as? String {
+                    ops.transfer(paths.map { URL(fileURLWithPath: $0) }, into: URL(fileURLWithPath: dir), move: (c["move"] as? Bool) ?? false)
+                }
+            case "undo": ops.undo()
+            case "alternate":
+                if let conf = app.confirmation { app.confirmation = nil; conf.onAlternate() }
             default: break
             }
+        case "files":
+            if let d = c["dir"] as? String { app.files.navigate(to: URL(fileURLWithPath: d)) }
+            if let q = c["query"] as? String { app.files.query = q }
+            if let m = c["mode"] as? String, let mode = FileSearchMode(rawValue: m) { app.files.mode = mode }
+            if let sel = c["select"] as? String { app.files.selectionID = sel }
+            // Outline: {"expand":"/path","recursive":true} | {"collapse":"/path"} | {"key":"left"|"right","option":true}
+            if let p = c["expand"] as? String { app.files.expand(p, recursive: (c["recursive"] as? Bool) ?? false) }
+            if let p = c["collapse"] as? String { app.files.collapse(p) }
+            switch c["key"] as? String {
+            case "right": app.files.expandOrDescend(option: (c["option"] as? Bool) ?? false)
+            case "left": app.files.collapseOrAscend()
+            case "down": app.files.moveSelection(1)
+            case "up": app.files.moveSelection(-1)
+            default: break
+            }
+        case "openFile":
+            if let p = c["path"] as? String { app.files.open(URL(fileURLWithPath: p)) }
+        case "revealCwd":
+            app.revealTerminalDirectoryInFiles()
+        default:
+            break
+        }
+    }
+
+    /// GRID menus: opening, driving and inspecting them.
+    private static func handleMenu(_ c: [String: Any], _ app: AppState) {
+        let path = c["path"] as? String
+        switch c["cmd"] as? String {
         case "menu":
             // GRID menus. {"op":"rightClick","x":..,"y":..,"shift":bool} (window points, top-left origin)
             // | {"op":"hover"|"click","sx":..,"sy":..} (screen points) | {"op":"key","key":"down|up|left|right|return|esc"|"char":"x"}
@@ -483,6 +504,15 @@ enum DebugHooks {
                 }
             default: break
             }
+        default:
+            break
+        }
+    }
+
+    /// The Web page.
+    private static func handleBrowser(_ c: [String: Any], _ app: AppState) {
+        let path = c["path"] as? String
+        switch c["cmd"] as? String {
         case "browser":
             // {"cmd":"browser","op":"open|go|close|reader|theme|block|eval|state|reload|find","url":..,"js":..,"path":..}
             let b = app.browser
@@ -555,6 +585,32 @@ enum DebugHooks {
                 if let d = try? JSONSerialization.data(withJSONObject: st, options: [.prettyPrinted, .sortedKeys]) { try? d.write(to: URL(fileURLWithPath: path)) }
             default: break
             }
+        default:
+            break
+        }
+    }
+
+    /// The widget deck, custom widgets and Now Playing.
+    private static func handleWidgets(_ c: [String: Any], _ app: AppState) {
+        let path = c["path"] as? String
+        switch c["cmd"] as? String {
+        case "addWidget":
+            if let k = WidgetKind(rawValue: c["kind"] as? String ?? "") { _ = app.widgets.add(k) }
+        case "widget":
+            // {"cmd":"widget","index":0,"op":"remove"|"expand"|"collapse"|"moveToEnd"|"set","key":..,"value":..}
+            let idx = (c["index"] as? Int) ?? 0
+            guard app.widgets.widgets.indices.contains(idx) else { break }
+            let w = app.widgets.widgets[idx]
+            switch c["op"] as? String {
+            case "remove": app.widgets.remove(w.id)
+            case "expand": app.widgets.update(w.id) { $0.expanded.toggle() }
+            case "collapse": app.widgets.update(w.id) { $0.collapsed.toggle() }
+            case "moveToEnd": app.widgets.place(w.id, at: nil, edge: nil)
+            case "sideBySide": app.widgets.arrangeSideBySide()
+            case "stack": app.widgets.arrangeStacked()
+            case "set": app.widgets.set(w.id, c["key"] as? String ?? "", c["value"] as? String)
+            default: break
+            }
         case "addCustom":
             if let r = c["ref"] as? String { _ = app.widgets.add(.custom, config: ["package": r]) }
         case "approveWidget":
@@ -601,35 +657,23 @@ enum DebugHooks {
             if let data = try? JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted, .sortedKeys]) {
                 try? data.write(to: URL(fileURLWithPath: path))
             }
-        case "cancel":
-            if let conf = app.confirmation { app.confirmation = nil; conf.onCancel() }
-        case "present":
-            app.present(Confirmation(code: "QA.TEST", title: "QA", message: "test", confirmLabel: "OK", destructive: false, onConfirm: {}))
-        case "files":
-            if let d = c["dir"] as? String { app.files.navigate(to: URL(fileURLWithPath: d)) }
-            if let q = c["query"] as? String { app.files.query = q }
-            if let m = c["mode"] as? String, let mode = FileSearchMode(rawValue: m) { app.files.mode = mode }
-            if let sel = c["select"] as? String { app.files.selectionID = sel }
-            // Outline: {"expand":"/path","recursive":true} | {"collapse":"/path"} | {"key":"left"|"right","option":true}
-            if let p = c["expand"] as? String { app.files.expand(p, recursive: (c["recursive"] as? Bool) ?? false) }
-            if let p = c["collapse"] as? String { app.files.collapse(p) }
-            switch c["key"] as? String {
-            case "right": app.files.expandOrDescend(option: (c["option"] as? Bool) ?? false)
-            case "left": app.files.collapseOrAscend()
-            case "down": app.files.moveSelection(1)
-            case "up": app.files.moveSelection(-1)
-            default: break
-            }
-        case "sidebar":
-            app.filesSidebar = (c["value"] as? Bool) ?? !app.filesSidebar
-        case "theme":
-            if let t = ThemeID(rawValue: c["value"] as? String ?? "") { app.setTheme(t) }
-        case "openFile":
-            if let p = c["path"] as? String { app.files.open(URL(fileURLWithPath: p)) }
-        case "revealCwd":
-            app.revealTerminalDirectoryInFiles()
-        case "launch":
-            if let name = c["name"] as? String, let r = app.apps.ranked(name).first { app.apps.launch(r) }
+        case "nowPlaying":
+            // {"cmd":"nowPlaying","title":..,"artist":..,"album":..,"duration":s,"position":s,"playing":bool,"art":"<image path>","player":"music|spotify"}
+            // Injects a track as if the player had announced it (no Apple Events, no audio).
+            let player: NowPlaying.Player = (c["player"] as? String) == "spotify" ? .spotify : .music
+            let art = (c["art"] as? String).flatMap { NSImage(contentsOfFile: $0) }?.cgImage(forProposedRect: nil, context: nil, hints: nil).flatMap(ArtMatrix.init)
+            app.nowPlaying.debugInject(player: player, title: c["title"] as? String, artist: c["artist"] as? String ?? "",
+                                       album: c["album"] as? String ?? "", duration: c["duration"] as? Double,
+                                       position: c["position"] as? Double, playing: (c["playing"] as? Bool) ?? true, art: art)
+        default:
+            break
+        }
+    }
+
+    /// Writes a JSON snapshot of the app's state for assertions.
+    private static func writeState(_ c: [String: Any], _ app: AppState) {
+        let path = c["path"] as? String
+        switch c["cmd"] as? String {
         case "state":
             guard let path else { return }
             let sessions: [[String: Any]] = app.terminals.sessions.map { s in
@@ -698,29 +742,14 @@ enum DebugHooks {
             if let data = try? JSONSerialization.data(withJSONObject: st, options: [.prettyPrinted, .sortedKeys]) {
                 try? data.write(to: URL(fileURLWithPath: path))
             }
-        case "nowPlaying":
-            // {"cmd":"nowPlaying","title":..,"artist":..,"album":..,"duration":s,"position":s,"playing":bool,"art":"<image path>","player":"music|spotify"}
-            // Injects a track as if the player had announced it (no Apple Events, no audio).
-            let player: NowPlaying.Player = (c["player"] as? String) == "spotify" ? .spotify : .music
-            let art = (c["art"] as? String).flatMap { NSImage(contentsOfFile: $0) }?.cgImage(forProposedRect: nil, context: nil, hints: nil).flatMap(ArtMatrix.init)
-            app.nowPlaying.debugInject(player: player, title: c["title"] as? String, artist: c["artist"] as? String ?? "",
-                                       album: c["album"] as? String ?? "", duration: c["duration"] as? Double,
-                                       position: c["position"] as? Double, playing: (c["playing"] as? Bool) ?? true, art: art)
-        case "slowMotion":
-            // {"cmd":"slowMotion","factor":10} stretches the startup build-on and menu unfold.
-            GridMotion.debugSlow = (c["factor"] as? Double) ?? 1
-        case "replayStartup":
-            NotificationCenter.default.post(name: .gridQAReplayStartup, object: nil)
-        case "updates":
-            // {"cmd":"updates","current":"0.4.0","feed":"<json path>"|"","reset":true,"check":true,"consent":true|false,"download":true}
-            let u = app.updates
-            if (c["reset"] as? Bool) == true { u.debugReset() }
-            if let v = c["current"] as? String { u.debugSetCurrent(v) }
-            if let f = c["feed"] as? String { u.debugFeed = f.isEmpty ? nil : URL(fileURLWithPath: f) }
-            if let on = c["consent"] as? Bool { u.setCheckDaily(on) }
-            if (c["check"] as? Bool) == true { Task { await u.check(manual: true) } }
-            if (c["download"] as? Bool) == true { UpdateDownloader.run(u) }
-            if (c["view"] as? Bool) == true { app.settingsSection = "updates"; app.show(.settings) }
+        default:
+            break
+        }
+    }
+
+    /// The Map page.
+    private static func handleMap(_ c: [String: Any], _ app: AppState) {
+        switch c["cmd"] as? String {
         case "map":
             // {"cmd":"map","op":"enable"|"disable"|"camera"|"download"|"remove"|"select"|"clear"|"catalog"|"check"|"locate",
             //  "lon","lat","zoom","bearing","pitch", "rect":[w,s,e,n], "region":"us/rhode-island", "index":n, "id":regionId}
@@ -842,9 +871,79 @@ enum DebugHooks {
                 }
             default: break
             }
-        case "floatShot":
-            // {"cmd":"floatShot","path":"<dir>"}: one PNG per floating widget window (rendered layer tree).
-            if let dir = c["path"] as? String { app.floatingWidgets.debugSnapshot(dir: dir) }
+        default:
+            break
+        }
+    }
+
+    /// Everything else: panels, the palette, sessions, confirmations, settings, updates.
+    private static func handleApp(_ c: [String: Any], _ app: AppState) {
+        switch c["cmd"] as? String {
+        case "panel":
+            if let p = PanelID(rawValue: c["value"] as? String ?? "") { app.show(p) }
+        case "palette":
+            app.paletteOpen = (c["open"] as? Bool) ?? !app.paletteOpen
+        case "type":
+            if let t = c["text"] as? String { app.terminals.active?.view.send(txt: t) }
+        case "drop":
+            if let paths = c["paths"] as? [String] { app.terminals.active?.view.insertPaths(paths) }
+        case "newSession":
+            app.newTerminal(at: c["dir"] as? String)
+        case "closeSession":
+            if let id = app.terminals.activeID { app.requestCloseTerminal(id) }
+        case "confirm":
+            if let conf = app.confirmation { app.confirmation = nil; conf.onConfirm() }
+        case "cancel":
+            if let conf = app.confirmation { app.confirmation = nil; conf.onCancel() }
+        case "present":
+            app.present(Confirmation(code: "QA.TEST", title: "QA", message: "test", confirmLabel: "OK", destructive: false, onConfirm: {}))
+        case "setting":
+            let on = (c["value"] as? Bool) ?? false
+            switch c["key"] as? String {
+            case "grid": app.settings.gridBackdrop = on
+            case "glow": app.settings.glow = on
+            case "motion": app.settings.motion = on
+            case "systemMenus": app.settings.systemMenus = on
+            case "globeActive": GlobeView.debugForceActive = on
+            case "globeNoLabels": GlobeRenderer.debugNoLabels = on
+            case "mapActive": MapRenderer.debugForceActive = on
+            case "filesGrid": app.settings.filesGrid = on; CascadeClock.shared.start()
+            case "startup": app.settings.startupAnimation = on
+            default: break
+            }
+        case "find":
+            // {"cmd":"find","query":"x","regex":false,"case":false} ; {"cmd":"find","op":"next"|"prev"|"close"}
+            guard let s = app.terminals.active else { break }
+            switch c["op"] as? String {
+            case "next": s.find.next(s.view)
+            case "prev": s.find.previous(s.view)
+            case "close": s.find.close(s.view)
+            default:
+                s.find.open()
+                s.find.regex = (c["regex"] as? Bool) ?? false
+                s.find.caseSensitive = (c["case"] as? Bool) ?? false
+                s.find.query = (c["query"] as? String) ?? ""
+                s.find.update(s.view)
+            }
+        case "theme":
+            if let t = ThemeID(rawValue: c["value"] as? String ?? "") { app.setTheme(t) }
+        case "launch":
+            if let name = c["name"] as? String, let r = app.apps.ranked(name).first { app.apps.launch(r) }
+        case "slowMotion":
+            // {"cmd":"slowMotion","factor":10} stretches the startup build-on and menu unfold.
+            GridMotion.debugSlow = (c["factor"] as? Double) ?? 1
+        case "replayStartup":
+            NotificationCenter.default.post(name: .gridQAReplayStartup, object: nil)
+        case "updates":
+            // {"cmd":"updates","current":"0.4.0","feed":"<json path>"|"","reset":true,"check":true,"consent":true|false,"download":true}
+            let u = app.updates
+            if (c["reset"] as? Bool) == true { u.debugReset() }
+            if let v = c["current"] as? String { u.debugSetCurrent(v) }
+            if let f = c["feed"] as? String { u.debugFeed = f.isEmpty ? nil : URL(fileURLWithPath: f) }
+            if let on = c["consent"] as? Bool { u.setCheckDaily(on) }
+            if (c["check"] as? Bool) == true { Task { await u.check(manual: true) } }
+            if (c["download"] as? Bool) == true { UpdateDownloader.run(u) }
+            if (c["view"] as? Bool) == true { app.settingsSection = "updates"; app.show(.settings) }
         case "quit":
             NSApp.terminate(nil)
         default:

@@ -79,8 +79,20 @@ public enum FileTree {
     private static func walk(_ entries: [FileEntry], depth: Int, parent: String?, into out: inout [FileTreeRow],
                              children: [String: FileTreeChildren], expanded: Set<String>,
                              sortKey: FileSortKey, ascending: Bool, query q: String) {
-        for e in FileListing.sorted(entries, by: sortKey, ascending: ascending) {
-            let matches = q.isEmpty || e.name.localizedCaseInsensitiveContains(q)
+        // Filter before sorting: with a query, only matching rows and open folders (which may
+        // hold matches below) can appear, and sorting is the expensive step. Typing in the filter
+        // of a very large folder used to re-sort the whole listing on every keystroke.
+        var matching = Set<String>()
+        var candidates = entries
+        if !q.isEmpty {
+            candidates = entries.filter { e in
+                let matches = e.name.localizedCaseInsensitiveContains(q)
+                if matches { matching.insert(e.id) }
+                return matches || (expanded.contains(e.id) && isExpandable(e))
+            }
+        }
+        for e in FileListing.sorted(candidates, by: sortKey, ascending: ascending) {
+            let matches = q.isEmpty || matching.contains(e.id)
             let open = expanded.contains(e.id) && isExpandable(e)
             guard open else {
                 if matches { out.append(FileTreeRow(id: e.id, kind: .entry(e), depth: depth, parentID: parent, isExpanded: false)) }

@@ -3,7 +3,10 @@ import Darwin
 import Foundation
 
 /// Minimal one-message-per-connection Unix-domain socket server for DEBUG QA hooks.
-/// Only accepts peers running as the same user.
+///
+/// Compiled into debug builds only. Access control: the socket file is 0600 inside the per-user
+/// temporary directory, and every connection's peer UID is checked against ours before a single
+/// byte is read. It only receives; nothing is ever written back to the peer.
 final class QASocketServer: @unchecked Sendable {
     private let path: String
     private var fd: Int32 = -1
@@ -14,7 +17,7 @@ final class QASocketServer: @unchecked Sendable {
     init?(path: String, onMessage: @escaping @Sendable (String) -> Void) {
         self.path = path
         self.onMessage = onMessage
-        unlink(path)
+        Self.removeStaleSocket(at: path)
         fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return nil }
         var addr = sockaddr_un()
@@ -29,15 +32,27 @@ final class QASocketServer: @unchecked Sendable {
         let bound = withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, len) }
         }
-        guard bound == 0, chmod(path, 0o600) == 0, listen(fd, 8) == 0 else { close(fd); unlink(path); return nil }
-        let src = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
-        src.setEventHandler { [weak self] in self?.acceptOne() }
+        guard bound == 0 else { close(fd); return nil }      // the path is not ours to remove
+        guard chmod(path, 0o600) == 0, listen(fd, 8) == 0 else { close(fd); unlink(path); return nil }
+        let listening = fd
+        let src = DispatchSource.makeReadSource(fileDescriptor: listening, queue: queue)
+        src.setEventHandler { [weak self] in self?.acceptOne(on: listening) }
+        // The descriptor is closed by the source once it has stopped watching it: closing it
+        // while the source is still armed is undefined (and the number could be reused).
+        src.setCancelHandler { close(listening) }
         src.resume()
         source = src
     }
 
-    private func acceptOne() {
-        let client = accept(fd, nil, nil)
+    /// Removes a socket left behind by an earlier run. Anything that is not a socket is left
+    /// alone (bind then fails and QA hooks stay off).
+    private static func removeStaleSocket(at path: String) {
+        var st = stat()
+        if lstat(path, &st) == 0, (st.st_mode & S_IFMT) == S_IFSOCK { unlink(path) }
+    }
+
+    private func acceptOne(on listening: Int32) {
+        let client = accept(listening, nil, nil)
         guard client >= 0 else { return }
         defer { close(client) }
         var uid: uid_t = 0, gid: gid_t = 0
@@ -55,9 +70,10 @@ final class QASocketServer: @unchecked Sendable {
     }
 
     func stop() {
-        source?.cancel()
-        source = nil
-        if fd >= 0 { close(fd); fd = -1 }
+        guard let source else { return }
+        source.cancel()            // its cancel handler closes the descriptor
+        self.source = nil
+        fd = -1
         unlink(path)
     }
 
