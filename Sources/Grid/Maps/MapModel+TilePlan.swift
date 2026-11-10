@@ -5,23 +5,30 @@ import QuartzCore
 // around it and ahead of the gesture in progress.
 
 extension MapModel {
-    /// How far around and ahead of the view tiles are loaded.
+    /// How far around and ahead of the view tiles are loaded. Every prefetched tile is a request
+    /// (and a decode) that is wasted if the view never gets there, so these stay as small as they
+    /// can without ground arriving late.
     enum Prefetch {
         /// Most tiles the view itself may ask for.
         static let coverLimit = 48
         /// Most tiles loaded beyond the view at any time.
         static let limit = 48
-        /// At rest: the view grown by this factor.
+        /// At rest: the view grown by this factor. The ring is also all the frame holds beyond
+        /// the view, so it is what the map view draws during the first moments of a fling, before
+        /// the next plan lands; shrinking it shows empty ground at the leading edge.
         static let restPad = 1.35
         static let restLimit = 80
         /// While moving: where the camera will be after each of these delays, grown a little.
         static let lookAheadSeconds = [0.3, 0.6]
         static let lookAheadPad = 1.15
         static let lookAheadLimit = 56
-        /// The look-ahead centre goes no further than this many screens from the view.
-        static let maxReachScreens = 1.5
-        /// Zoom is predicted this far ahead.
-        static let zoomHorizon = 0.6
+        /// The look-ahead centre goes no further than this many screens from the view. Trackpad
+        /// momentum decays, so a straight-line guess further out mostly loads ground that is
+        /// never reached; one screen is still several plans ahead at any speed.
+        static let maxReachScreens = 1.0
+        /// Zoom is predicted only this far ahead. A zoom level is a whole new set of tiles, and a
+        /// pinch that stops short of the next level would have loaded them for nothing.
+        static let zoomHorizon = 0.3
     }
 
     /// The tiles asked for by the last plan.
