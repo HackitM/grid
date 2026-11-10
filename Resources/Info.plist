@@ -15,19 +15,15 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.5.1</string>
+	<string>0.6.0</string>
 	<key>CFBundleVersion</key>
-	<string>7</string>
+	<string>8</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>15.0</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>The Now Playing widget uses this to show and control what Apple Music or Spotify is playing. Programs you run in a GRID terminal can also ask to control other apps.</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>GRID’s Map shows where you are when you click Locate. Your location stays on this Mac.</string>
-	<key>NSLocationUsageDescription</key>
-	<string>GRID’s Map shows where you are when you click Locate. Your location stays on this Mac.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Websites you allow in GRID’s browser can use the camera (for example, video calls).</string>
 	<key>NSDesktopFolderUsageDescription</key>
@@ -38,6 +34,10 @@
 	<string>A program running in a GRID terminal or file browser wants to access your Downloads folder.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSLocationUsageDescription</key>
+	<string>GRID’s Map shows where you are when you click Locate. Your location stays on this Mac.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>GRID’s Map shows where you are when you click Locate. Your location stays on this Mac.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Websites you allow in GRID’s browser can use the microphone (for example, video calls).</string>
 	<key>NSNetworkVolumesUsageDescription</key>
