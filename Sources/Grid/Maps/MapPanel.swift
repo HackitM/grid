@@ -19,6 +19,10 @@ struct MapPanel: View {
                         IconButton(symbol: "location", label: "Locate (shows where you are; asks macOS once)", disabled: !m.enabled) { m.locate() }
                         PitchButton(model: m)
                         IconButton(symbol: "location.north.line", label: "Reset north", disabled: !m.enabled) { m.handle(.key(.resetNorth)) }
+                        IconButton(symbol: "arrow.triangle.turn.up.right.diamond", label: "Directions (routes worked out on this Mac)",
+                                   active: m.routing.open, disabled: !m.enabled) {
+                            m.routing.open.toggle(); if m.routing.open { app.inspectorVisible = true }
+                        }
                         IconButton(symbol: "rectangle.dashed", label: "Draw an area to download cameras (⇧-drag on the map)", active: m.drawingRegion, disabled: !m.enabled) {
                             m.drawingRegion.toggle()
                         }
@@ -58,7 +62,7 @@ struct MapPanel: View {
 
     private func confirmClear(_ m: MapModel) {
         _ = app.present(Confirmation(code: "MAP-CLEAR", title: "Clear all map data?",
-                                     message: "Deletes cached map tiles, the region list and every downloaded camera region from this Mac. You can download them again later.",
+                                     message: "Deletes cached map tiles, elevation, road data for directions, the region list and every downloaded camera region from this Mac. You can download them again later.",
                                      confirmLabel: "Clear", destructive: true, onConfirm: { m.clearAllData() }))
     }
 }
@@ -239,7 +243,7 @@ private struct ConsentBlock: View {
             VStack {
                 Spacer()
                 StateBlock(code: "MAP-NET", title: "Enable map data?",
-                           message: "The map downloads data only after you enable it:\n· Map tiles for the area you view, from tiles.openfreemap.org (it learns roughly where you're looking).\n· Elevation for the area you view, from elevation-tiles-prod.s3.amazonaws.com (Amazon learns roughly where you're looking), while the Terrain layer is on.\n· The region list, from download.geofabrik.de, when you open Regions.\n· ALPR camera locations for regions you choose, from deflock.dontgetflocked.com in the US and Canada, or your Overpass server elsewhere (they learn which region). Each download asks first.\nOnline place search is separate: it asks the first time you use it.\nYour location is only read when you click Locate, and is never stored or sent by GRID.") {
+                           message: "The map downloads data only after you enable it:\n· Map tiles for the area you view, from tiles.openfreemap.org (it learns roughly where you're looking).\n· Elevation for the area you view, from elevation-tiles-prod.s3.amazonaws.com (Amazon learns roughly where you're looking), while the Terrain layer is on.\n· The region list, from download.geofabrik.de, when you open Regions.\n· ALPR camera locations for regions you choose, from deflock.dontgetflocked.com in the US and Canada, or your Overpass server elsewhere (they learn which region). Each download asks first.\nOnline place search and road data for directions are separate: each asks first.\nYour location is only read when you click Locate, and is never stored or sent by GRID.") {
                     Button("Enable Map Data") { model.enabled = true; model.appeared() }
                     Button("Settings…") { app.settingsSection = "map"; app.show(.settings) }
                 }

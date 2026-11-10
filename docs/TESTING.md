@@ -125,6 +125,10 @@ display is awake.
 - [ ] Map: at z16 in a city, place glyphs show beside their names; the category chips hide and show them; clicking a glyph opens the PLACE inspector
 - [ ] Map: ⌘F focuses Search places; typing lists matches from the loaded map with no network traffic; ↑/↓ and Return pick one (pin, inspector, map moves)
 - [ ] Map: Return with no local match (or ⌘Return) asks SEARCH-NET the first time, then shows online results; Settings › Map turns it off; the same search again from the same view within a day sends nothing
+- [ ] Map: right-click › Directions from Here, then to Here in a city with no road data → "Download Road Data for <state>…" → ROUTE-DATA confirmation with size → download and build progress, Cancel works → the route appears
+- [ ] Map: with cameras downloaded, AVOID and FASTEST both show distance, time and mapped cameras; switching redraws; steps fly the map; hovering a step rings it; cameras on the shown route are drawn in the warning colour
+- [ ] Map: Settings › Map lists road data with Remove; Clear Map Data removes it; routing works with the network off once the data is installed
+- [ ] Map: two-finger click and Control-click open the map's menu and it stays open; a real scroll or a click elsewhere closes it
 - [ ] Map: theme switch recolours instantly; Effects › Glow off removes the glow; with the window unfocused the map stops drawing (0% CPU)
 - [ ] Updates: a fresh install asks in the status bar; "Not now" makes no request (check with Little Snitch or `nettop`)
 - [ ] Updates: GRID › Check for Updates… on the latest version says "up to date"; on an older build shows the notice, Settings › Updates shows the notes

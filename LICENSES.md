@@ -27,6 +27,8 @@ Application Support:
 - **Points of interest** come from the same OpenFreeMap tiles (OpenStreetMap data, ODbL 1.0).
   **Online search results** come from a Nominatim server (by default the OpenStreetMap
   Foundation's), and are OpenStreetMap data (ODbL 1.0).
+- **Road data for directions:** OpenStreetMap extracts from [Geofabrik](https://download.geofabrik.de)
+  (© OpenStreetMap contributors, ODbL 1.0), turned into GRID's own road network on your Mac.
 - **Terrain:** AWS Terrain Tiles (Terrarium encoding), a Mapzen / Linux Foundation dataset hosted
   on the AWS Open Data registry, built from SRTM, GMTED2010, ETOPO1, USGS 3DEP, Canadian CDEM and
   other public sources. See the

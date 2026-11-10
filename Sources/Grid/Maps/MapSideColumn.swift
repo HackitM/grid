@@ -16,6 +16,7 @@ struct MapSideColumn: View {
         } content: {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    if model.routing.open { MapRoutePanel(model: model) }
                     section("layers") {
                         layerToggle("ALPR cameras", model.showCameras, count: model.alpr.index.cameras.count) { model.showCameras = $0 }
                         layerToggle("Region outlines", model.showRegions, count: model.alpr.regions.count) { model.showRegions = $0 }
@@ -130,8 +131,12 @@ private struct PlaceInspector: View {
                 .help("Copy coordinates")
             }
             .buttonStyle(GridButtonStyle(compact: true))
-            Button("Centre Map Here") { model.flyTo(ll) }
-                .buttonStyle(GridButtonStyle(compact: true))
+            HStack(spacing: 6) {
+                Button("Directions To") { model.routing.setEnd(from: false, .init(name: place.name, coordinate: ll)) }
+                Button("From") { model.routing.setEnd(from: true, .init(name: place.name, coordinate: ll)) }
+                Button("Centre") { model.flyTo(ll) }
+            }
+            .buttonStyle(GridButtonStyle(compact: true))
         }
         .padding(8)
         .background(theme.bg2.opacity(0.5))

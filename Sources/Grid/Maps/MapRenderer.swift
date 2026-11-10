@@ -1029,6 +1029,32 @@ final class MapRenderer: NSObject, MTKViewDelegate {
             }
         }
 
+        // Routes: the alternative dim and dashed, the chosen one bright with a glow (on the terrain).
+        for r in frame.routes where r.points.count >= 2 {
+            var color = r.primary ? p.accent : p.textMute
+            color.w = r.primary ? 1 : 0.75
+            let half: Float = (r.primary ? 2.0 : 1.3) * s
+            let glow: Float = r.primary && frame.glow ? 4 * s : 0
+            let dash: Float = r.primary ? 0 : 5 * s
+            var prev: SIMD2<Double>?
+            var along: Float = 0
+            let reach = Double(half + glow) / scale + 2
+            for w in r.points {
+                guard let q = screen(w) else { prev = nil; continue }
+                guard let a = prev else { prev = q; continue }
+                let d = q - a
+                let len = (d * d).sum().squareRoot()
+                if len < 1.5 { continue }          // sub-pixel steps: merge into the next segment
+                prev = q
+                let lo = SIMD2(min(a.x, q.x), min(a.y, q.y)) - reach, hi = SIMD2(max(a.x, q.x), max(a.y, q.y)) + reach
+                defer { along += Float(len * scale) }
+                guard hi.x > 0, hi.y > 0, lo.x < vp.x, lo.y < vp.y, len < 50_000 else { continue }
+                let L = Float(len * scale) / 2
+                add(.route, at: px((a + q) / 2), size: SIMD2(2 * L + 2 * (half + glow) + 2 * s, 2 * (half + glow) + 2 * s), color: color,
+                    p: SIMD4(Float(atan2(d.y, d.x)), L, half, dash), q: SIMD2(along, glow))
+            }
+        }
+
         // ALPR cameras: FOV wedges lying on the ground (foreshortened when tilted) under the reticles.
         if !frame.cameras.isEmpty {
             // Radius: 14…48 pt at the centre of the view, as a ground distance.
@@ -1064,7 +1090,7 @@ final class MapRenderer: NSObject, MTKViewDelegate {
             // of a tilted view doesn't fill with full-size reticles.
             for (q, c, _, _, z, near) in projected.sorted(by: { $0.5 < $1.5 }) {
                 let k = Float(min(1, max(0.45, near)))
-                var color = p.accent
+                var color = c.onRoute ? p.warn : p.accent
                 color.w = (c.isFlock ? 1.0 : 0.7) * (c.selected ? 1 : Float(min(1, max(0.25, (near - 0.15) / 0.6))))
                 let side: Float = 13 * s * (c.selected ? 1 : k)
                 add(.reticle, at: q, size: SIMD2(repeating: side + 4 * s + (c.selected ? 8 * s : 0)), color: color,
@@ -1091,6 +1117,17 @@ final class MapRenderer: NSObject, MTKViewDelegate {
             var ring = p.accent; ring.w = 0.5
             add(.ring, at: px(q), size: SIMD2(repeating: r * 2 + 4 * s), color: ring, p: SIMD4(1 * s, 0, 0, 0))
             add(.locationDot, at: px(q), size: SIMD2(repeating: 22 * s), color: p.accent)
+        }
+
+        // Route ends (A, B) and the step under the pointer.
+        for m in frame.routeMarks {
+            guard let q = screen(m.world), onScreen(q) else { continue }
+            add(.pin, at: px(q), size: SIMD2(repeating: 20 * s), color: p.accent)
+            clusterCounts.append((m.label, SIMD2(q.x + 12, q.y)))
+        }
+        if let w = frame.stepMark, let q = screen(w), onScreen(q) {
+            var ring = p.text; ring.w = 0.9
+            add(.ring, at: px(q), size: SIMD2(repeating: 26 * s), color: ring, p: SIMD4(1.6 * s, 0, 0, 0))
         }
 
         // The chosen place: a diamond pin, its name beside it (placed before every other label).

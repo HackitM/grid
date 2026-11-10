@@ -55,6 +55,18 @@ enum DebugHooks {
     }
 
     /// The location state's name only: QA output never contains coordinates.
+    static func routingState(_ m: MapModel) -> [String: Any] {
+        let r = m.routing
+        func leg(_ l: RouteService.Leg?) -> [String: Any] {
+            guard let l else { return [:] }
+            return ["km": l.path.distance / 1000, "min": l.path.duration / 60, "cameras": l.hits.count, "steps": l.path.steps.count,
+                    "points": l.path.points.count, "text": l.path.steps.prefix(40).map { "\($0.text) | \(Int($0.distance)) m" }]
+        }
+        return ["state": "\(r.state)", "job": "\(r.store.job)", "installed": r.store.installed.map { "\($0.id) \($0.graphBytes) \($0.vertices) \($0.edges)" },
+                "fastest": leg(r.outcome?.fastest), "avoiding": leg(r.outcome?.avoiding), "shown": "\(r.shown)",
+                "snap": [r.outcome?.snapFrom ?? -1, r.outcome?.snapTo ?? -1]]
+    }
+
     static func locationCase(_ s: LocationProvider.State) -> String {
         switch s {
         case .idle: "idle"; case .explaining: "explaining"; case .asking: "asking"; case .locating: "locating"
@@ -673,7 +685,7 @@ enum DebugHooks {
                             "location": Self.locationCase(m.location.state), "inView": m.camerasInViewCount(),
                             "loader": m.tiles.debugStats, "search": m.search.debugState,
                             "place": m.place.map { "\($0.name)|\($0.kind.rawValue)|\($0.detail)|\($0.source.rawValue)" } ?? "",
-                            "showPlaces": m.showPlaces, "drawCount": MapContainerView.debugCurrent?.renderer.debugDrawCount ?? -1,
+                            "showPlaces": m.showPlaces, "routing": Self.routingState(m), "drawCount": MapContainerView.debugCurrent?.renderer.debugDrawCount ?? -1,
                             "drawnZoom": MapContainerView.debugCurrent?.renderer.debugDrawnZoom ?? -1,
                             "windowVisible": MapContainerView.debugCurrent?.window?.occlusionState.contains(.visible) ?? false, "hiddenCategories": m.hiddenCategories.map(\.short).sorted()]
                 } ?? [:],
@@ -784,6 +796,26 @@ enum DebugHooks {
                 v.debugProbe = probe
                 probe.begin()
             case "exaggeration": if let x = c["value"] as? Double { m.terrainExaggeration = x }
+            case "route":
+                // {"op":"route","from":[lon,lat],"to":[lon,lat],"avoid":true,"show":"fastest","buffer":75}
+                // {"op":"routeData","region":"us/alabama"} installs road data without the confirmation (QA).
+                let r = m.routing
+                r.open = true
+                if let a = c["avoid"] as? Bool { r.avoid = a }
+                if let b = c["buffer"] as? Double { r.buffer = b }
+                if let f = c["from"] as? [Double], f.count == 2 { r.from = .init(name: "QA from", coordinate: LonLat(lon: f[0], lat: f[1])) }
+                if let t = c["to"] as? [Double], t.count == 2 { r.to = .init(name: "QA to", coordinate: LonLat(lon: t[0], lat: t[1])) }
+                if let w = c["show"] as? String { r.show(w == "fastest" ? .fastest : .avoiding) }
+                if c["clear"] as? Bool == true { r.clear() }
+            case "routeData":
+                if let id = c["region"] as? String {
+                    Task {
+                        await m.alpr.loadCatalog()
+                        if let cat = m.alpr.catalog, let reg = cat.regions.first(where: { $0.id == id }), let url = cat.extractURL(id) {
+                            m.routing.store.install(reg, from: url) { m.routing.compute() }
+                        }
+                    }
+                }
             case "search":
                 // {"op":"search","query":"zermatt"} types into the search box; "online":true also searches
                 // online (as ⌘⏎); "choose":n picks result n; "clear":true empties it.

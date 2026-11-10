@@ -176,6 +176,17 @@ final class MapsRegionTests: XCTestCase {
         XCTAssertTrue(nc.contains(ll(-79.5, 40.5)))
         XCTAssertFalse(nc.contains(ll(-69.5, 40.5)))        // inside the hole
         XCTAssertTrue(nc.contains(ll(-69.9, 40.1)))
+        XCTAssertEqual(cat.extractURL("us/colorado")?.absoluteString, "https://download.geofabrik.de/x.osm.pbf")
+    }
+
+    func testExtractURLsAreOnlyGeofabrikPBFs() {
+        XCTAssertNotNil(RegionCatalog.extract(["pbf": "https://download.geofabrik.de/north-america/us/alabama-latest.osm.pbf"]))
+        XCTAssertNil(RegionCatalog.extract(["pbf": "http://download.geofabrik.de/a.osm.pbf"]))
+        XCTAssertNil(RegionCatalog.extract(["pbf": "https://evil.example/a.osm.pbf"]))
+        XCTAssertNil(RegionCatalog.extract(["pbf": "https://download.geofabrik.de/a.osm.pbf?x=1"]))
+        XCTAssertNil(RegionCatalog.extract(["pbf": "https://download.geofabrik.de:8443/a.osm.pbf"]))
+        XCTAssertNil(RegionCatalog.extract(["pbf": "https://download.geofabrik.de/a.shp.zip"]))
+        XCTAssertNil(RegionCatalog.extract(nil))
     }
 
     func testCatalogRejectsOversizeAndGarbage() {

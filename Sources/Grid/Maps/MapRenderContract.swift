@@ -45,6 +45,8 @@ struct CameraMarker: Equatable {
     var isFlock: Bool
     var selected: Bool
     var index: Int
+    /// The shown route passes it (drawn in the warning colour).
+    var onRoute = false
 }
 
 /// A cluster block (zoom < 12): `▣ count`.
@@ -63,6 +65,18 @@ struct LocationMarker: Equatable {
 struct PlaceMarker: Equatable {
     var world: Mercator
     var title: String
+}
+
+/// A route on the map: the chosen one bright and glowing, the alternative dim and dashed.
+struct RouteLine: Equatable {
+    var points: [Mercator]
+    var primary: Bool
+}
+
+/// A route's start or end ("A", "B") or the step under the pointer.
+struct RouteMark: Equatable {
+    var world: Mercator
+    var label: String
 }
 
 /// A region outline to draw (the downloaded regions, and the rectangle being drawn).
@@ -85,6 +99,10 @@ struct MapFrame: Equatable {
     var clusters: [ClusterMarker] = []
     var location: LocationMarker?
     var pin: PlaceMarker?
+    var routes: [RouteLine] = []
+    var routeMarks: [RouteMark] = []
+    /// The step under the pointer in the route panel.
+    var stepMark: Mercator?
     /// Point-of-interest categories to draw, one bit per `POICategory.rawValue` (0: none).
     var poiMask: UInt16 = 0
     var regions: [RegionOutline] = []

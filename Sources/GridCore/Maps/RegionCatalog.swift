@@ -12,6 +12,23 @@ public struct RegionCatalog: Sendable {
 
     public let regions: [RegionDescriptor]
     private let polygons: [String: GeoPolygon]
+    /// Each region's OSM extract (`urls.pbf`), only https on Geofabrik's download host.
+    private var extracts: [String: URL] = [:]
+
+    init(regions: [RegionDescriptor], polygons: [String: GeoPolygon], extracts: [String: URL] = [:]) {
+        self.regions = regions; self.polygons = polygons; self.extracts = extracts
+    }
+
+    /// The region's OpenStreetMap extract (PBF) on download.geofabrik.de, if the index lists one.
+    public func extractURL(_ id: String) -> URL? { extracts[id] }
+
+    static func extract(_ any: Any?) -> URL? {
+        guard let urls = any as? [String: Any], let raw = urls["pbf"] as? String, raw.count <= 300,
+              let u = URL(string: raw), u.scheme == "https", u.host?.lowercased() == "download.geofabrik.de",
+              u.user == nil, u.port == nil, u.query == nil, u.fragment == nil, u.path.hasSuffix(".osm.pbf"),
+              !u.path.contains("..") else { return nil }
+        return u
+    }
 
     static let maxFeatures = 20_000
     static let maxRingPoints = 2_000_000
@@ -23,6 +40,7 @@ public struct RegionCatalog: Sendable {
         guard features.count <= maxFeatures else { throw ALPRParseError.tooLarge }
         var regions: [RegionDescriptor] = []
         var polys: [String: GeoPolygon] = [:]
+        var extracts: [String: URL] = [:]
         var seen = Set<String>()
         for f in features {
             guard let feat = f as? [String: Any], let props = feat["properties"] as? [String: Any],
@@ -36,8 +54,9 @@ public struct RegionCatalog: Sendable {
                                             iso3166_1: codes(props["iso3166-1:alpha2"]),
                                             iso3166_2: codes(props["iso3166-2"])))
             if let g = feat["geometry"] as? [String: Any], let poly = geometry(g) { polys[id] = poly }
+            if let u = extract(props["urls"]) { extracts[id] = u }
         }
-        return RegionCatalog(regions: regions, polygons: polys)
+        return RegionCatalog(regions: regions, polygons: polys, extracts: extracts)
     }
 
     public func polygon(_ id: String) -> GeoPolygon? { polygons[id] }

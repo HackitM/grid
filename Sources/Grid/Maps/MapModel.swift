@@ -13,6 +13,7 @@ final class MapModel {
     let terrain = TerrainStore()
     let location = LocationProvider()
     let search = MapSearch()
+    let routing = MapRouting()
     @ObservationIgnored weak var app: AppState?
 
     /// The camera, always current: gestures land here at once. While a gesture runs, views that
@@ -101,6 +102,7 @@ final class MapModel {
         alpr.enabled = enabledStore
         terrain.enabled = enabledStore && showTerrain
         search.model = self
+        routing.model = self
     }
 
     /// Set once Locate has centred the map this session: the remembered view must never hold the
@@ -273,7 +275,8 @@ final class MapModel {
                 for i in alpr.index.query(box).prefix(4000) {
                     let c = alpr.index.cameras[i]
                     f.cameras.append(CameraMarker(world: TileMath.project(c.coordinate), directions: c.directions,
-                                                  isFlock: c.vendor == .flock, selected: i == selected, index: i))
+                                                  isFlock: c.vendor == .flock, selected: i == selected, index: i,
+                                                  onRoute: routing.camerasOnRoute.contains(i)))
                 }
             } else {
                 let cell = 44 / (256 * pow(2, camera.zoom))
@@ -284,6 +287,15 @@ final class MapModel {
         }
         f.location = fix
         f.poiMask = poiMask
+        if let o = routing.outcome {
+            let primary = routing.shownLeg?.path
+            let other: RoutePath? = routing.shown == .avoiding ? (o.avoiding != nil ? o.fastest.path : nil) : o.avoiding?.path
+            if let other { f.routes.append(RouteLine(points: other.points.map(TileMath.project), primary: false)) }
+            if let primary { f.routes.append(RouteLine(points: primary.points.map(TileMath.project), primary: true)) }
+            if let h = routing.hoveredStep, let steps = primary?.steps, steps.indices.contains(h) { f.stepMark = TileMath.project(steps[h].location) }
+        }
+        if let a = routing.from { f.routeMarks.append(RouteMark(world: TileMath.project(a.coordinate), label: "A")) }
+        if let b = routing.to { f.routeMarks.append(RouteMark(world: TileMath.project(b.coordinate), label: "B")) }
         if let pl = place { f.pin = PlaceMarker(world: TileMath.project(pl.coordinate), title: pl.name) }
         if showRegions {
             for r in alpr.regions {
@@ -324,6 +336,21 @@ final class MapModel {
         selected = i
         if i != nil { place = nil }
         frameRevision &+= 1
+    }
+
+    /// The route or its ends changed: redraw, and with `fit` frame the whole route.
+    func routeChanged(fit: Bool = false) {
+        frameRevision &+= 1
+        guard fit, let pts = routing.shownLeg?.path.points, pts.count >= 2 else { return }
+        let w = pts.map(TileMath.project)
+        let x0 = w.map(\.x).min()!, x1 = w.map(\.x).max()!, y0 = w.map(\.y).min()!, y1 = w.map(\.y).max()!
+        var c = camera
+        c.center = Mercator(x: (x0 + x1) / 2, y: (y0 + y1) / 2)
+        // Fit with a margin (the side column and search box cover part of the view).
+        let sx = max(1e-9, x1 - x0) * 256, sy = max(1e-9, y1 - y0) * 256
+        c.zoom = min(16.5, max(4, log2(min((viewport.x - 140) / sx, (viewport.y - 140) / sy))))
+        c.bearing = 0
+        setCamera(c)
     }
 
     /// Bits of the place categories drawn (0 when the Places layer is off).
@@ -618,6 +645,13 @@ final class MapModel {
             items.append(.action("Inspect \(hit.name)") { [weak self] in self?.selectPlace(hit) })
             items.append(.divider)
         }
+        items.append(.action("Directions from Here") { [weak self] in
+            self?.routing.setEnd(from: true, MapRouting.End(name: String(format: "%.4f, %.4f", ll.lat, ll.lon), coordinate: ll))
+        })
+        items.append(.action("Directions to Here") { [weak self] in
+            self?.routing.setEnd(from: false, MapRouting.End(name: String(format: "%.4f, %.4f", ll.lat, ll.lon), coordinate: ll))
+        })
+        items.append(.divider)
         items.append(.action("Centre Map Here") { [weak self] in self?.flyTo(ll) })
         items.append(.action("Copy Coordinates") { [weak self] in
             NSPasteboard.general.clearContents()
@@ -736,6 +770,7 @@ final class MapModel {
         selectPlace(nil)
         search.clear()
         search.forgetOnline()
+        routing.clearAllData()
         Task { await tiles.loadSource(); refresh() }
     }
 }

@@ -91,6 +91,7 @@ enum MapOverlayKind: UInt32 {
     case ring = 4         // p.x thickness px
     case segment = 5      // p.x angle (rad), p.y half length px, p.z dash px (0 solid), p.w phase px
     case pin = 6          // the chosen place: diamond outline, filled core, faint halo
+    case route = 7        // route segment: p.x angle, p.y half length px, p.z half width px, p.w dash px (0 solid); q0 dash phase px, q1 glow px
 }
 
 /// Byte layout of the frame uniform blob.
@@ -522,7 +523,7 @@ vertex OverlayOut overlay_vertex(uint vid [[vertex_id]], uint iid [[instance_id]
     float2 corner = float2(float(vid & 1), float((vid >> 1) & 1)) - 0.5;      // strip: (-.5,-.5) (.5,-.5) (-.5,.5) (.5,.5)
     float2 local = corner * i.size;
     float2 px = local;
-    if (i.kind == 5) { float c = cos(i.p.x), s = sin(i.p.x); px = float2(local.x * c - local.y * s, local.x * s + local.y * c); }
+    if (i.kind == 5 || i.kind == 7) { float c = cos(i.p.x), s = sin(i.p.x); px = float2(local.x * c - local.y * s, local.x * s + local.y * c); }
     float2 screen = i.center + px;
     float2 ndc = screen / u.viewportPx * 2.0 - 1.0;
     OverlayOut o;
@@ -535,6 +536,7 @@ vertex OverlayOut overlay_vertex(uint vid [[vertex_id]], uint iid [[instance_id]
         if (abs(det) > 1e-6) o.ground = float4(i.p.w, -i.p.y, -i.p.z, i.p.x) / det;   // columns of the inverse
         o.p = float4(i.q0, i.q1, 0.0, 0.0);
     }
+    if (i.kind == 7) o.ground = float4(i.q0, i.q1, 0.0, 0.0);
     return o;
 }
 
@@ -610,6 +612,20 @@ fragment float4 overlay_fragment(OverlayOut in [[stage_in]], constant FrameU& u 
             line *= smoothstep(0.0, e, f) * (1.0 - smoothstep(0.5 - e, 0.5, f));
         }
         a = line;
+        break; }
+    case 7: {   // route: a round-capped band with a soft glow, optionally dashed
+        float L = in.p.y, w = in.p.z;
+        float d = length(float2(max(aq.x - L, 0.0), q.y));
+        float core = 1.0 - smoothstep(w - 0.7, w + 0.7, d);
+        float g = in.ground.y;
+        // Faint, so the overlap where segments meet doesn't bead.
+        float halo = g > 0.0 ? exp(-max(d - w, 0.0) / max(g * 0.4, 0.5)) * 0.16 * (1.0 - core) : 0.0;
+        a = max(core, halo);
+        if (in.p.w > 0.0) {
+            float period = in.p.w * 2.0;
+            float f = fract((q.x + L + in.ground.x) / period);
+            a *= 1.0 - smoothstep(0.5, 0.56, f);
+        }
         break; }
     case 6: {   // chosen place: a diamond with a filled core and a faint halo
         float hs = in.size.x * 0.5 - 4.0 * s;
