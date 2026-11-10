@@ -580,8 +580,11 @@ cache) and draws them in `MapLabelLayer` (pooled `CATextLayer`s).
 
 ## Addendum — terrain (0.8)
 
-- **Source:** AWS Terrain Tiles, Terrarium PNGs (`(R·256 + G + B/256) − 32768` m), 256 px, z0–12;
-  deeper map tiles read their z12 ancestor. Fetched by `TerrainStore` only while map data is
+- **Source:** AWS Terrain Tiles, Terrarium PNGs (`(R·256 + G + B/256) − 32768` m), 256 px, z0–12.
+  A map tile reads the elevation tile two levels up (its 64 px are exactly what the 65×65 grid
+  samples, so one download serves 16 map tiles), capped at z12. Until it arrives the tile borrows
+  a coarser elevation tile already in memory (no contours), and with none it draws at the
+  camera's ground level. Fetched by `TerrainStore` only while map data is
   enabled and the Terrain layer is on, cached under `Maps/terrain/z/x/y.png` (written only after
   a successful decode; trimmed to 150 MB). ImageIO decodes; the raw pixel bytes are read without
   colour management, because the channels are data.
