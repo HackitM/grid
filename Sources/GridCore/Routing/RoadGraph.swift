@@ -303,6 +303,19 @@ public enum RoadGraphBuilder {
         }
         let restrictedWays = Set(roads.restrictions.flatMap { [$0.fromWay, $0.toWay] })
 
+        // Sizes are known up front (exactly, unless nodes are missing): reserving them avoids
+        // regrowing arrays of millions of elements, each regrowth briefly doubling the memory.
+        var junctionRefs = 0
+        for slot in nodes.slotOfRef where nodes.isJunction[Int(slot)] { junctionRefs += 1 }
+        let edgeCount = max(0, junctionRefs - roads.ways.count)
+        let vertexCount = nodes.isJunction.reduce(0) { $0 + ($1 ? 1 : 0) }
+        g.lat.reserveCapacity(vertexCount); g.lon.reserveCapacity(vertexCount)
+        g.from.reserveCapacity(edgeCount); g.to.reserveCapacity(edgeCount); g.length.reserveCapacity(edgeCount)
+        g.speedForward.reserveCapacity(edgeCount); g.speedBackward.reserveCapacity(edgeCount)
+        g.roadClass.reserveCapacity(edgeCount); g.flags.reserveCapacity(edgeCount); g.name.reserveCapacity(edgeCount)
+        g.shapeStart.reserveCapacity(edgeCount + 1)
+        g.shape.reserveCapacity(2 * (nodes.slotOfRef.count - junctionRefs))
+
         for (w, way) in roads.ways.enumerated() {
             if w % 4096 == 0 {
                 if cancelled?() == true { throw PBFError.cancelled }

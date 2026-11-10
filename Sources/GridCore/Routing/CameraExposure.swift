@@ -60,6 +60,13 @@ public enum CameraExposure {
         return (p, (d * d).sum().squareRoot(), t)
     }
 
+    /// Whether `c` is further than `reach` from the box around segment ab (so certainly further
+    /// than that from the segment): a cheap test before the exact one.
+    @inline(__always)
+    static func isOutOfReach(_ c: SIMD2<Double>, _ a: SIMD2<Double>, _ b: SIMD2<Double>, _ reach: Double) -> Bool {
+        c.x < min(a.x, b.x) - reach || c.x > max(a.x, b.x) + reach || c.y < min(a.y, b.y) - reach || c.y > max(a.y, b.y) + reach
+    }
+
     /// The nearest point of segment ab (inside the buffer) that the camera sees: its distance and
     /// fraction along ab, or nil. The part of ab within the buffer is checked at ≤ 4 m steps, so a
     /// road that enters the cone further along counts even when its nearest point is outside it.
@@ -84,6 +91,11 @@ public enum CameraExposure {
         return best
     }
 
+    /// Route segments are boxed in runs of this many, so a camera is tested against a run's box
+    /// before any of its segments (a long route has tens of thousands of segments and most
+    /// cameras are near none of them).
+    private static let segmentsPerBox = 32
+
     /// The cameras (of `candidates`, index → camera) that see the polyline, nearest pass each, in
     /// order along the route. A camera is checked at every segment it is near, so a road passing
     /// first outside and then inside its cone counts.
@@ -91,21 +103,37 @@ public enum CameraExposure {
         guard route.count >= 2, !candidates.isEmpty else { return [] }
         let flat = Flat(lat: route[route.count / 2].lat)
         let pts = route.map(flat.xy)
-        var cum = [0.0]
-        cum.reserveCapacity(pts.count)
-        for i in 1..<pts.count { let d = pts[i] - pts[i - 1]; cum.append(cum[i - 1] + (d * d).sum().squareRoot()) }
-        // Segment boxes, for a quick reject.
+        let segmentCount = pts.count - 1
+        // Distance from the start to each point.
+        var reach = [0.0]
+        reach.reserveCapacity(pts.count)
+        for i in 1..<pts.count { let d = pts[i] - pts[i - 1]; reach.append(reach[i - 1] + (d * d).sum().squareRoot()) }
+        // The box around each run of segments.
+        var boxes: [(lo: SIMD2<Double>, hi: SIMD2<Double>)] = []
+        boxes.reserveCapacity(segmentCount / segmentsPerBox + 1)
+        for first in stride(from: 0, to: segmentCount, by: segmentsPerBox) {
+            var lo = pts[first], hi = pts[first]
+            for i in (first + 1)...min(first + segmentsPerBox, segmentCount) {
+                lo = lo.replacing(with: pts[i], where: pts[i] .< lo)
+                hi = hi.replacing(with: pts[i], where: pts[i] .> hi)
+            }
+            boxes.append((lo, hi))
+        }
+
         var out: [Hit] = []
-        for (idx, cam) in candidates {
-            let c = flat.xy(cam.coordinate)
+        for (index, camera) in candidates {
+            let c = flat.xy(camera.coordinate)
             var best: Hit?
-            for i in 0..<(pts.count - 1) {
-                let a = pts[i], b = pts[i + 1]
-                if c.x < min(a.x, b.x) - o.buffer || c.x > max(a.x, b.x) + o.buffer
-                    || c.y < min(a.y, b.y) - o.buffer || c.y > max(a.y, b.y) + o.buffer { continue }
-                guard let (d, t) = seen(c, cam.directions, a, b, o) else { continue }
-                if best == nil || d < best!.distance {
-                    best = Hit(camera: idx, along: cum[i] + (cum[i + 1] - cum[i]) * t, distance: d)
+            for (run, box) in boxes.enumerated() {
+                if c.x < box.lo.x - o.buffer || c.x > box.hi.x + o.buffer || c.y < box.lo.y - o.buffer || c.y > box.hi.y + o.buffer { continue }
+                let first = run * segmentsPerBox
+                for i in first..<min(first + segmentsPerBox, segmentCount) {
+                    let a = pts[i], b = pts[i + 1]
+                    if isOutOfReach(c, a, b, o.buffer) { continue }
+                    guard let (d, t) = seen(c, camera.directions, a, b, o) else { continue }
+                    if best == nil || d < best!.distance {
+                        best = Hit(camera: index, along: reach[i] + (reach[i + 1] - reach[i]) * t, distance: d)
+                    }
                 }
             }
             if let best { out.append(best) }
